@@ -3,11 +3,12 @@ import { PublicKey } from "@solana/web3.js";
 import { getPublicOrb } from "@/lib/orbStore";
 import { getShareProof, hasFollowProof, hasWalletProof, storeShareProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
-import { getCurrentXSession, getRecentXPostsForCurrentSession } from "@/lib/xAuth";
+import { getCurrentXSession, getRecentXPostsForCurrentSession, XApiRequestError } from "@/lib/xAuth";
 import { redisCommand } from "@/lib/upstash";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 15;
 
 function normalizeWallet(value: unknown) {
   if (typeof value !== "string") return null;
@@ -40,7 +41,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
   }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
-export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
+async function verifySharePost(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const body = await request.json().catch(() => ({})) as { wallet?: unknown; originalLine?: unknown };
   const wallet = normalizeWallet(body.wallet);
@@ -70,16 +71,30 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (count === 1) await redisCommand(["EXPIRE", rateKey, 70]);
   if (count > 4) return NextResponse.json({ ok: false, error: "Too many verification attempts. Wait a minute, then try again." }, { status: 429 });
 
+  const { posts } = await getRecentXPostsForCurrentSession(5);
+  const expectedLine = originalLine.toLocaleLowerCase();
+  const match = posts.find((post) => post.createdAt >= orb.createdAt - 5 * 60_000 && post.text.replace(/\s+/g, " ").toLocaleLowerCase().includes(expectedLine) && post.urls.some((url) => isOrbUrl(url, slug)));
+  if (!match) return NextResponse.json({ ok: false, verified: false, error: "No recent post from this X account contains the exact Orb link yet. Publish it, wait a few seconds, then verify again." }, { status: 422 });
+  const ttl = Math.max(60 * 60 * 24 * 2, Math.ceil((orb.startsAt - Date.now()) / 1000) + 60 * 60 * 24 * 2);
+  await storeShareProof(slug, x.user.id, wallet, { postId: match.id, postCreatedAt: match.createdAt, confirmedAt: Date.now() }, ttl);
+  return NextResponse.json({ ok: true, verified: true, postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${match.id}` });
+}
+
+export async function POST(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
-    const { posts } = await getRecentXPostsForCurrentSession(5);
-    const expectedLine = originalLine.toLocaleLowerCase();
-    const match = posts.find((post) => post.createdAt >= orb.createdAt - 5 * 60_000 && post.text.replace(/\s+/g, " ").toLocaleLowerCase().includes(expectedLine) && post.urls.some((url) => isOrbUrl(url, slug)));
-    if (!match) return NextResponse.json({ ok: false, verified: false, error: "No recent post from this X account contains the exact Orb link yet. Publish it, wait a few seconds, then verify again." }, { status: 422 });
-    const ttl = Math.max(60 * 60 * 24 * 2, Math.ceil((orb.startsAt - Date.now()) / 1000) + 60 * 60 * 24 * 2);
-    await storeShareProof(slug, x.user.id, wallet, { postId: match.id, postCreatedAt: match.createdAt, confirmedAt: Date.now() }, ttl);
-    return NextResponse.json({ ok: true, verified: true, postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${match.id}` });
+    return await verifySharePost(request, context);
   } catch (error) {
+    if (error instanceof XApiRequestError) {
+      const status = error.code === "X_RECONNECT_REQUIRED" ? 401 : error.code === "X_RATE_LIMITED" ? 429 : 503;
+      const headers: Record<string, string> = { "Cache-Control": "private, no-store" };
+      if (error.retryAfterSeconds) headers["Retry-After"] = String(error.retryAfterSeconds);
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status, headers });
+    }
     const message = error instanceof Error ? error.message : "Could not verify the X post";
-    return NextResponse.json({ ok: false, error: message }, { status: message === "X_NOT_CONNECTED" ? 401 : 502 });
+    if (message === "X_NOT_CONNECTED") {
+      return NextResponse.json({ ok: false, error: "Your X connection expired. Reconnect X, then try verification again.", code: "X_RECONNECT_REQUIRED" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
+    }
+    console.error("[orbs:x:share-verification] Unexpected verification failure", error);
+    return NextResponse.json({ ok: false, error: "Post verification is temporarily unavailable. Your post is safe; wait a moment, then try again.", code: "POST_VERIFICATION_UNAVAILABLE" }, { status: 503, headers: { "Cache-Control": "private, no-store", "Retry-After": "15" } });
   }
 }

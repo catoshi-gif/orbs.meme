@@ -34,6 +34,19 @@ function base64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+async function apiPayload<T extends { error?: string }>(response: Response): Promise<T> {
+  const body = await response.text();
+  if (!body) return {} as T;
+  try { return JSON.parse(body) as T; } catch {
+    const unavailable = response.status >= 500 || /bad gateway|cloudflare/i.test(body);
+    return {
+      error: unavailable
+        ? "Post verification is temporarily unavailable. Your post is safe; wait a moment, then try again."
+        : "The server returned an unreadable response. Please try again.",
+    } as T;
+  }
+}
+
 export default function OrbQualification({ slug, hostXId, hostUsername, createdAt, startsAt, prizeTokenAmount, prizeUsd, tokenSymbol }: Props) {
   const { connected, publicKey, signMessage } = useWallet();
   const [xUser, setXUser] = useState<XUser | null>(null);
@@ -140,10 +153,10 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
     try {
       const response = await fetch(`/api/orbs/${encodeURIComponent(slug)}/qualify/share`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ wallet, originalLine: shareLine.trim() }),
       });
-      const payload = await response.json() as { verified?: boolean; postUrl?: string; error?: string };
+      const payload = await apiPayload<{ verified?: boolean; postUrl?: string; error?: string }>(response);
       if (!response.ok || !payload.verified) throw new Error(payload.error || "Could not verify your X post");
       setShareVerified(true);
       setVerifiedPostUrl(payload.postUrl || null);

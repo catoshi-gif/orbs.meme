@@ -80,7 +80,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       <div style={{ position: "relative", width: "100%", display: "flex", flexDirection: "column", padding: "40px 52px 38px 60px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-            <img src={brandLogo} alt="" width={58} height={58} style={{ width: 58, height: 58, objectFit: "contain", filter: "drop-shadow(0 0 18px #5B5CF6AA)" }} />
+            <img src={brandLogo} alt="" width={58} height={58} style={{ width: 58, height: 58, objectFit: "contain", filter: "drop-shadow(0 0 0 #00000000)" }} />
             <div style={{ display: "flex", fontSize: 31, fontWeight: 900, letterSpacing: -1.2 }}>orbs<span style={{ color: "#8D70FF" }}>.meme</span></div>
           </div>
           <div style={{ display: "flex", color: "#D9DDF5", fontSize: 15, fontWeight: 800, letterSpacing: 3 }}>PLAY / WIN / GROW</div>

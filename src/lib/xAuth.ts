@@ -102,12 +102,14 @@ async function tokenRequest(params: URLSearchParams): Promise<TokenPayload> {
     headers: {
       Authorization: basicAuth(),
       "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
     },
     body: params.toString(),
     cache: "no-store",
+    signal: AbortSignal.timeout(8_000),
   });
-  const json = await response.json() as TokenPayload & { error?: string; error_description?: string };
-  if (!response.ok || !json.access_token) throw new Error(json.error_description || json.error || `X token exchange failed (${response.status})`);
+  const json = parseXPayload<TokenPayload & { error?: string; error_description?: string }>(await response.text());
+  if (!response.ok || !json?.access_token) throw new Error(json?.error_description || json?.error || `X token exchange failed (${response.status})`);
   return json;
 }
 
@@ -205,6 +207,59 @@ export type XRecentPost = {
   urls: string[];
 };
 
+export class XApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly upstreamStatus: number | null,
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(message);
+    this.name = "XApiRequestError";
+  }
+}
+
+type XErrorPayload = {
+  detail?: string;
+  title?: string;
+  type?: string;
+  errors?: Array<{ detail?: string; message?: string; title?: string; type?: string }>;
+};
+
+function parseXPayload<T>(raw: string): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
+
+function retryAfterSeconds(response: Response) {
+  const direct = Number(response.headers.get("retry-after") || "");
+  if (Number.isFinite(direct) && direct > 0) return Math.min(900, Math.ceil(direct));
+  const reset = Number(response.headers.get("x-rate-limit-reset") || "");
+  if (Number.isFinite(reset) && reset > 0) return Math.min(900, Math.max(1, Math.ceil(reset - Date.now() / 1000)));
+  return undefined;
+}
+
+function recentPostsError(response: Response, payload: XErrorPayload | null) {
+  const upstreamDetail = payload?.detail || payload?.errors?.[0]?.detail || payload?.errors?.[0]?.message || payload?.title || "No JSON error body";
+  console.warn("[orbs:x:recent-posts] X API request failed", {
+    status: response.status,
+    detail: upstreamDetail.slice(0, 240),
+  });
+  if (response.status === 401) {
+    return new XApiRequestError("Your X connection expired. Reconnect X, then try verification again.", "X_RECONNECT_REQUIRED", 401);
+  }
+  if (response.status === 402) {
+    return new XApiRequestError("Post verification is temporarily unavailable because the Orbs X API needs active usage credits.", "X_API_CREDITS_REQUIRED", 402);
+  }
+  if (response.status === 403) {
+    return new XApiRequestError("X denied access to recent posts. Reconnect X; if this continues, the Orbs X app needs tweet.read access and active API billing.", "X_POST_READ_FORBIDDEN", 403);
+  }
+  if (response.status === 429) {
+    return new XApiRequestError("X is temporarily rate-limiting post verification. Wait a moment, then try again.", "X_RATE_LIMITED", 429, retryAfterSeconds(response));
+  }
+  return new XApiRequestError("X is temporarily unavailable for post verification. Your post is safe; wait a moment, then try again.", "X_POST_READ_UNAVAILABLE", response.status || null, 15);
+}
+
 export async function getRecentXPostsForCurrentSession(maxResults = 5): Promise<{ user: XProfile; posts: XRecentPost[] }> {
   const session = await getCurrentXSession();
   if (!session) throw new Error("X_NOT_CONNECTED");
@@ -212,11 +267,24 @@ export async function getRecentXPostsForCurrentSession(maxResults = 5): Promise<
   url.searchParams.set("max_results", String(Math.max(5, Math.min(10, maxResults))));
   url.searchParams.set("tweet.fields", "created_at,entities");
   url.searchParams.set("exclude", "retweets,replies");
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${session.accessToken}` },
-    cache: "no-store",
-  });
-  const json = await response.json() as {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${session.accessToken}`, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    throw new XApiRequestError(
+      timedOut ? "X took too long to verify the post. Your post is safe; wait a moment, then try again." : "Could not reach X for post verification. Wait a moment, then try again.",
+      timedOut ? "X_POST_READ_TIMEOUT" : "X_POST_READ_NETWORK_ERROR",
+      null,
+      15,
+    );
+  }
+  const raw = await response.text();
+  const json = parseXPayload<{
     data?: Array<{
       id?: string;
       text?: string;
@@ -225,8 +293,10 @@ export async function getRecentXPostsForCurrentSession(maxResults = 5): Promise<
     }>;
     detail?: string;
     title?: string;
-  };
-  if (!response.ok) throw new Error(json.detail || json.title || `X post verification failed (${response.status})`);
+    errors?: XErrorPayload["errors"];
+  }>(raw);
+  if (!response.ok) throw recentPostsError(response, json);
+  if (!json) throw new XApiRequestError("X returned an unreadable verification response. Wait a moment, then try again.", "X_POST_READ_INVALID_RESPONSE", response.status, 15);
   const posts = (json.data || []).flatMap((post): XRecentPost[] => {
     const createdAt = Date.parse(post.created_at || "");
     if (!post.id || !Number.isFinite(createdAt)) return [];
