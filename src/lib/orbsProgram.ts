@@ -250,11 +250,11 @@ export async function verifyFundedOrbOnChain(record: OrbRecord, suppliedSignatur
   if (signature) {
     const matching = successful.find((entry) => entry.signature === signature);
     if (!matching) throw new Error("Supplied funding signature does not reference this Orb PDA");
-    if (matching.blockTime !== null && absBigInt(BigInt(matching.blockTime) - decoded.createdAt) > BigInt(120)) {
+    if (typeof matching.blockTime === "number" && absBigInt(BigInt(matching.blockTime) - decoded.createdAt) > BigInt(120)) {
       throw new Error("Supplied signature is not temporally consistent with Orb creation");
     }
   } else {
-    const creationLike = successful.find((entry) => entry.blockTime === null || absBigInt(BigInt(entry.blockTime) - decoded.createdAt) <= BigInt(120));
+    const creationLike = successful.find((entry) => typeof entry.blockTime !== "number" || absBigInt(BigInt(entry.blockTime) - decoded.createdAt) <= BigInt(120));
     signature = creationLike?.signature || "";
   }
   if (!signature) throw new Error("Could not recover the Orb funding transaction signature");

@@ -49,12 +49,42 @@ if [ ! -f anchor-tests/package-lock.json ]; then
   exit 1
 fi
 
-for required in NEXT_PUBLIC_SOLANA_RPC_URL HELIUS_RPC_URL ORBS_RELAYER_SECRET_KEY ORBS_FEE_QUOTE_AUTHORITY_SECRET_KEY ORBS_FUNDING_QUOTE_SIGNING_KEY; do
+for required in NEXT_PUBLIC_SOLANA_RPC_URL HELIUS_RPC_URL ORBS_RELAYER_SECRET_KEY ORBS_FEE_QUOTE_AUTHORITY_SECRET_KEY ORBS_FUNDING_QUOTE_SIGNING_KEY ORBS_CLAIM_AUTHORITY_PUBLIC_KEY; do
   if [ -z "${!required:-}" ]; then
     echo "ERROR: required production environment variable $required is not set" >&2
     exit 1
   fi
 done
+
+# The first production config must be initialized directly with the HSM/Turnkey
+# claim public key. This gate prevents quietly substituting a treasury, relayer,
+# admin, or funding-quote signer as a temporary high-consequence claim key.
+case "$ORBS_CLAIM_AUTHORITY_PUBLIC_KEY" in
+  "$TREASURY"|"$RELAYER"|"$ADMIN")
+    echo "ERROR: ORBS_CLAIM_AUTHORITY_PUBLIC_KEY must be a distinct Turnkey/HSM-managed Solana public key" >&2
+    exit 1
+    ;;
+esac
+if ! node -e 'const {PublicKey}=require("@solana/web3.js"); try { new PublicKey(process.env.ORBS_CLAIM_AUTHORITY_PUBLIC_KEY); } catch { process.exit(1); }'; then
+  echo "ERROR: ORBS_CLAIM_AUTHORITY_PUBLIC_KEY is not a valid Solana public key" >&2
+  exit 1
+fi
+
+FEE_QUOTE_PUBLIC_KEY=$(node - <<'NODE'
+const {Keypair}=require('@solana/web3.js');
+const raw=(process.env.ORBS_FEE_QUOTE_AUTHORITY_SECRET_KEY||'').trim();
+let bytes;
+try {
+  if (raw.startsWith('[')) bytes=Uint8Array.from(JSON.parse(raw));
+  else bytes=Uint8Array.from(Buffer.from(raw, 'base64'));
+  console.log(Keypair.fromSecretKey(bytes).publicKey.toBase58());
+} catch { process.exit(1); }
+NODE
+) || { echo "ERROR: ORBS_FEE_QUOTE_AUTHORITY_SECRET_KEY is malformed" >&2; exit 1; }
+if [ "$ORBS_CLAIM_AUTHORITY_PUBLIC_KEY" = "$FEE_QUOTE_PUBLIC_KEY" ]; then
+  echo "ERROR: Turnkey claim authority must be distinct from the fee quote authority" >&2
+  exit 1
+fi
 
 if grep -RIn --exclude='mainnet-preflight.sh' --exclude='anchor-security.sh' --exclude='Cargo.toml' 'features local-testing\|--features local-testing' . >/dev/null 2>&1; then
   echo "ERROR: unexpected local-testing build invocation found outside the audited security script" >&2
