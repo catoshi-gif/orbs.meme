@@ -91,6 +91,8 @@ function makeSky(THREE: typeof import("three"), accent: string) {
 
 function makeMarbleMaterial(THREE: typeof import("three"), primary: string, secondary: string, accent: string) {
   return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: true,
     uniforms: {
       uTime: { value: 0 },
       uPrimary: { value: new THREE.Color(primary) },
@@ -119,53 +121,83 @@ function makeMarbleMaterial(THREE: typeof import("three"), primary: string, seco
       varying vec3 vNormalW;
       varying vec3 vWorld;
       void main(){
+        vec3 n = normalize(vNormalW);
         vec3 viewDir = normalize(cameraPosition - vWorld);
-        float fresnel = pow(1.0 - max(dot(normalize(vNormalW), viewDir),0.0), 2.4);
-        float s1 = sin((vObj.x*8.0 + vObj.z*6.0) + sin(vObj.y*13.0 + uTime*0.8)*2.1 + uTime*0.35);
-        float s2 = sin(vObj.y*17.0 - vObj.x*7.0 + uTime*0.22);
-        float neb = clamp((s1*0.52 + s2*0.28) * 0.5 + 0.5, 0.0, 1.0);
-        vec3 base = mix(uPrimary * 0.42, uSecondary, neb);
-        float spark = pow(max(0.0, sin((vObj.x+vObj.y+vObj.z)*43.0 + uTime*0.1)), 28.0);
-        base += uAccent * (0.18 + 0.28 * (1.0-neb));
-        base += vec3(1.0) * spark * 0.75;
-        base += mix(uSecondary,uAccent,0.45) * fresnel * 1.3;
-        float highlight = pow(max(dot(normalize(vNormalW), normalize(vec3(-0.4,0.9,0.3))),0.0),18.0);
-        base += vec3(1.0) * highlight * 1.2;
-        gl_FragColor = vec4(base,1.0);
+        float fresnel = pow(1.0 - max(dot(n, viewDir), 0.0), 2.15);
+
+        float flowA = sin(vObj.x * 3.0 + vObj.z * 2.25 + sin(vObj.y * 3.6 + uTime * 0.22) * 0.8 + uTime * 0.14);
+        float flowB = sin(vObj.y * 4.1 - vObj.x * 2.05 + vObj.z * 1.4 - uTime * 0.11);
+        float nebula = clamp(0.5 + flowA * 0.16 + flowB * 0.11, 0.0, 1.0);
+
+        float innerGlow = 0.55 + 0.45 * max(0.0, dot(normalize(vObj + vec3(-0.24,0.42,0.18)), normalize(vec3(-0.4,0.65,0.4))));
+        vec3 glass = mix(uPrimary * 0.42, uSecondary * 0.82, nebula);
+        glass += uAccent * (0.08 + nebula * 0.12);
+        glass *= 0.72 + innerGlow * 0.38;
+
+        float broadHighlight = pow(max(dot(n, normalize(vec3(-0.38,0.82,0.38))), 0.0), 10.0);
+        vec3 rim = mix(uSecondary, uAccent, 0.42) * fresnel * 1.35;
+        vec3 color = glass + rim + vec3(1.0) * broadHighlight * 0.68;
+        color += uSecondary * pow(fresnel, 4.0) * 0.38;
+
+        float alpha = 0.94 + fresnel * 0.05;
+        gl_FragColor = vec4(color, alpha);
       }
     `,
   });
 }
 
-function makeFloorMaterial(THREE: typeof import("three"), floor: string, accent: string) {
+function makeFloorMaterial(THREE: typeof import("three"), floor: string, secondary: string, accent: string) {
   return new THREE.ShaderMaterial({
-    transparent: false,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
     uniforms: {
+      uTime: { value: 0 },
       uFloor: { value: new THREE.Color(floor) },
+      uSecondary: { value: new THREE.Color(secondary) },
       uAccent: { value: new THREE.Color(accent) },
     },
     vertexShader: `
       varying vec2 vUv;
-      varying vec3 vPos;
+      varying vec3 vWorld;
+      varying vec3 vNormalW;
       void main(){
         vUv = uv;
-        vPos = position;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        vec4 world = modelMatrix * vec4(position,1.0);
+        vWorld = world.xyz;
+        vNormalW = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * world;
       }
     `,
     fragmentShader: `
+      precision highp float;
       varying vec2 vUv;
-      varying vec3 vPos;
+      varying vec3 vWorld;
+      varying vec3 vNormalW;
+      uniform float uTime;
       uniform vec3 uFloor;
+      uniform vec3 uSecondary;
       uniform vec3 uAccent;
+
       void main(){
         vec2 p = vUv - 0.5;
-        float vignette = 1.0 - smoothstep(0.15,0.72,length(p));
-        float gridX = pow(1.0 - abs(sin(vUv.x*115.0)), 30.0);
-        float gridY = pow(1.0 - abs(sin(vUv.y*115.0)), 30.0);
-        float grid = max(gridX,gridY) * 0.035;
-        vec3 c = uFloor * (0.72 + vignette*0.25) + uAccent * (0.035 + grid);
-        gl_FragColor = vec4(c,1.0);
+        vec3 viewDir = normalize(cameraPosition - vWorld);
+        float fresnel = pow(1.0 - max(dot(normalize(vNormalW), viewDir), 0.0), 2.0);
+
+        float waveA = sin(vUv.x * 11.0 + vUv.y * 7.0 + uTime * 0.32);
+        float waveB = sin(vUv.y * 14.0 - vUv.x * 5.0 - uTime * 0.24);
+        float waveC = sin((vUv.x + vUv.y) * 18.0 + uTime * 0.16);
+        float crystal = 0.5 + 0.5 * sin(waveA * 1.4 + waveB * 1.15 + waveC * 0.55);
+        float vein = smoothstep(0.76, 0.98, crystal) * 0.34;
+        float centerGlow = 1.0 - smoothstep(0.08, 0.76, length(p));
+
+        vec3 base = uFloor * 0.34;
+        base += uSecondary * (0.07 + crystal * 0.10);
+        base += uAccent * (0.05 + vein * 0.42 + centerGlow * 0.06);
+        base += mix(uSecondary, vec3(1.0), 0.22) * fresnel * 0.24;
+
+        float alpha = 0.38 + crystal * 0.08 + fresnel * 0.10;
+        gl_FragColor = vec4(base, alpha);
       }
     `,
   });
@@ -179,6 +211,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
   const sensorRef = useRef({ active: false, neutralBeta: 0, neutralGamma: 0, beta: 0, gamma: 0 });
   const resetRef = useRef<(() => void) | null>(null);
   const startRef = useRef<(() => void) | null>(null);
+  const cameraReturnRef = useRef<(() => void) | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [controlMode, setControlModeState] = useState<ControlMode>("keys");
   const controlModeRef = useRef<ControlMode>("keys");
@@ -250,6 +283,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       if (event.code === "ArrowDown" || event.code === "KeyS") controlsRef.current.down = down;
       if (event.code === "ArrowLeft" || event.code === "KeyA") controlsRef.current.left = down;
       if (event.code === "ArrowRight" || event.code === "KeyD") controlsRef.current.right = down;
+      if (down && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) cameraReturnRef.current?.();
       if (down && event.code === "KeyR") resetRef.current?.();
       if (down && event.code === "Space" && phaseRef.current === "ready") startRef.current?.();
     };
@@ -278,6 +312,11 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+    changePhase("loading");
+    setElapsed(0);
+    setSpeed(0);
+    setCheckpoint(0);
+    setResets(0);
     let cancelled = false;
     let frame = 0;
     let resizeObserver: ResizeObserver | null = null;
@@ -301,7 +340,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       const displayWall = liftColor(style.walls, 0.48);
       const displayAccent = liftColor(style.accent, 0.5);
       const displayMarbleSecondary = liftColor(style.marbleSecondary, 0.5);
-      const displayFloor = new THREE.Color(style.floor).lerp(new THREE.Color("#050817"), 0.68);
+      const displayFloor = new THREE.Color(style.floor).lerp(new THREE.Color("#050817"), 0.46);
       const wallHex = `#${displayWall.getHexString()}`;
       const accentHex = `#${displayAccent.getHexString()}`;
       const marbleSecondaryHex = `#${displayMarbleSecondary.getHexString()}`;
@@ -365,51 +404,95 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       scene.add(boardGroup);
 
       const floorGeometry = new THREE.PlaneGeometry(manifest.width, manifest.depth, 1, 1);
-      const floorMaterial = makeFloorMaterial(THREE, floorHex, accentHex);
+      const floorMaterial = makeFloorMaterial(THREE, floorHex, marbleSecondaryHex, accentHex);
       const floor = new THREE.Mesh(floorGeometry, floorMaterial);
       floor.rotation.x = -Math.PI / 2;
-      floor.position.y = 0;
+      floor.position.y = -0.005;
+      floor.renderOrder = 1;
       boardGroup.add(floor);
 
-      const underlay = new THREE.Mesh(
-        new THREE.BoxGeometry(manifest.width + 0.65, 0.24, manifest.depth + 0.65),
-        new THREE.MeshStandardMaterial({ color: floorHex, metalness: 0.52, roughness: 0.24 }),
+      // A faint luminous membrane under the transparent crystal floor keeps the board readable
+      // without hiding the mountain world beneath it.
+      const floorGlow = new THREE.Mesh(
+        new THREE.PlaneGeometry(manifest.width * 1.006, manifest.depth * 1.006),
+        new THREE.MeshBasicMaterial({ color: accentHex, transparent: true, opacity: 0.035, blending: THREE.AdditiveBlending, depthWrite: false }),
       );
-      underlay.position.y = -0.19;
-      boardGroup.add(underlay);
+      floorGlow.rotation.x = -Math.PI / 2;
+      floorGlow.position.y = -0.035;
+      floorGlow.renderOrder = 0;
+      boardGroup.add(floorGlow);
 
       const wallGeometry = new THREE.BoxGeometry(1, 1, 1);
       const wallMaterial = new THREE.MeshStandardMaterial({
         color: wallHex,
-        emissive: displayWall.clone().multiplyScalar(0.38),
+        emissive: displayWall.clone().multiplyScalar(0.24),
         emissiveIntensity: 1,
         transparent: true,
-        opacity: 0.63,
-        roughness: 0.2,
-        metalness: 0.18,
+        opacity: 0.43,
+        roughness: 0.13,
+        metalness: 0.12,
+        side: THREE.DoubleSide,
+        depthWrite: false,
       });
       const wallMesh = new THREE.InstancedMesh(wallGeometry, wallMaterial, manifest.walls.length);
       wallMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-      const capMaterial = new THREE.MeshBasicMaterial({ color: wallHex, transparent: true, opacity: 0.9 });
-      const capMesh = new THREE.InstancedMesh(wallGeometry, capMaterial, manifest.walls.length);
-      capMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      wallMesh.renderOrder = 2;
+
+      // The body remains a single instanced box draw-call, but every pane overlaps slightly and
+      // receives a rounded luminous rail. This hides cell seams and makes the walls read as
+      // continuous framed crystal instead of stacked voxel boxes.
+      const railGeometry = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false);
+      const railMaterial = new THREE.MeshBasicMaterial({ color: wallHex, transparent: true, opacity: 0.88, blending: THREE.AdditiveBlending, depthWrite: false });
+      const railMesh = new THREE.InstancedMesh(railGeometry, railMaterial, manifest.walls.length);
+      railMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      railMesh.renderOrder = 3;
+
+      const endpointMap = new Map<string, { x: number; z: number }>();
+      for (const wall of manifest.walls) {
+        if (wall.axis === "x") {
+          endpointMap.set(`${(wall.x - wall.length / 2).toFixed(4)}:${wall.z.toFixed(4)}`, { x: wall.x - wall.length / 2, z: wall.z });
+          endpointMap.set(`${(wall.x + wall.length / 2).toFixed(4)}:${wall.z.toFixed(4)}`, { x: wall.x + wall.length / 2, z: wall.z });
+        } else {
+          endpointMap.set(`${wall.x.toFixed(4)}:${(wall.z - wall.length / 2).toFixed(4)}`, { x: wall.x, z: wall.z - wall.length / 2 });
+          endpointMap.set(`${wall.x.toFixed(4)}:${(wall.z + wall.length / 2).toFixed(4)}`, { x: wall.x, z: wall.z + wall.length / 2 });
+        }
+      }
+      const postMesh = new THREE.InstancedMesh(railGeometry, railMaterial, endpointMap.size);
+      postMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      postMesh.renderOrder = 3;
+
       const matrix = new THREE.Matrix4();
       const quat = new THREE.Quaternion();
+      const quatX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+      const quatZ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
       const scale = new THREE.Vector3();
       const pos = new THREE.Vector3();
+      const visualOverlap = PHYSICS.wallThickness * 0.92;
+      const railRadius = PHYSICS.wallThickness * 0.47;
       manifest.walls.forEach((wall, i) => {
+        const visualLength = wall.length + visualOverlap;
         pos.set(wall.x, PHYSICS.wallHeight / 2, wall.z);
-        scale.set(wall.axis === "x" ? wall.length : PHYSICS.wallThickness, PHYSICS.wallHeight, wall.axis === "z" ? wall.length : PHYSICS.wallThickness);
+        scale.set(wall.axis === "x" ? visualLength : PHYSICS.wallThickness, PHYSICS.wallHeight, wall.axis === "z" ? visualLength : PHYSICS.wallThickness);
         matrix.compose(pos, quat, scale);
         wallMesh.setMatrixAt(i, matrix);
-        pos.set(wall.x, PHYSICS.wallHeight + 0.045, wall.z);
-        scale.set(wall.axis === "x" ? wall.length + 0.03 : PHYSICS.wallThickness * 1.25, 0.055, wall.axis === "z" ? wall.length + 0.03 : PHYSICS.wallThickness * 1.25);
+
+        pos.set(wall.x, PHYSICS.wallHeight + 0.018, wall.z);
+        scale.set(railRadius, visualLength, railRadius);
+        matrix.compose(pos, wall.axis === "x" ? quatX : quatZ, scale);
+        railMesh.setMatrixAt(i, matrix);
+      });
+      let postIndex = 0;
+      endpointMap.forEach((endpoint) => {
+        pos.set(endpoint.x, PHYSICS.wallHeight / 2, endpoint.z);
+        scale.set(railRadius, PHYSICS.wallHeight + 0.07, railRadius);
         matrix.compose(pos, quat, scale);
-        capMesh.setMatrixAt(i, matrix);
+        postMesh.setMatrixAt(postIndex, matrix);
+        postIndex += 1;
       });
       wallMesh.instanceMatrix.needsUpdate = true;
-      capMesh.instanceMatrix.needsUpdate = true;
-      boardGroup.add(wallMesh, capMesh);
+      railMesh.instanceMatrix.needsUpdate = true;
+      postMesh.instanceMatrix.needsUpdate = true;
+      boardGroup.add(wallMesh, railMesh, postMesh);
 
       const goalGroup = new THREE.Group();
       goalGroup.position.set(manifest.goal.x, 0.035, manifest.goal.z);
@@ -425,6 +508,12 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       );
       goalRing.rotation.x = Math.PI / 2;
       goalGroup.add(goalRing);
+      const goalBeam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.2, 0.72, 2.8, 24, 1, true),
+        new THREE.MeshBasicMaterial({ color: accentHex, transparent: true, opacity: 0.075, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+      );
+      goalBeam.position.y = 1.38;
+      goalGroup.add(goalBeam);
       boardGroup.add(goalGroup);
 
       const checkpointGroups = manifest.checkpoints.map((cp, idx) => {
@@ -440,14 +529,19 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         return g;
       });
 
-      const gateGeometry = new THREE.BoxGeometry(1, 1, 1);
-      const gateMaterial = new THREE.MeshStandardMaterial({ color: accentHex, emissive: accentHex, emissiveIntensity: 0.6, metalness: 0.55, roughness: 0.18 });
+      const gateBarGeometry = new THREE.CylinderGeometry(0.11, 0.11, 1, 12, 1, false);
+      const gateHubGeometry = new THREE.SphereGeometry(0.16, 14, 10);
+      const gateMaterial = new THREE.MeshStandardMaterial({ color: accentHex, emissive: accentHex, emissiveIntensity: 0.7, metalness: 0.48, roughness: 0.12 });
       const gateMeshes = manifest.gates.map((gate) => {
-        const mesh = new THREE.Mesh(gateGeometry, gateMaterial);
-        mesh.scale.set(gate.length, 0.46, 0.16);
-        mesh.position.set(gate.x, 0.32, gate.z);
-        boardGroup.add(mesh);
-        return mesh;
+        const group = new THREE.Group();
+        const bar = new THREE.Mesh(gateBarGeometry, gateMaterial);
+        bar.rotation.z = Math.PI / 2;
+        bar.scale.y = gate.length;
+        const hub = new THREE.Mesh(gateHubGeometry, gateMaterial);
+        group.add(bar, hub);
+        group.position.set(gate.x, 0.34, gate.z);
+        boardGroup.add(group);
+        return group;
       });
 
       const bumperGeometry = new THREE.CylinderGeometry(1, 1, 0.56, 20);
@@ -469,15 +563,31 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       boardGroup.add(bumperMesh);
 
       const marbleMaterial = makeMarbleMaterial(THREE, style.marble, marbleSecondaryHex, accentHex);
+      const marbleGroup = new THREE.Group();
+      marbleGroup.position.set(manifest.start.x, PHYSICS.ballRadius + 0.04, manifest.start.z);
       const marbleMesh = new THREE.Mesh(new THREE.SphereGeometry(PHYSICS.ballRadius, 44, 30), marbleMaterial);
-      marbleMesh.position.set(manifest.start.x, PHYSICS.ballRadius + 0.04, manifest.start.z);
-      boardGroup.add(marbleMesh);
+      marbleMesh.renderOrder = 5;
+      const marbleCore = new THREE.Mesh(
+        new THREE.SphereGeometry(PHYSICS.ballRadius * 0.78, 28, 20),
+        new THREE.MeshBasicMaterial({ color: marbleSecondaryHex, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      marbleCore.scale.set(0.92, 1.04, 0.92);
+      marbleCore.renderOrder = 5;
+      marbleGroup.add(marbleMesh, marbleCore);
+      boardGroup.add(marbleGroup);
       const shadowMesh = new THREE.Mesh(
-        new THREE.CircleGeometry(PHYSICS.ballRadius * 1.05, 30),
-        new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.28, depthWrite: false }),
+        new THREE.PlaneGeometry(PHYSICS.ballRadius * 2.35, PHYSICS.ballRadius * 2.35),
+        new THREE.ShaderMaterial({
+          transparent: true,
+          depthWrite: false,
+          uniforms: { uGlow: { value: new THREE.Color(marbleSecondaryHex) } },
+          vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+          fragmentShader: `varying vec2 vUv; uniform vec3 uGlow; void main(){ float d=length(vUv-0.5)*2.0; float a=(1.0-smoothstep(0.08,1.0,d)); vec3 c=mix(vec3(0.0),uGlow,0.12); gl_FragColor=vec4(c,a*0.24); }`,
+        }),
       );
       shadowMesh.rotation.x = -Math.PI / 2;
       shadowMesh.position.y = 0.012;
+      shadowMesh.renderOrder = 4;
       boardGroup.add(shadowMesh);
 
       const world = new RAPIER.World({ x: 0, y: -PHYSICS.gravity, z: 0 });
@@ -543,23 +653,55 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       let resetCount = 0;
       let runStartTick = 0;
       const replay: ReplayPoint[] = [];
-      const heading = new THREE.Vector3(
-        manifest.path[Math.min(1, manifest.path.length - 1)]!.x - manifest.start.x,
-        0,
-        manifest.path[Math.min(1, manifest.path.length - 1)]!.z - manifest.start.z,
-      ).normalize();
-      const headingTarget = new THREE.Vector3().copy(heading);
       const localBall = new THREE.Vector3();
-      const worldBall = new THREE.Vector3();
       const cameraLocal = new THREE.Vector3();
       const cameraWorld = new THREE.Vector3();
+      const followCameraWorld = new THREE.Vector3();
+      const overviewCameraWorld = new THREE.Vector3();
       const lookLocal = new THREE.Vector3();
       const lookWorld = new THREE.Vector3();
+      const followLookWorld = new THREE.Vector3();
+      const overviewLookWorld = new THREE.Vector3();
       const boardQuat = new THREE.Quaternion();
       const inverseBoardQuat = new THREE.Quaternion();
       const gravityVec = new THREE.Vector3();
       const velocityVec = new THREE.Vector3();
       const euler = new THREE.Euler();
+      const boardExtent = Math.max(manifest.width, manifest.depth);
+      let overviewTarget = 0;
+      let overviewMix = 0;
+      let cameraDragActive = false;
+      let cameraDragStartY = 0;
+      let cameraDragStartTarget = 0;
+
+      const returnToFollowCamera = () => { overviewTarget = 0; };
+      cameraReturnRef.current = returnToFollowCamera;
+
+      const onCameraPointerDown = (event: PointerEvent) => {
+        if (mobileish || event.button !== 0) return;
+        cameraDragActive = true;
+        cameraDragStartY = event.clientY;
+        cameraDragStartTarget = overviewTarget;
+        renderer.domElement.setPointerCapture?.(event.pointerId);
+        renderer.domElement.classList.add("camera-dragging");
+      };
+      const onCameraPointerMove = (event: PointerEvent) => {
+        if (!cameraDragActive || mobileish) return;
+        const drag = (event.clientY - cameraDragStartY) / 190;
+        overviewTarget = clamp(cameraDragStartTarget + drag, 0, 1);
+      };
+      const onCameraPointerUp = (event: PointerEvent) => {
+        if (!cameraDragActive) return;
+        cameraDragActive = false;
+        if (renderer.domElement.hasPointerCapture?.(event.pointerId)) renderer.domElement.releasePointerCapture?.(event.pointerId);
+        renderer.domElement.classList.remove("camera-dragging");
+      };
+      if (!mobileish) {
+        renderer.domElement.addEventListener("pointerdown", onCameraPointerDown);
+        renderer.domElement.addEventListener("pointermove", onCameraPointerMove);
+        renderer.domElement.addEventListener("pointerup", onCameraPointerUp);
+        renderer.domElement.addEventListener("pointercancel", onCameraPointerUp);
+      }
 
       const resetBall = () => {
         ballBody.setTranslation({ x: lastSafe.x, y: PHYSICS.ballRadius + 0.08, z: lastSafe.z }, true);
@@ -644,19 +786,46 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               replay.push({ tick: physicsTick - runStartTick, pitch: quantizedY, roll: quantizedX });
             }
 
-            const targetPitch = sampledInputY * maxTilt;
-            const targetRoll = -sampledInputX * maxTilt;
+            const directDesktop = controlModeRef.current === "keys";
             const alpha = 1 - Math.exp(-PHYSICS.fixedStep / PHYSICS.tiltSmoothSeconds);
-            currentPitch += (targetPitch - currentPitch) * alpha;
-            currentRoll += (targetRoll - currentRoll) * alpha;
+            if (directDesktop) {
+              // Desktop is intentionally easier and more arcade-readable: arrows/WASD apply
+              // a bounded physical force to the marble while the board stays level. The ball
+              // still accelerates, collides and rolls through Rapier; we never teleport it.
+              currentPitch += (0 - currentPitch) * alpha;
+              currentRoll += (0 - currentRoll) * alpha;
+              boardQuat.identity();
+              world.gravity.x = 0;
+              world.gravity.y = -PHYSICS.gravity;
+              world.gravity.z = 0;
+              ballBody.setLinearDamping(PHYSICS.desktopLinearDamping);
 
-            euler.set(currentPitch, 0, currentRoll, "XYZ");
-            boardQuat.setFromEuler(euler);
-            inverseBoardQuat.copy(boardQuat).invert();
-            gravityVec.set(0, -PHYSICS.gravity, 0).applyQuaternion(inverseBoardQuat);
-            world.gravity.x = gravityVec.x;
-            world.gravity.y = gravityVec.y;
-            world.gravity.z = gravityVec.z;
+              const inputMagnitude = Math.hypot(sampledInputX, sampledInputY);
+              if (inputMagnitude > 0.001) {
+                const normalizer = inputMagnitude > 1 ? 1 / inputMagnitude : 1;
+                ballBody.addForce({
+                  x: sampledInputX * normalizer * PHYSICS.desktopDriveForce,
+                  y: 0,
+                  z: -sampledInputY * normalizer * PHYSICS.desktopDriveForce,
+                }, true);
+                overviewTarget = 0;
+              }
+            } else {
+              // Mobile keeps the physical tilt fantasy: device/touch input rotates gravity
+              // and the board mesh mirrors that tilt while the collision world remains fixed.
+              ballBody.setLinearDamping(PHYSICS.linearDamping);
+              const targetPitch = sampledInputY * maxTilt;
+              const targetRoll = -sampledInputX * maxTilt;
+              currentPitch += (targetPitch - currentPitch) * alpha;
+              currentRoll += (targetRoll - currentRoll) * alpha;
+              euler.set(currentPitch, 0, currentRoll, "XYZ");
+              boardQuat.setFromEuler(euler);
+              inverseBoardQuat.copy(boardQuat).invert();
+              gravityVec.set(0, -PHYSICS.gravity, 0).applyQuaternion(inverseBoardQuat);
+              world.gravity.x = gravityVec.x;
+              world.gravity.y = gravityVec.y;
+              world.gravity.z = gravityVec.z;
+            }
 
             manifest.gates.forEach((gate, i) => {
               const angle = gate.phase + simTime * gate.speed;
@@ -670,8 +839,9 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
 
             const v = ballBody.linvel();
             const planarSpeed = Math.hypot(v.x, v.z);
-            if (planarSpeed > PHYSICS.maxSpeed) {
-              const factor = PHYSICS.maxSpeed / planarSpeed;
+            const speedLimit = controlModeRef.current === "keys" ? PHYSICS.desktopMaxSpeed : PHYSICS.maxSpeed;
+            if (planarSpeed > speedLimit) {
+              const factor = speedLimit / planarSpeed;
               ballBody.setLinvel({ x: v.x * factor, y: v.y, z: v.z * factor }, true);
             }
 
@@ -704,8 +874,8 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         boardGroup.quaternion.copy(boardQuat);
         const p = ballBody.translation();
         const r = ballBody.rotation();
-        marbleMesh.position.set(p.x, p.y, p.z);
-        marbleMesh.quaternion.set(r.x, r.y, r.z, r.w);
+        marbleGroup.position.set(p.x, p.y, p.z);
+        marbleGroup.quaternion.set(r.x, r.y, r.z, r.w);
         shadowMesh.position.set(p.x, 0.012, p.z);
         const heightFactor = clamp(1 - Math.abs(p.y - PHYSICS.ballRadius) * 0.9, 0.25, 1);
         shadowMesh.scale.setScalar(heightFactor);
@@ -716,8 +886,10 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         });
 
         if (marbleMaterial.uniforms?.uTime) marbleMaterial.uniforms.uTime.value = now;
+        if (floorMaterial.uniforms?.uTime) floorMaterial.uniforms.uTime.value = now;
         goalRing.rotation.z = now * 0.72;
         goalDisc.scale.setScalar(1 + Math.sin(now * 2.2) * 0.08);
+        goalBeam.scale.y = 0.92 + Math.sin(now * 1.35) * 0.08;
         checkpointGroups.forEach((g, i) => {
           const active = i === nextCheckpoint;
           g.scale.setScalar(active ? 1 + Math.sin(now * 3) * 0.08 : 1);
@@ -728,15 +900,22 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         localBall.set(p.x, p.y, p.z);
         const v = ballBody.linvel();
         velocityVec.set(v.x, 0, v.z);
-        if (velocityVec.lengthSq() > 0.28) {
-          headingTarget.copy(velocityVec).normalize();
-          heading.lerp(headingTarget, 1 - Math.exp(-dt * 1.9)).normalize();
-        }
-        cameraLocal.set(localBall.x - heading.x * 6.2, 5.0, localBall.z - heading.z * 6.2);
-        lookLocal.set(localBall.x + heading.x * 1.55, 0.55, localBall.z + heading.z * 1.55);
-        cameraWorld.copy(cameraLocal).applyQuaternion(boardGroup.quaternion);
-        lookWorld.copy(lookLocal).applyQuaternion(boardGroup.quaternion);
-        camera.position.lerp(cameraWorld, 1 - Math.exp(-dt * 5.5));
+
+        // Fixed north-up chase framing keeps desktop arrows intuitive: up always moves toward
+        // the top of the screen. Velocity only nudges the look target, never the control basis.
+        const lookLeadX = clamp(v.x * 0.24, -1.1, 1.1);
+        const lookLeadZ = clamp(v.z * 0.24, -1.1, 1.1);
+        cameraLocal.set(localBall.x, 5.35, localBall.z + 6.55);
+        lookLocal.set(localBall.x + lookLeadX, 0.48, localBall.z + lookLeadZ - 0.65);
+        followCameraWorld.copy(cameraLocal).applyQuaternion(boardGroup.quaternion);
+        followLookWorld.copy(lookLocal).applyQuaternion(boardGroup.quaternion);
+
+        overviewCameraWorld.set(0, boardExtent * 1.0 + 5.0, boardExtent * 0.55);
+        overviewLookWorld.set(0, 0, 0);
+        overviewMix += (overviewTarget - overviewMix) * (1 - Math.exp(-dt * 4.6));
+        cameraWorld.copy(followCameraWorld).lerp(overviewCameraWorld, overviewMix);
+        lookWorld.copy(followLookWorld).lerp(overviewLookWorld, overviewMix);
+        camera.position.lerp(cameraWorld, 1 - Math.exp(-dt * 6.2));
         camera.lookAt(lookWorld);
 
         if (now >= nextHudAt) {
@@ -763,6 +942,12 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       };
       frame = requestAnimationFrame(renderFrame);
       disposeEngine = () => {
+        if (!mobileish) {
+          renderer.domElement.removeEventListener("pointerdown", onCameraPointerDown);
+          renderer.domElement.removeEventListener("pointermove", onCameraPointerMove);
+          renderer.domElement.removeEventListener("pointerup", onCameraPointerUp);
+          renderer.domElement.removeEventListener("pointercancel", onCameraPointerUp);
+        }
         scene.traverse((object) => {
           const mesh = object as import("three").Mesh;
           if (mesh.geometry) mesh.geometry.dispose();
@@ -783,6 +968,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       resizeObserver?.disconnect();
       resetRef.current = null;
       startRef.current = null;
+      cameraReturnRef.current = null;
       disposeEngine?.();
       while (mount.firstChild) mount.removeChild(mount.firstChild);
     };
@@ -843,19 +1029,20 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
           <span className="game-kicker">{manifest.profile.subtitle}</span>
           <h1>Enter the Orb.</h1>
           <p>
-            Roll a living glass marble through a unique deterministic maze. Tilt the world; never push the ball directly.
+            Roll a luminous glass marble through a unique deterministic maze. Desktop gets direct physical steering; mobile keeps the full tilt-board experience.
           </p>
           <div className="game-ready-stats">
             <div><span>PATH</span><strong>{manifest.path.length} cells</strong></div>
             <div><span>MODULES</span><strong>{manifest.gates.length + manifest.bumpers.length}</strong></div>
-            <div><span>TILT</span><strong>±{manifest.profile.maxTiltDeg}°</strong></div>
+            <div><span>CONTROL</span><strong>Direct / tilt</strong></div>
           </div>
           <div className="game-ready-actions">
             <button className="btn-primary" onClick={begin}>Start run</button>
             {sensorAvailable ? <button className="btn-secondary" onClick={requestMotion}>Enable device tilt</button> : null}
           </div>
           <div className="game-controls-hint">
-            <span>Desktop · ↑ ↓ ← → or WASD</span>
+            <span>Desktop · ↑ ↓ ← → directly roll the marble</span>
+            <span>Desktop camera · drag down to pull back</span>
             <span>Mobile · device tilt or touch pad</span>
             <span>R · recover</span>
           </div>
@@ -885,11 +1072,15 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
           onPointerMove={touchMove}
           onPointerUp={touchEnd}
           onPointerCancel={touchEnd}
-          aria-label="Touch tilt control"
+          aria-label="Touch board tilt control"
         >
           <div className="game-touch-knob" />
           <span>TILT</span>
         </div>
+      ) : null}
+
+      {(phase === "playing" || phase === "ready") && controlMode === "keys" ? (
+        <div className="game-camera-hint">Drag down on the world to pull back · movement returns to chase view</div>
       ) : null}
 
       {phase === "playing" && sensorAvailable ? (

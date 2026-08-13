@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
-import { BONK_GAME_STYLE, DEFAULT_GAME_STYLE } from "@/game/constants";
+import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
 import type { DifficultyKey, GameStyle } from "@/game/types";
 
 const names = ["Identity", "Prize", "Game", "Launch", "Review", "Share"];
@@ -14,18 +14,8 @@ const profiles: { key: DifficultyKey; name: string; label: string; time: string 
   { key: "brutal", name: "Brutal", label: "Hard", time: "~15 min" },
 ];
 
-const presetStyles: { name: string; style: GameStyle }[] = [
-  { name: "Orbs", style: DEFAULT_GAME_STYLE },
-  { name: "BONK", style: BONK_GAME_STYLE },
-  {
-    name: "Aurora",
-    style: { marble: "#20E3D2", marbleSecondary: "#7EF5FF", walls: "#9A5CFF", floor: "#071126", accent: "#41B7FF" },
-  },
-  {
-    name: "Solar",
-    style: { marble: "#FF8B36", marbleSecondary: "#FFE66D", walls: "#FF4FC8", floor: "#160918", accent: "#20E3D2" },
-  },
-];
+const presetStyles = GAME_STYLE_PRESETS;
+
 
 export default function CreateWizard() {
   const [step, setStep] = useState(0);

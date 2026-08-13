@@ -61,6 +61,23 @@ export const BONK_GAME_STYLE: GameStyle = {
   accent: "#FF8B36",
 };
 
+export const GAME_STYLE_PRESETS: ReadonlyArray<{ name: string; style: GameStyle }> = [
+  { name: "Orbs", style: DEFAULT_GAME_STYLE },
+  { name: "BONK", style: BONK_GAME_STYLE },
+  {
+    name: "Aurora",
+    style: { marble: "#20E3D2", marbleSecondary: "#7EF5FF", walls: "#9A5CFF", floor: "#071126", accent: "#41B7FF" },
+  },
+  {
+    name: "Solar",
+    style: { marble: "#FF8B36", marbleSecondary: "#FFE66D", walls: "#FF4FC8", floor: "#160918", accent: "#20E3D2" },
+  },
+  {
+    name: "Obsidian",
+    style: { marble: "#7857FF", marbleSecondary: "#D7D1FF", walls: "#6DE5FF", floor: "#030511", accent: "#A975FF" },
+  },
+];
+
 export const PHYSICS = {
   fixedStep: 1 / 60,
   gravity: 9.81,
@@ -70,6 +87,9 @@ export const PHYSICS = {
   floorThickness: 0.18,
   linearDamping: 0.13,
   angularDamping: 0.12,
+  desktopLinearDamping: 0.42,
+  desktopDriveForce: 0.95,
+  desktopMaxSpeed: 6.4,
   friction: 0.42,
   restitution: 0.08,
   maxSpeed: 8.5,
