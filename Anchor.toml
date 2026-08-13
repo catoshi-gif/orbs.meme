@@ -1,0 +1,19 @@
+[toolchain]
+anchor_version = "0.32.1"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+orbs_protocol = "HbBoHU9bT4eFSvGW7zjZFy7nEMN2dPKGt5wCd7ePKbPv"
+
+[programs.mainnet]
+orbs_protocol = "HbBoHU9bT4eFSvGW7zjZFy7nEMN2dPKGt5wCd7ePKbPv"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cd anchor-tests && npm test"

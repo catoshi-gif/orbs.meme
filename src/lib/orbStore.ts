@@ -5,10 +5,10 @@ import { generateGameManifestFromSecret } from "@/game/maze";
 import type { DifficultyKey, GameManifest, GameStyle } from "@/game/types";
 import type { WalletSplToken } from "@/lib/walletTokens";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber } from "@/lib/prizeEconomics";
+import { usdMicrosForRawAmount } from "@/lib/prizeQuote";
 import type { XProfile } from "@/lib/xAuth";
 import { redisCommand, redisGetJson, upstashConfigured } from "@/lib/upstash";
-import { activeHostedOrbKey, enteredOrbsKey, isAdminWallet, ORB_COMPETITION_WINDOW_MS, ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
-import { getWinner, getWinners } from "@/lib/upstashWinner";
+import { activeHostedOrbKey, enteredOrbsKey, isAdminWallet, ORB_COMPETITION_WINDOW_MS, ORB_CREATION_MIN_LEAD_MS, ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
 
 export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice">;
 
@@ -19,7 +19,7 @@ export type OrbRecord = {
   createdAt: number;
   startsAt: number;
   endsAt?: number;
-  status: "scheduled-test" | "live-test" | "won-test";
+  status: "funding-pending" | "scheduled" | "scheduled-test" | "live-test" | "won-test";
   hostWallet: string;
   hostX: XProfile;
   difficulty: DifficultyKey;
@@ -28,10 +28,15 @@ export type OrbRecord = {
   prizeTokenAmount: number;
   prizeRawAmount: string;
   prizeUsd: number;
+  prizeUsdMicros: string;
   feeUsd: number;
   feeTokenAmount: number;
   feeRawAmount: string;
   priceQuotedAt: number;
+  fundingQuoteExpiresAt: number;
+  fundingTxSignature?: string;
+  orbPda?: string;
+  prizeVault?: string;
   generatorVersion: string;
   physicsVersion: string;
   rapierVersion: string;
@@ -89,11 +94,6 @@ async function releaseActiveLock(wallet: string, slug: string) {
   ]);
 }
 
-export async function releaseActiveHostedOrb(wallet: string, slug: string) {
-  if (!upstashConfigured() || isAdminWallet(wallet)) return;
-  await releaseActiveLock(wallet, slug);
-}
-
 export async function getActiveHostedOrb(wallet: string): Promise<PublicOrbRecord | null> {
   if (!upstashConfigured() || isAdminWallet(wallet)) return null;
   const slug = await redisCommand<string>(["GET", activeHostedOrbKey(wallet)]);
@@ -101,10 +101,13 @@ export async function getActiveHostedOrb(wallet: string): Promise<PublicOrbRecor
     // Backfill the lock for Orbs created before the one-active rule shipped.
     // This runs only on creator/dashboard policy checks and keeps deployment migration DB-light.
     const hosted = await listHostedOrbs(wallet, 100);
-    const winners = await getWinners(hosted.map((orb) => orb.id));
-    const legacyActive = hosted.find((orb) => Date.now() < orbEndsAt(orb) && !winners.has(orb.id));
+    const now = Date.now();
+    const legacyActive = hosted.find((orb) =>
+      now < orbEndsAt(orb) && (orb.status !== "funding-pending" || orb.fundingQuoteExpiresAt > now)
+    );
     if (!legacyActive) return null;
-    const ttl = Math.max(60, Math.ceil((orbEndsAt(legacyActive) - Date.now()) / 1000));
+    const lockUntil = legacyActive.status === "funding-pending" ? legacyActive.fundingQuoteExpiresAt + 60_000 : orbEndsAt(legacyActive);
+    const ttl = Math.max(60, Math.ceil((lockUntil - Date.now()) / 1000));
     const stored = await redisCommand<string>(["SET", activeHostedOrbKey(wallet), legacyActive.slug, "NX", "EX", ttl]);
     if (stored === "OK") return legacyActive;
     const competingLock = await redisCommand<string>(["GET", activeHostedOrbKey(wallet)]);
@@ -116,8 +119,9 @@ export async function getActiveHostedOrb(wallet: string): Promise<PublicOrbRecor
     await releaseActiveLock(wallet, slug);
     return null;
   }
-  const winner = await getWinner(record.id);
-  if (winner || Date.now() >= orbEndsAt(record)) {
+  const now = Date.now();
+  const pendingExpired = record.status === "funding-pending" && record.fundingQuoteExpiresAt <= now;
+  if (pendingExpired || now >= orbEndsAt(record)) {
     await releaseActiveLock(wallet, slug);
     return null;
   }
@@ -139,6 +143,7 @@ export async function createTestOrb(input: {
   quotedUsdPrice: number;
   feeRawAmount: string;
   priceQuotedAt: number;
+  fundingQuoteExpiresAt: number;
   startsAt: number;
 }) {
   if (!orbStoreConfigured()) throw new Error("Orb storage is not configured");
@@ -146,12 +151,15 @@ export async function createTestOrb(input: {
   if (!input.token.eligible) throw new Error(input.token.ineligibleReason || "Selected token is not fundable");
   if (!Number.isFinite(input.prizeTokenAmount) || input.prizeTokenAmount <= 0 || !/^\d+$/.test(input.prizeRawAmount)) throw new Error("Invalid prize amount");
   if (!Number.isFinite(input.quotedUsdPrice) || input.quotedUsdPrice <= 0 || !/^\d+$/.test(input.feeRawAmount)) throw new Error("Invalid funding quote");
+  if (!Number.isFinite(input.fundingQuoteExpiresAt) || input.fundingQuoteExpiresAt <= Date.now()) throw new Error("Funding quote expired");
   const prizeUsd = input.prizeTokenAmount * input.quotedUsdPrice;
   if (prizeUsd < MIN_PRIZE_USD) throw new Error(`Prize must be at least $${MIN_PRIZE_USD.toFixed(2)}`);
+  const prizeUsdMicros = usdMicrosForRawAmount(BigInt(input.prizeRawAmount), input.token.decimals, input.quotedUsdPrice);
+  if (prizeUsdMicros < BigInt(Math.round(MIN_PRIZE_USD * 1_000_000))) throw new Error(`Prize must be at least $${MIN_PRIZE_USD.toFixed(2)}`);
   const feeTokenAmount = rawToTokenNumber(input.feeRawAmount, input.token.decimals);
   const requiredRaw = BigInt(input.prizeRawAmount) + BigInt(input.feeRawAmount);
   if (requiredRaw > BigInt(input.token.rawAmount)) throw new Error(`Wallet balance does not cover the prize plus the $${ORBS_FEE_USD.toFixed(2)} Orbs fee`);
-  if (!Number.isFinite(input.startsAt) || input.startsAt < Date.now() + 30_000) throw new Error("Launch must be at least 30 seconds in the future");
+  if (!Number.isFinite(input.startsAt) || input.startsAt < Date.now() + ORB_CREATION_MIN_LEAD_MS) throw new Error("Launch must be at least 60 seconds in the future");
   if (input.startsAt > Date.now() + 1000 * 60 * 60 * 24 * 30) throw new Error("Launch must be within 30 days");
 
   const id = randomBytes(16).toString("hex");
@@ -167,11 +175,13 @@ export async function createTestOrb(input: {
     prizeTokenAmount: input.prizeTokenAmount,
     prizeRawAmount: input.prizeRawAmount,
     prizeUsd,
+    prizeUsdMicros: prizeUsdMicros.toString(),
     feeUsd: ORBS_FEE_USD,
     feeTokenAmount,
     feeRawAmount: input.feeRawAmount,
     tokenPriceUsd: input.quotedUsdPrice,
     priceQuotedAt: input.priceQuotedAt,
+    fundingQuoteExpiresAt: input.fundingQuoteExpiresAt,
     startsAt: input.startsAt,
     generatorVersion: GAME_GENERATOR_VERSION,
     physicsVersion: GAME_PHYSICS_VERSION,
@@ -185,7 +195,7 @@ export async function createTestOrb(input: {
     createdAt: Date.now(),
     startsAt: Math.floor(input.startsAt),
     endsAt: Math.floor(input.startsAt) + ORB_COMPETITION_WINDOW_MS,
-    status: "scheduled-test",
+    status: "funding-pending",
     hostWallet: input.hostWallet,
     hostX: input.hostX,
     difficulty: input.difficulty,
@@ -201,10 +211,12 @@ export async function createTestOrb(input: {
     prizeTokenAmount: input.prizeTokenAmount,
     prizeRawAmount: input.prizeRawAmount,
     prizeUsd,
+    prizeUsdMicros: prizeUsdMicros.toString(),
     feeUsd: ORBS_FEE_USD,
     feeTokenAmount,
     feeRawAmount: input.feeRawAmount,
     priceQuotedAt: input.priceQuotedAt,
+    fundingQuoteExpiresAt: input.fundingQuoteExpiresAt,
     generatorVersion: GAME_GENERATOR_VERSION,
     physicsVersion: GAME_PHYSICS_VERSION,
     rapierVersion: RAPIER_VERSION,
@@ -218,7 +230,7 @@ export async function createTestOrb(input: {
     const active = await getActiveHostedOrb(record.hostWallet);
     if (active) throw new Error(`This wallet already has an active Orb (${active.slug}). It can create another after that race closes.`);
   }
-  const activeTtl = Math.max(60, Math.ceil((orbEndsAt(record) - Date.now()) / 1000));
+  const activeTtl = Math.max(60, Math.ceil((record.fundingQuoteExpiresAt - Date.now()) / 1000) + 60);
   const storeScript = `
     if ARGV[5] == '1' then
       local locked = redis.call('SET', KEYS[3], ARGV[4], 'NX', 'EX', ARGV[6])
@@ -251,6 +263,26 @@ export async function createTestOrb(input: {
   return publicRecord(record);
 }
 
+export async function finalizeFundedOrb(slug: string, fundingTxSignature: string, orbPda: string, prizeVault: string) {
+  const record = await getOrbRecord(slug);
+  if (!record) throw new Error("Orb funding record was not found");
+  if (record.status !== "funding-pending") return publicRecord(record);
+  const funded: OrbRecord = { ...record, status: "scheduled", fundingTxSignature, orbPda, prizeVault };
+  const ttl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(funded) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
+  const activeTtl = Math.max(60, Math.ceil((orbEndsAt(funded) - Date.now()) / 1000));
+  const script = `
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    if ARGV[3] == '1' then redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[5]) end
+    return 'OK'
+  `;
+  const result = await redisCommand<string>([
+    "EVAL", script, "2", orbKey(slug), activeHostedOrbKey(funded.hostWallet),
+    JSON.stringify(funded), String(ttl), isAdminWallet(funded.hostWallet) ? "0" : "1", slug, String(activeTtl),
+  ]);
+  if (result !== "OK") throw new Error("Could not finalize funded Orb");
+  return publicRecord(funded);
+}
+
 export async function getOrbRecord(slug: string) {
   if (!upstashConfigured()) return null;
   return redisGetJson<OrbRecord>(orbKey(slug));
@@ -258,7 +290,7 @@ export async function getOrbRecord(slug: string) {
 
 export async function getPublicOrb(slug: string): Promise<PublicOrbRecord | null> {
   const record = await getOrbRecord(slug);
-  return record ? publicRecord(record) : null;
+  return record && record.status !== "funding-pending" ? publicRecord(record) : null;
 }
 
 export async function listHostedOrbs(wallet: string, limit = 50): Promise<PublicOrbRecord[]> {
@@ -297,7 +329,7 @@ export async function listEnteredOrbs(wallet: string, limit = 50): Promise<Publi
 
 export async function getCanonicalOrbManifest(slug: string): Promise<{ record: OrbRecord; manifest: GameManifest; manifestHash: string }> {
   const record = await getOrbRecord(slug);
-  if (!record) throw new Error("ORB_NOT_FOUND");
+  if (!record || record.status === "funding-pending") throw new Error("ORB_NOT_FOUND");
   if (Date.now() < record.startsAt) throw new Error("ORB_NOT_LIVE");
   if (record.generatorVersion !== GAME_GENERATOR_VERSION || record.physicsVersion !== GAME_PHYSICS_VERSION || record.rapierVersion !== RAPIER_VERSION) {
     throw new Error("ORB_VERSION_UNSUPPORTED");

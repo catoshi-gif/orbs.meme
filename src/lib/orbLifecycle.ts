@@ -1,4 +1,7 @@
 export const ORB_COMPETITION_WINDOW_MS = 6 * 60 * 60 * 1000;
+// Keep a browser/server safety margin above the on-chain 30-second minimum so
+// wallet approval and RPC propagation do not race the immutable start gate.
+export const ORB_CREATION_MIN_LEAD_MS = 60 * 1000;
 export const ORB_HISTORY_TTL_SECONDS = 90 * 24 * 60 * 60;
 
 const TEST_ADMIN_WALLET = "EDxq8pn8assS3Zoco5UBm3suPNu6oum3fzEwCsZixWC4";

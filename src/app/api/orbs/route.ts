@@ -83,8 +83,16 @@ export async function POST(request: Request) {
     const quote = prizeQuoteToken ? verifyPrizeQuote(prizeQuoteToken) : null;
     if (!quote) throw new Error("Your funding quote expired. Go back to Prize and reopen the token list to refresh it.");
     if (quote.wallet !== hostWallet || quote.mint !== mint) throw new Error("Funding quote does not match this wallet and token");
-    const hostAuthorized = await consumeHostAuthorization(hostWallet, x.user.id, hostAuthorizationSignature);
-    if (!hostAuthorized) return NextResponse.json({ ok: false, error: "Host-wallet authorization expired or was rejected. Please approve it again." }, { status: 401 });
+    const authorizedPrizeRaw = tokenInputToRaw(prizeText, quote.decimals);
+    if (authorizedPrizeRaw === null || authorizedPrizeRaw <= BigInt(0)) throw new Error("Invalid prize amount");
+    const hostAuthorized = await consumeHostAuthorization(hostWallet, x.user.id, hostAuthorizationSignature, {
+      mint,
+      prizeRawAmount: authorizedPrizeRaw.toString(),
+      feeRawAmount: quote.feeRawAmount,
+      decimals: quote.decimals,
+      startsAtUnixSeconds: Math.floor(startsAt / 1000),
+    });
+    if (!hostAuthorized) return NextResponse.json({ ok: false, error: "Host funding authorization expired, changed, or was rejected. Please review and approve the exact funding intent again." }, { status: 401 });
     const activeOrb = await getActiveHostedOrb(hostWallet);
     if (activeOrb) {
       return NextResponse.json({ ok: false, error: `This wallet already has active Orb ${activeOrb.slug}. It can create another after that race closes.`, activeOrb }, { status: 409 });
@@ -99,7 +107,7 @@ export async function POST(request: Request) {
     if (token.decimals !== quote.decimals) throw new Error("Token decimals changed unexpectedly");
 
     const prizeRaw = tokenInputToRaw(prizeText, token.decimals);
-    if (prizeRaw === null || prizeRaw <= BigInt(0)) throw new Error("Invalid prize amount");
+    if (prizeRaw === null || prizeRaw <= BigInt(0) || prizeRaw !== authorizedPrizeRaw) throw new Error("Authorized prize amount no longer matches the funding request");
     const feeRaw = BigInt(quote.feeRawAmount);
     const liveBalanceRaw = BigInt(token.rawAmount);
     if (prizeRaw + feeRaw > liveBalanceRaw) {
@@ -123,9 +131,10 @@ export async function POST(request: Request) {
       quotedUsdPrice: quote.usdPrice,
       feeRawAmount: quote.feeRawAmount,
       priceQuotedAt: quote.issuedAt,
+      fundingQuoteExpiresAt: quote.expiresAt,
       startsAt,
     });
-    return NextResponse.json({ ok: true, orb, shareUrl: `/orb/${orb.slug}` });
+    return NextResponse.json({ ok: true, orb });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not create Orb";
     const status = /already has an active Orb/i.test(message)

@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { Connection, Transaction } from "@solana/web3.js";
 import ConnectWallet from "@/components/ConnectWallet";
 import XConnect, { type XUser } from "@/components/XConnect";
 import TokenPicker, { type WalletSplToken } from "@/components/TokenPicker";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
 import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmountForPrice, maxPrizeInputFromQuote, tokenInputToRaw } from "@/lib/prizeEconomics";
+import { ORB_CREATION_MIN_LEAD_MS } from "@/lib/orbLifecycle";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import type { DifficultyKey, GameStyle } from "@/game/types";
 
@@ -58,11 +60,12 @@ export default function CreateWizard() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createdOrb, setCreatedOrb] = useState<CreatedOrb | null>(null);
+  const [pendingOrb, setPendingOrb] = useState<CreatedOrb | null>(null);
   const [copied, setCopied] = useState(false);
   const [shareCardReady, setShareCardReady] = useState(false);
   const [shareCardFailed, setShareCardFailed] = useState(false);
   const [creationPolicy, setCreationPolicy] = useState<CreationPolicy | null>(null);
-  const { connected, publicKey, signMessage } = useWallet();
+  const { connected, publicKey, signMessage, signTransaction } = useWallet();
 
   const prizeAmount = Number(prizeInput || 0);
   const quote = token?.prizeQuote || null;
@@ -78,9 +81,9 @@ export default function CreateWizard() {
   const rawCoverageReady = Boolean(token && quote && prizeRaw !== null && /^\d+$/.test(quote.feeRawAmount) && prizeRaw + BigInt(quote.feeRawAmount) <= BigInt(token.rawAmount));
   const launchMs = new Date(`${launchDate}T${launchTime}:00`).getTime();
   const creationBlocked = Boolean(creationPolicy?.activeOrb && !creationPolicy.adminExempt);
-  const identityReady = connected && Boolean(publicKey) && Boolean(signMessage) && Boolean(xUser && !xUser.protected) && !creationBlocked;
+  const identityReady = connected && Boolean(publicKey) && Boolean(signMessage) && Boolean(signTransaction) && Boolean(xUser && !xUser.protected) && !creationBlocked;
   const prizeReady = Boolean(token?.eligible && quote && prizeAmount > 0 && prizeUsd >= MIN_PRIZE_USD && rawCoverageReady);
-  const launchReady = Number.isFinite(launchMs) && launchMs > Date.now() + 30_000;
+  const launchReady = Number.isFinite(launchMs) && launchMs > Date.now() + ORB_CREATION_MIN_LEAD_MS;
 
   useEffect(() => {
     setCreationPolicy(null);
@@ -158,14 +161,58 @@ export default function CreateWizard() {
     }
   };
 
+  const fundPendingOrb = async (orb: CreatedOrb) => {
+    if (!signTransaction) throw new Error("This wallet cannot sign Solana transactions");
+    const rpc = (process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "").trim();
+    if (!rpc) throw new Error("NEXT_PUBLIC_SOLANA_RPC_URL is not configured");
+    const fundingResponse = await fetch(`/api/orbs/${encodeURIComponent(orb.slug)}/funding`, { method: "POST" });
+    const fundingPayload = await jsonPayload<{ ok?: boolean; alreadyFunded?: boolean; orb?: CreatedOrb; funding?: { transactionBase64: string; blockhash: string; lastValidBlockHeight: number }; error?: string }>(fundingResponse);
+    if (!fundingResponse.ok || !fundingPayload.ok) throw new Error(fundingPayload.error || "Could not prepare the funding transaction");
+    if (fundingPayload.alreadyFunded && fundingPayload.orb) {
+      setPendingOrb(null);
+      setCreatedOrb(fundingPayload.orb);
+      setStep(5);
+      return;
+    }
+    if (!fundingPayload.funding) throw new Error("Could not prepare the funding transaction");
+    const bytes = Uint8Array.from(atob(fundingPayload.funding.transactionBase64), (char) => char.charCodeAt(0));
+    const transaction = Transaction.from(bytes);
+    const signed = await signTransaction(transaction);
+    const connection = new Connection(rpc, "confirmed");
+    const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash: fundingPayload.funding.blockhash,
+      lastValidBlockHeight: fundingPayload.funding.lastValidBlockHeight,
+    }, "confirmed");
+    if (confirmation.value.err) throw new Error("Solana rejected the Orb funding transaction");
+    const confirmResponse = await fetch(`/api/orbs/${encodeURIComponent(orb.slug)}/funding/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ signature }),
+    });
+    const confirmed = await jsonPayload<{ ok?: boolean; orb?: CreatedOrb; error?: string }>(confirmResponse);
+    if (!confirmResponse.ok || !confirmed.ok || !confirmed.orb) throw new Error(confirmed.error || "Funding confirmed on Solana but Orbs could not verify the escrow state");
+    setPendingOrb(null);
+    setCreatedOrb(confirmed.orb);
+    setStep(5);
+  };
+
   const createOrb = async () => {
-    if (!publicKey || !signMessage || !token || !identityReady || !prizeReady || !launchReady || !fundingAcknowledged) return;
+    if (!publicKey || !signMessage || !signTransaction || !token || !identityReady || !prizeReady || !launchReady || !fundingAcknowledged) return;
     setCreating(true); setCreateError(null);
     try {
+      if (pendingOrb) { await fundPendingOrb(pendingOrb); return; }
       const nonceResponse = await fetch("/api/orbs/create/nonce", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet: publicKey.toBase58() }),
+        body: JSON.stringify({
+          wallet: publicKey.toBase58(),
+          mint: token.mint,
+          prizeTokenAmount: prizeInput,
+          prizeQuoteToken: quote?.token,
+          startsAt: launchMs,
+        }),
       });
       const nonce = await jsonPayload<{ ok?: boolean; message?: string; error?: string }>(nonceResponse);
       if (!nonceResponse.ok || !nonce.ok || !nonce.message) throw new Error(nonce.error || "Could not authorize this host wallet");
@@ -177,10 +224,14 @@ export default function CreateWizard() {
         body: JSON.stringify({ hostWallet: publicKey.toBase58(), hostAuthorizationSignature, mint: token.mint, prizeTokenAmount: prizeInput, prizeQuoteToken: quote?.token, difficulty, style, startsAt: launchMs }),
       });
       const payload = await jsonPayload<{ ok?: boolean; orb?: CreatedOrb; error?: string }>(response);
-      if (!response.ok || !payload.ok || !payload.orb) throw new Error(payload.error || "Could not create Orb");
-      setCreatedOrb(payload.orb); setStep(5);
-    } catch (error) { setCreateError(error instanceof Error ? error.message : "Could not create Orb"); }
-    finally { setCreating(false); }
+      if (!response.ok || !payload.ok || !payload.orb) throw new Error(payload.error || "Could not seal Orb funding parameters");
+      setPendingOrb(payload.orb);
+      await fundPendingOrb(payload.orb);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not fund Orb";
+      if (/quote expired|funding record was not found/i.test(message)) setPendingOrb(null);
+      setCreateError(message);
+    } finally { setCreating(false); }
   };
 
   const shareUrl = createdOrb ? `${publicSiteUrl}/orb/${encodeURIComponent(createdOrb.slug)}?v=${createdOrb.createdAt}` : "";
@@ -200,7 +251,7 @@ export default function CreateWizard() {
         {step === 0 ? <>
           <span className="eyebrow">Step 1 of 6</span><h2>Who is hosting?</h2>
           <p>Connect the Solana wallet that will fund the prize and the public X account whose community will play it.</p>
-          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>{publicKey?.toBase58().slice(0, 6)}…{publicKey?.toBase58().slice(-6)}</small></div></div> : <ConnectWallet />}{connected && !signMessage ? <small className="field-warning">This wallet cannot sign messages. Choose a compatible wallet to prove creator ownership.</small> : null}{creationBlocked && creationPolicy?.activeOrb ? <div className="active-orb-warning"><strong>One Orb is already active.</strong><span>This wallet can create its next Orb after the current race closes.</span><Link href={`/orb/${creationPolicy.activeOrb.slug}`}>Open active Orb →</Link></div> : null}{creationPolicy?.adminExempt ? <small className="field-help">Admin test wallet: concurrent Orb creation is enabled.</small> : null}</div><div className="field full"><label>X host account</label><XConnect returnTo="/create" requirePublic onChange={setXUser} />{xUser?.protected ? <small className="field-warning">Orb hosts must be public so every player can complete the Follow Host requirement immediately.</small> : null}</div></div>
+          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>{publicKey?.toBase58().slice(0, 6)}…{publicKey?.toBase58().slice(-6)}</small></div></div> : <ConnectWallet />}{connected && (!signMessage || !signTransaction) ? <small className="field-warning">This wallet must support both message signing and Solana transaction signing to create an Orb.</small> : null}{creationBlocked && creationPolicy?.activeOrb ? <div className="active-orb-warning"><strong>One Orb is already active.</strong><span>This wallet can create its next Orb after the current race closes.</span><Link href={`/orb/${creationPolicy.activeOrb.slug}`}>Open active Orb →</Link></div> : null}{creationPolicy?.adminExempt ? <small className="field-help">Admin test wallet: concurrent Orb creation is enabled.</small> : null}</div><div className="field full"><label>X host account</label><XConnect returnTo="/create" requirePublic onChange={setXUser} />{xUser?.protected ? <small className="field-warning">Orb hosts must be public so every player can complete the Follow Host requirement immediately.</small> : null}</div></div>
         </> : null}
 
         {step === 1 ? <>
@@ -217,16 +268,16 @@ export default function CreateWizard() {
         </> : null}
 
         {step === 3 ? <>
-          <span className="eyebrow">Step 4 of 6</span><h2>Schedule launch.</h2><p>Give the X post time to cook. The exact timestamp becomes immutable when Anchor funding is connected.</p>
+          <span className="eyebrow">Step 4 of 6</span><h2>Schedule launch.</h2><p>Give the X post time to cook. The exact timestamp becomes immutable when the Anchor funding transaction succeeds.</p>
           {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}<div className="fields"><div className="field"><label>Date</label><input type="date" value={launchDate} onChange={(event) => setLaunchDate(event.target.value)} /></div><div className="field"><label>Time · your local timezone</label><input type="time" value={launchTime} onChange={(event) => setLaunchTime(event.target.value)} /></div><div className="field full"><div className="launch-preview"><span>Scheduled start</span><strong>{launchReady ? new Date(launchMs).toLocaleString([], { dateStyle: "full", timeStyle: "short" }) : "Choose a future launch time"}</strong><small>The maze seed and geometry remain sealed until this moment.</small></div></div></div>
         </> : null}
 
         {step === 4 ? <>
-          <span className="eyebrow">Step 5 of 6</span><h2>Review the Orb.</h2><p>Review the exact prize before sealing the competition. The production funding transaction will use this same confirmation step.</p>
+          <span className="eyebrow">Step 5 of 6</span><h2>Review the Orb.</h2><p>Review the exact prize before sealing the competition. The funding transaction below uses these exact reviewed prize and fee parameters.</p>
           <div className="orb-review-grid"><div><span>Host</span><strong>@{xUser?.username || "—"}</strong></div><div><span>Winner prize</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{money(prizeUsd)}</small></div><div><span>Orbs fee</span><strong>{token ? `${amount(feeTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(ORBS_FEE_USD)}</small></div><div><span>Total wallet debit</span><strong>{token && prizeAmount ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(totalUsd)}</small></div><div><span>Game</span><strong>{profiles.find((p) => p.key === difficulty)?.label}</strong><small>{profiles.find((p) => p.key === difficulty)?.time}</small></div><div><span>Launch</span><strong>{launchReady ? new Date(launchMs).toLocaleString() : "—"}</strong></div></div>
           <div className="funding-review"><span className="funding-review-kicker">Funding commitment</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol} (${money(prizeUsd)}) winner prize + ${money(ORBS_FEE_USD)} Orbs fee = ${money(totalUsd)} total wallet debit.` : "Review your prize amount."}</strong><p>Once a funded Orb is launched, you cannot cancel it or withdraw the prize early. The prize remains locked for the competition. If the contract reaches its expiry without a valid winner claim, the protocol refund path returns the refundable prize funds to the host wallet.</p>{maxSelected ? <small className="field-help">Max is locked to the refreshed wallet snapshot shown above, so prize + fee fits the available token balance exactly.</small> : null}<label className="funding-ack"><input type="checkbox" checked={fundingAcknowledged} onChange={(event) => setFundingAcknowledged(event.target.checked)} /><span>I reviewed the prize and total wallet debit and understand a funded Orb cannot be canceled or withdrawn early.</span></label></div>
-          <div className="test-orb-note"><strong>Pre-Anchor test mode</strong><span>No tokens move in this build. This creates the real hidden seed, SHA-256 commitment, share URL and JIT launch gate; the final Anchor funding transaction will replace the last action without changing this review flow.</span></div>
-          {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}{createError ? <div className="form-error">{createError}</div> : null}<button className="btn-primary" disabled={!identityReady || !prizeReady || !launchReady || !fundingAcknowledged || creating} onClick={() => void createOrb()}>{creating ? "Sealing Orb…" : "Create sealed test Orb →"}</button>
+          <div className="test-orb-note"><strong>On-chain escrow funding</strong><span>Your wallet signs the exact prize debit while the Orbs relayer sponsors SOL/rent. The full advertised prize moves into this Orb&apos;s isolated Anchor vault and the separate protocol fee goes to the fixed treasury ATA.</span></div>
+          {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}{createError ? <div className="form-error">{createError}</div> : null}<button className="btn-primary" disabled={!identityReady || !prizeReady || !launchReady || !fundingAcknowledged || creating} onClick={() => void createOrb()}>{creating ? "Funding & sealing Orb…" : pendingOrb ? "Retry funding →" : "Fund & seal Orb →"}</button>
         </> : null}
 
         {step === 5 && createdOrb ? <>

@@ -1,7 +1,8 @@
 import { PublicKey } from "@solana/web3.js";
 import type { PrizeQuoteSnapshot } from "@/lib/prizeEconomics";
+import { CLASSIC_SPL_TOKEN_PROGRAM_ID, deriveClassicAta } from "@/lib/solanaAddresses";
 
-const CLASSIC_SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const CLASSIC_SPL_TOKEN_PROGRAM = CLASSIC_SPL_TOKEN_PROGRAM_ID.toBase58();
 
 export type WalletSplToken = {
   mint: string;
@@ -63,6 +64,7 @@ async function rpcRequest<T>(method: string, params: unknown[]): Promise<T> {
 
 type RpcTokenAccounts = {
   value: Array<{
+    pubkey: string;
     account: {
       data: {
         parsed?: {
@@ -152,16 +154,20 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
     const token = info?.tokenAmount;
     const rawText = String(token?.amount || "0");
     if (!mint || !/^\d+$/.test(rawText) || rawText === "0") continue;
+
+    // Production Anchor funding intentionally debits only the wallet's canonical
+    // classic-SPL ATA. Do not aggregate auxiliary token accounts into a balance
+    // that the escrow instruction cannot actually spend.
+    let canonicalAta: string;
+    try { canonicalAta = deriveClassicAta(new PublicKey(owner), new PublicKey(mint)).toBase58(); }
+    catch { continue; }
+    if (row.pubkey !== canonicalAta) continue;
+
     const raw = BigInt(rawText);
     if (raw <= BigInt(0)) continue;
     const decimals = Number(token?.decimals ?? 0);
     const balance = Number(token?.uiAmountString ?? 0);
-    const prior = aggregated.get(mint);
-    aggregated.set(mint, {
-      raw: (prior?.raw || BigInt(0)) + raw,
-      decimals,
-      balance: (prior?.balance || 0) + (Number.isFinite(balance) ? balance : 0),
-    });
+    aggregated.set(mint, { raw, decimals, balance: Number.isFinite(balance) ? balance : 0 });
   }
 
   const mints = Array.from(aggregated.keys());
@@ -182,7 +188,7 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
       mint,
       symbol: String(meta?.symbol || `${mint.slice(0, 4)}…${mint.slice(-4)}`),
       name: String(meta?.name || "Unknown SPL token"),
-      decimals: Number.isFinite(Number(meta?.decimals)) ? Number(meta?.decimals) : balance.decimals,
+      decimals: balance.decimals,
       balance: balance.balance,
       rawAmount: balance.raw.toString(),
       usdPrice,

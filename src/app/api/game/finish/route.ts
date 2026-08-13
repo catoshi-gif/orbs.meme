@@ -6,7 +6,7 @@ import { generateGameManifest, normalizeDifficulty } from "@/game/maze";
 import { safeColor } from "@/game/theme";
 import type { GameStyle, ReplayEnvelope } from "@/game/types";
 import { verifyReplay } from "@/game/verifier";
-import { getOrbRecord, getCanonicalOrbManifest, releaseActiveHostedOrb } from "@/lib/orbStore";
+import { getOrbRecord, getCanonicalOrbManifest } from "@/lib/orbStore";
 import { hashXUserId, sessionMatchesManifest, verifyCompetitiveSession } from "@/lib/competitiveSession";
 import { hasFollowProof, hasShareProof, hasWalletProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
@@ -135,11 +135,6 @@ export async function POST(request: Request) {
     xUsername,
   };
   const winner = await tryAcquireWinner(lockId, record);
-  if (realOrb && winner.acquired) {
-    try { await releaseActiveHostedOrb(realOrb.hostWallet, slug); }
-    catch (error) { console.error("Could not release completed host Orb lock", error); }
-  }
-
   return NextResponse.json({
     ok: true,
     verified: true,

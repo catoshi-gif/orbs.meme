@@ -1,8 +1,11 @@
+import "server-only";
+
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ORBS_FEE_USD, rawToTokenNumber, type PrizeQuoteSnapshot } from "@/lib/prizeEconomics";
 
 const QUOTE_SCHEMA_VERSION = 1 as const;
-const QUOTE_TTL_MS = 15 * 60 * 1000;
+// Keep UI/server quotes comfortably inside the program's absolute 10-minute cap.
+const QUOTE_TTL_MS = 8 * 60 * 1000;
 
 type PrizeQuotePayload = {
   schemaVersion: typeof QUOTE_SCHEMA_VERSION;
@@ -17,8 +20,8 @@ type PrizeQuotePayload = {
 };
 
 function signingSecret() {
-  const value = (process.env.ORBS_SESSION_SIGNING_KEY || "").trim();
-  if (value.length < 24) throw new Error("ORBS_SESSION_SIGNING_KEY must be a long random secret");
+  const value = (process.env.ORBS_FUNDING_QUOTE_SIGNING_KEY || "").trim();
+  if (value.length < 32) throw new Error("ORBS_FUNDING_QUOTE_SIGNING_KEY must be a long random secret");
   return value;
 }
 
@@ -46,6 +49,16 @@ function decimalRational(value: number): { numerator: bigint; denominator: bigin
 
 function ceilDiv(numerator: bigint, denominator: bigint) {
   return (numerator + denominator - BigInt(1)) / denominator;
+}
+
+export function usdMicrosForRawAmount(rawAmount: bigint, decimals: number, usdPrice: number) {
+  if (rawAmount <= BigInt(0)) return BigInt(0);
+  const places = Math.max(0, Math.trunc(decimals || 0));
+  const price = decimalRational(usdPrice);
+  const tokenScale = BigInt(10) ** BigInt(places);
+  // Conservative floor: never let display floating point round a sub-$5 prize
+  // upward across the protocol minimum enforced by the on-chain quote signer.
+  return (rawAmount * price.numerator * BigInt(1_000_000)) / (tokenScale * price.denominator);
 }
 
 function feeRawForPrice(usdPrice: number, decimals: number) {
@@ -102,6 +115,9 @@ export function verifyPrizeQuote(token: string): PrizeQuotePayload | null {
   if (!payload.wallet || !payload.mint || !Number.isInteger(payload.decimals) || payload.decimals < 0) return null;
   if (!Number.isFinite(payload.usdPrice) || payload.usdPrice <= 0 || payload.feeUsd !== ORBS_FEE_USD) return null;
   if (!/^\d+$/.test(payload.feeRawAmount) || BigInt(payload.feeRawAmount) <= BigInt(0)) return null;
-  if (!Number.isFinite(payload.issuedAt) || !Number.isFinite(payload.expiresAt) || payload.expiresAt <= Date.now()) return null;
+  const now = Date.now();
+  if (!Number.isFinite(payload.issuedAt) || !Number.isFinite(payload.expiresAt)) return null;
+  if (payload.issuedAt > now + 30_000 || payload.expiresAt <= now) return null;
+  if (payload.expiresAt - payload.issuedAt !== QUOTE_TTL_MS) return null;
   return payload;
 }
