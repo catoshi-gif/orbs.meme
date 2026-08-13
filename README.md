@@ -1,48 +1,72 @@
-# Orbs.meme — V1 web starter
+# orbs.meme
 
-Clean Next.js 15.5.9 starter for the Orbs.meme protocol.
+**Play. Win. Grow.**
 
-## Functional now
-- Responsive light/dark website shell
-- Mainnet Solana wallet connection using the proven wallet-adapter pattern from the supplied repo
-- Phantom, Solflare, Ledger, and Mobile Wallet Adapter support
-- Wallet menu: address, one lightweight SOL balance read, copy, change wallet, disconnect
-- V1 route/page scaffolding
-- Interactive local Create Orb wizard shell
-- Optimized Orbs logo assets
+Orbs is a gamified community-growth protocol built around the **Glass Roller**: a deterministic 3D tilt-maze for desktop and mobile. Hosts will fund timed SPL-token prize games and share one unique Orb URL; every qualified player receives the exact same live challenge.
 
-## Deliberately not live yet
-- X OAuth / follow attestation
-- SPL token picker / price quotes
-- Upstash/database/indexer
-- Anchor funding / escrow / refund / claims
-- Turnkey claim signer
-- Glass Roller game + physics
-- Real discovery data / countdown / analytics
+## Current repository milestone — V0.2
 
-The UI labels those areas as future integration rather than pretending they are secure/live.
+### Website
+- Next.js 15.5.9 / React 19
+- Light + dark mode
+- Solana mainnet wallet connection
+- Responsive home, create flow, Orb lobby, live game, result and account routes
+- Orbs visual system: Deep Orbit / Indigo / Violet / Aqua / Sky / Cloud
 
-## Run
+### Glass Roller vertical slice
+- Three.js renderer loaded only on `/orb/[slug]/play`
+- Rapier deterministic 3D WASM physics
+- Fixed 60 Hz physics step
+- Arrow/WASD tilt on desktop
+- Device-orientation tilt + calibration on mobile
+- Touch tilt-pad fallback
+- Seeded deterministic maze generation
+- Quick / Classic / Brutal initial difficulty calibration targets (~5 / 10 / 15 min)
+- Controlled loops, dead ends, candidate scoring, ordered checkpoints
+- Rotating gate modules + static precision bumpers
+- Merged wall colliders + instanced rendering for low draw-call count
+- Procedural cosmic world + procedural marble shader
+- Fully custom game palette with Orbs/BONK/Aurora/Solar presets
+- Adaptive pixel-ratio downgrade on slower hardware
+- Zero gameplay dependence on Vercel/Upstash frame streaming
+
+See [`docs/GAME_V0_2.md`](docs/GAME_V0_2.md) for the exact production boundary between this local deterministic prototype and the future funded-Orb JIT manifest/replay architecture.
+
+## Local development
+
 ```bash
 npm install
-cp .env.example .env.local
+npm run typecheck
 npm run dev
 ```
 
-Production should set `NEXT_PUBLIC_SOLANA_RPC_URL` to a private mainnet RPC.
+Then open:
 
-## Routes
-- `/`
-- `/create`
-- `/orb/demo-orb`
-- `/orb/demo-orb/play`
-- `/orb/demo-orb/results`
-- `/me`
-- `/how-it-works`
-- `/rules`
-- `/terms`
-- `/privacy`
+```text
+http://localhost:3000/orb/demo/play
+```
 
-## Source references
-- `docs/V1_SPEC.md`
-- `docs/BRAND.md`
+Custom deterministic demo example:
+
+```text
+/orb/demo/play?difficulty=brutal&marble=%23FF8B36&marble2=%23FFE66D&walls=%2363F38B&floor=%23130D0B&accent=%2320E3D2
+```
+
+The Create wizard's Game step also generates these preview URLs for you.
+
+## Production security boundary
+
+The local V0.2 play route derives a deterministic development seed from the Orb slug. **Do not use that seed model for funded games.** Production games will use a server-generated hidden seed committed before launch, release one canonical manifest only after the immutable on-chain start time, and verify a compressed deterministic replay before acquiring the first-winner lock.
+
+## V1 sequence
+
+1. Website + wallet — complete
+2. Glass Roller vertical slice — current
+3. Human playtest + difficulty calibration
+4. JIT game manifest + deterministic finish verifier
+5. X / qualification / Turnstile
+6. SPL picker + price/fee quote
+7. Anchor funding / refund
+8. Turnkey winner claim
+9. Analytics + share cards
+10. Mainnet public beta

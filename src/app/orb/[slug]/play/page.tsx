@@ -1,1 +1,23 @@
-import Link from "next/link"; export default async function Page({params}:{params:Promise<{slug:string}>}){const{slug}=await params;return <div className="page"><div className="container"><div className="game"><div className="hud"><span>ORB · {slug}</span><span>Prize · 25M BONK</span></div><div className="game-center"><div><div className="ball"/><div className="eyebrow" style={{color:'#20E3D2'}}>Game phase next</div><h1>Glass Roller renderer mounts here.</h1><p>Desktop arrow/WASD tilt, mobile device tilt, deterministic maze generation and replay validation will be built into this shell next.</p><Link className="btn-primary" href={`/orb/${slug}/results`}>Preview result state</Link></div></div></div></div></div>}
+import GameRouteClient from "@/components/game/GameRouteClient";
+
+type Params = Promise<{ slug: string }>;
+type Search = Promise<Record<string, string | string[] | undefined>>;
+
+const one = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
+
+export default async function PlayPage({ params, searchParams }: { params: Params; searchParams: Search }) {
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
+  return (
+    <div className="game-page">
+      <GameRouteClient
+        slug={slug}
+        difficulty={one(query.difficulty)}
+        marble={one(query.marble)}
+        marble2={one(query.marble2)}
+        walls={one(query.walls)}
+        floor={one(query.floor)}
+        accent={one(query.accent)}
+      />
+    </div>
+  );
+}
