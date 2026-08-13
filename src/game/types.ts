@@ -54,8 +54,29 @@ export type DifficultyProfile = {
   maxTiltDeg: number;
 };
 
+export type ReplayFrame = { tick: number; x: number; y: number };
+export type ReplayEvent = { tick: number; type: "reset" };
+
+export type ReplayEnvelope = {
+  schemaVersion: 1;
+  replayId: string;
+  manifestId: string;
+  generatorVersion: string;
+  physicsVersion: string;
+  rapierVersion: string;
+  sampleHz: 20;
+  elapsedMs: number;
+  resets: number;
+  checkpoints: number;
+  frames: ReplayFrame[];
+  events: ReplayEvent[];
+};
+
 export type GameManifest = {
-  version: "glass-roller-local-v2";
+  version: "glass-roller-local-v3";
+  generatorVersion: string;
+  physicsVersion: string;
+  rapierVersion: string;
   slug: string;
   seed: number;
   difficulty: DifficultyKey;

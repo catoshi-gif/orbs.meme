@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PHYSICS } from "@/game/constants";
+import { GameAudioEngine } from "@/game/audio";
 import { generateGameManifest } from "@/game/maze";
-import type { DifficultyKey, GameStyle } from "@/game/types";
+import { buildReplayEnvelope } from "@/game/replay";
+import type { DifficultyKey, GameStyle, ReplayEvent, ReplayFrame } from "@/game/types";
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 const rad = (deg: number) => (deg * Math.PI) / 180;
@@ -24,7 +26,6 @@ type Props = {
 type Phase = "loading" | "ready" | "countdown" | "playing" | "won";
 type ControlMode = "keys" | "sensor" | "touch";
 
-type ReplayPoint = { tick: number; pitch: number; roll: number };
 
 function makeMountainRing(THREE: typeof import("three"), radius: number, seed: number, y: number, color: string) {
   const segments = 64;
@@ -56,7 +57,7 @@ function makeMountainRing(THREE: typeof import("three"), radius: number, seed: n
 }
 
 function makeSky(THREE: typeof import("three"), accent: string) {
-  const geometry = new THREE.SphereGeometry(82, 40, 24);
+  const geometry = new THREE.SphereGeometry(220, 40, 24);
   const material = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
@@ -243,6 +244,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
   const resetRef = useRef<(() => void) | null>(null);
   const startRef = useRef<(() => void) | null>(null);
   const cameraToggleRef = useRef<(() => void) | null>(null);
+  const audioRef = useRef<GameAudioEngine | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [controlMode, setControlModeState] = useState<ControlMode>("keys");
   const controlModeRef = useRef<ControlMode>("keys");
@@ -255,6 +257,16 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
   const [sensorAvailable, setSensorAvailable] = useState(false);
   const [sensorMessage, setSensorMessage] = useState<string | null>(null);
   const [loadingLabel, setLoadingLabel] = useState("Warming the glass world…");
+  const [audioMuted, setAudioMuted] = useState(false);
+
+  useEffect(() => {
+    const engine = new GameAudioEngine();
+    audioRef.current = engine;
+    return () => {
+      engine.dispose();
+      if (audioRef.current === engine) audioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     setSensorAvailable(typeof window !== "undefined" && "DeviceOrientationEvent" in window);
@@ -267,6 +279,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
   }, []);
 
   const requestMotion = useCallback(async () => {
+    await audioRef.current?.unlock();
     if (!("DeviceOrientationEvent" in window)) {
       setControlMode("touch");
       setSensorMessage("Motion sensors are unavailable here. Touch tilt is ready instead.");
@@ -383,13 +396,13 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       scene.background = new THREE.Color("#050817");
       scene.fog = new THREE.FogExp2("#080D25", 0.012);
 
-      const camera = new THREE.PerspectiveCamera(48, 1, 0.08, 130);
-      camera.position.set(manifest.start.x, 5.2, manifest.start.z + 6.4);
+      const mobileish = window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 800;
+      const camera = new THREE.PerspectiveCamera(mobileish ? 56 : 48, 1, 0.08, 500);
+      camera.position.set(manifest.start.x, mobileish ? 7.15 : 5.2, manifest.start.z + (mobileish ? 8.6 : 6.4));
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
-      const mobileish = window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 800;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileish ? 1.25 : 1.5));
       renderer.domElement.className = "glass-roller-canvas";
       mount.appendChild(renderer.domElement);
@@ -423,8 +436,8 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       };
       for (let i = 0; i < 720; i += 1) {
         const theta = starRand() * Math.PI * 2;
-        const y = 4 + starRand() * 42;
-        const radius = 38 + starRand() * 34;
+        const y = 8 + starRand() * 88;
+        const radius = 82 + starRand() * 96;
         stars[i * 3] = Math.cos(theta) * radius;
         stars[i * 3 + 1] = y;
         stars[i * 3 + 2] = Math.sin(theta) * radius;
@@ -676,7 +689,8 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       let lastSafe = { ...manifest.start };
       let resetCount = 0;
       let runStartTick = 0;
-      const replay: ReplayPoint[] = [];
+      const replay: ReplayFrame[] = [];
+      const replayEvents: ReplayEvent[] = [];
       const localBall = new THREE.Vector3();
       const cameraLocal = new THREE.Vector3();
       const cameraWorld = new THREE.Vector3();
@@ -689,6 +703,8 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       const boardQuat = new THREE.Quaternion();
       const euler = new THREE.Euler();
       const boardExtent = Math.max(manifest.width, manifest.depth);
+      const overviewDirection = new THREE.Vector3(0, 1, 0.18).normalize();
+      let overviewDistance = boardExtent * 2;
       let overviewTarget = 0;
       let overviewMix = 0;
       const pinchPointers = new Map<number, { x: number; y: number }>();
@@ -739,6 +755,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       }
 
       const resetBall = () => {
+        if (phaseRef.current === "playing") replayEvents.push({ tick: physicsTick - runStartTick, type: "reset" });
         ballBody.setTranslation({ x: lastSafe.x, y: PHYSICS.ballRadius + 0.08, z: lastSafe.z }, true);
         ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
         ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
@@ -749,6 +766,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
 
       const begin = () => {
         if (phaseRef.current !== "ready") return;
+        void audioRef.current?.unlock();
         changePhase("countdown");
         setCountdown(3);
         let remaining = 3;
@@ -760,7 +778,9 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
             startTime = performance.now() / 1000;
             runStartTick = physicsTick;
             replay.length = 0;
+            replayEvents.length = 0;
             changePhase("playing");
+            audioRef.current?.startMusic();
           } else {
             setCountdown(remaining);
           }
@@ -773,7 +793,18 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         if (!rect.width || !rect.height) return;
         renderer.setSize(rect.width, rect.height, false);
         camera.aspect = rect.width / rect.height;
+        camera.fov = mobileish ? 56 : 48;
         camera.updateProjectionMatrix();
+
+        // Fit the ENTIRE square board against the limiting FOV. On a portrait iPhone the
+        // horizontal FOV is much narrower than the vertical FOV, so a simple height-based
+        // overview crops the left/right edges. Fitting the board's bounding circle against
+        // min(verticalFov, horizontalFov) guarantees every wall stays on-screen.
+        const verticalFov = rad(camera.fov);
+        const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+        const limitingHalfFov = Math.max(rad(10), Math.min(verticalFov, horizontalFov) / 2);
+        const boardRadius = Math.hypot(manifest.width, manifest.depth) * 0.5 * 1.035;
+        overviewDistance = boardRadius / Math.sin(limitingHalfFov);
       };
       resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(mount);
@@ -823,7 +854,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               const quantizedY = Math.round(clamp(inputY, -1, 1) * 127);
               sampledInputX = quantizedX / 127;
               sampledInputY = quantizedY / 127;
-              replay.push({ tick: physicsTick - runStartTick, pitch: quantizedY, roll: quantizedX });
+              replay.push({ tick: physicsTick - runStartTick, x: quantizedX, y: quantizedY });
             }
 
             const directDesktop = controlModeRef.current === "keys";
@@ -884,12 +915,19 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               gateBodies[i]!.setNextKinematicRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
             });
 
+            const preWorldVelocity = ballBody.linvel();
             world.step();
             simTime += PHYSICS.fixedStep;
             accumulator -= PHYSICS.fixedStep;
 
             const v = ballBody.linvel();
             const planarSpeed = Math.hypot(v.x, v.z);
+            const preWorldSpeed = Math.hypot(preWorldVelocity.x, preWorldVelocity.z);
+            const collisionDelta = Math.hypot(v.x - preWorldVelocity.x, v.z - preWorldVelocity.z);
+            if (preWorldSpeed > 1.65 && collisionDelta > 0.42) {
+              audioRef.current?.thump(clamp((collisionDelta - 0.42) / 1.6, 0, 1));
+            }
+            if (physicsTick % 3 === 0) audioRef.current?.setRollingSpeed(planarSpeed);
             const speedLimit = controlModeRef.current === "keys" ? PHYSICS.desktopMaxSpeed : PHYSICS.mobileMaxSpeed;
             if (planarSpeed > speedLimit) {
               const factor = speedLimit / planarSpeed;
@@ -912,6 +950,15 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               const finish = now - startTime;
               setElapsed(finish);
               changePhase("won");
+              audioRef.current?.setRollingSpeed(0);
+              audioRef.current?.stopMusic();
+              audioRef.current?.victory();
+              const envelope = buildReplayEnvelope(manifest, replay, replayEvents, finish * 1000, resetCount, nextCheckpoint);
+              try {
+                sessionStorage.setItem(`orbs:replay:${slug}`, JSON.stringify(envelope));
+              } catch {
+                // Replay persistence is diagnostic scaffolding only; never block a valid local finish.
+              }
               ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
               ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
             }
@@ -960,12 +1007,15 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         // the top of the screen. Velocity only nudges the look target, never the control basis.
         const lookLeadX = clamp(v.x * 0.24, -1.1, 1.1);
         const lookLeadZ = clamp(v.z * 0.24, -1.1, 1.1);
-        cameraLocal.set(localBall.x, 5.35, localBall.z + 6.55);
-        lookLocal.set(localBall.x + lookLeadX, 0.48, localBall.z + lookLeadZ - 0.65);
+        const chaseHeight = mobileish ? 7.15 : 5.35;
+        const chaseBack = mobileish ? 8.65 : 6.55;
+        const chaseForwardLook = mobileish ? 1.35 : 0.65;
+        cameraLocal.set(localBall.x, chaseHeight, localBall.z + chaseBack);
+        lookLocal.set(localBall.x + lookLeadX, 0.48, localBall.z + lookLeadZ - chaseForwardLook);
         followCameraWorld.copy(cameraLocal).applyQuaternion(boardGroup.quaternion);
         followLookWorld.copy(lookLocal).applyQuaternion(boardGroup.quaternion);
 
-        overviewCameraWorld.set(0, boardExtent * 1.0 + 5.0, boardExtent * 0.55);
+        overviewCameraWorld.copy(overviewDirection).multiplyScalar(overviewDistance);
         overviewLookWorld.set(0, 0, 0);
         overviewMix += (overviewTarget - overviewMix) * (1 - Math.exp(-dt * 4.6));
         cameraWorld.copy(followCameraWorld).lerp(overviewCameraWorld, overviewMix);
@@ -1031,6 +1081,14 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
 
   const begin = useCallback(() => startRef.current?.(), []);
   const reset = useCallback(() => resetRef.current?.(), []);
+  const toggleAudio = useCallback(() => {
+    setAudioMuted((current) => {
+      const next = !current;
+      if (!next) void audioRef.current?.unlock();
+      audioRef.current?.setMuted(next);
+      return next;
+    });
+  }, []);
 
   const touchStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1068,6 +1126,9 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         <div className="game-hud-chip"><span>CHECKPOINTS</span><strong>{checkpoint}/{manifest.checkpoints.length}</strong></div>
         <div className="game-hud-chip"><span>SPEED</span><strong>{speed.toFixed(1)} m/s</strong></div>
         <button className="game-icon-button" onClick={reset} title="Reset to the latest checkpoint">↻</button>
+        <button className="game-audio-button" onClick={toggleAudio} title={audioMuted ? "Turn game audio on" : "Mute game audio"}>
+          {audioMuted ? "SOUND OFF" : "SOUND ON"}
+        </button>
       </div>
 
       {phase === "loading" ? (

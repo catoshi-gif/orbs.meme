@@ -1,5 +1,10 @@
 import type { DifficultyKey, DifficultyProfile, GameStyle } from "./types";
 
+export const GAME_GENERATOR_VERSION = "glass-roller-gen-v2.2" as const;
+export const GAME_PHYSICS_VERSION = "glass-roller-physics-v1-locked" as const;
+export const RAPIER_VERSION = "0.20.0" as const;
+
+
 export const DIFFICULTY_PROFILES: Record<DifficultyKey, DifficultyProfile> = {
   quick: {
     key: "quick",

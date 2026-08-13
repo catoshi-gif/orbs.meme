@@ -1,4 +1,4 @@
-import { DIFFICULTY_PROFILES } from "./constants";
+import { DIFFICULTY_PROFILES, GAME_GENERATOR_VERSION, GAME_PHYSICS_VERSION, RAPIER_VERSION } from "./constants";
 import { hashString, mulberry32, shuffle } from "./prng";
 import type { BumperModule, Cell, Checkpoint, DifficultyKey, GameManifest, GameStyle, GateModule, Point2, WallSegment } from "./types";
 
@@ -399,10 +399,13 @@ export function generateGameManifest(slug: string, difficulty: DifficultyKey, st
   const checkpoints = pickCheckpoints(path, profile.checkpointCount);
   const gates = pickGates(pathCells, path, checkpoints, profile.gateCount, profile.cellSize, baseSeed);
   const bumpers = pickBumpers(pathCells, path, gates, checkpoints, profile.bumperCount, profile.cellSize, baseSeed);
-  const fingerprint = `${slug}|${difficulty}|${baseSeed}|${path.length}|${walls.length}|${bumpers.length}|${gates.map((g) => `${g.x},${g.z},${g.phase.toFixed(4)}`).join(";")}`;
+  const fingerprint = `${GAME_GENERATOR_VERSION}|${GAME_PHYSICS_VERSION}|${RAPIER_VERSION}|${slug}|${difficulty}|${baseSeed}|${path.length}|${walls.length}|${bumpers.length}|${gates.map((g) => `${g.x},${g.z},${g.phase.toFixed(4)}`).join(";")}|${style.marble}|${style.marbleSecondary}|${style.walls}|${style.floor}|${style.accent}`;
 
   return {
-    version: "glass-roller-local-v2",
+    version: "glass-roller-local-v3",
+    generatorVersion: GAME_GENERATOR_VERSION,
+    physicsVersion: GAME_PHYSICS_VERSION,
+    rapierVersion: RAPIER_VERSION,
     slug,
     seed: baseSeed,
     difficulty,
