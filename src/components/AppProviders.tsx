@@ -1,0 +1,1 @@
+"use client"; import type {ReactNode} from "react"; import SolanaWalletProvider from "@/app/solana/WalletProvider"; export default function AppProviders({children}:{children:ReactNode}){return <SolanaWalletProvider>{children}</SolanaWalletProvider>}

@@ -1,0 +1,1 @@
+import Link from "next/link";export default function NotFound(){return <div className="page"><div className="container result"><span className="eyebrow">Lost Orb</span><h1>That path rolled away.</h1><p className="muted">The page you requested does not exist.</p><Link className="btn-primary" href="/">Back to Orbs</Link></div></div>}

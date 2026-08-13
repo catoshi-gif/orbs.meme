@@ -1,0 +1,1 @@
+import Image from "next/image"; import Link from "next/link"; export default function Logo(){return <Link href="/" className="brand"><Image src="/orbs-logo-128.png" width={42} height={42} alt="" priority/><strong>orbs<span>.meme</span></strong></Link>}
