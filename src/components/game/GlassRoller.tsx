@@ -397,8 +397,10 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       scene.fog = new THREE.FogExp2("#080D25", 0.012);
 
       const mobileish = window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 800;
-      const camera = new THREE.PerspectiveCamera(mobileish ? 56 : 48, 1, 0.08, 500);
-      camera.position.set(manifest.start.x, mobileish ? 7.15 : 5.2, manifest.start.z + (mobileish ? 8.6 : 6.4));
+      // V0.3.1 mobile framing: a compromise between the original close chase and the
+      // overly distant V0.3 camera. The overview is calculated separately below.
+      const camera = new THREE.PerspectiveCamera(mobileish ? 54 : 48, 1, 0.08, 500);
+      camera.position.set(manifest.start.x, mobileish ? 6.4 : 5.2, manifest.start.z + (mobileish ? 7.55 : 6.4));
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -703,8 +705,10 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       const boardQuat = new THREE.Quaternion();
       const euler = new THREE.Euler();
       const boardExtent = Math.max(manifest.width, manifest.depth);
-      const overviewDirection = new THREE.Vector3(0, 1, 0.18).normalize();
-      let overviewDistance = boardExtent * 2;
+      // Near top-down overview makes much better use of a portrait phone. The old
+      // bounding-circle fit was intentionally safe but left the board looking postage-stamp small.
+      const overviewDirection = new THREE.Vector3(0, 1, 0.045).normalize();
+      let overviewDistance = boardExtent * 1.4;
       let overviewTarget = 0;
       let overviewMix = 0;
       const pinchPointers = new Map<number, { x: number; y: number }>();
@@ -764,9 +768,24 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       };
       resetRef.current = resetBall;
 
+      let wakeLock: { release: () => Promise<void> } | null = null;
       const begin = () => {
         if (phaseRef.current !== "ready") return;
         void audioRef.current?.unlock();
+
+        // Fullscreen is opportunistic: modern browsers may grant it from this user gesture.
+        // iOS Safari historically varies here, so Home Screen standalone mode remains the
+        // reliable no-address-bar path. Never block the run if fullscreen is unavailable.
+        if (mobileish && document.fullscreenEnabled && !document.fullscreenElement) {
+          const gameRoot = mount.closest(".glass-roller") as HTMLElement | null;
+          void gameRoot?.requestFullscreen?.({ navigationUI: "hide" }).catch(() => undefined);
+        }
+
+        const nav = navigator as Navigator & {
+          wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+        };
+        void nav.wakeLock?.request("screen").then((lock) => { wakeLock = lock; }).catch(() => undefined);
+
         changePhase("countdown");
         setCountdown(3);
         let remaining = 3;
@@ -793,18 +812,17 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         if (!rect.width || !rect.height) return;
         renderer.setSize(rect.width, rect.height, false);
         camera.aspect = rect.width / rect.height;
-        camera.fov = mobileish ? 56 : 48;
+        camera.fov = mobileish ? 54 : 48;
         camera.updateProjectionMatrix();
 
-        // Fit the ENTIRE square board against the limiting FOV. On a portrait iPhone the
-        // horizontal FOV is much narrower than the vertical FOV, so a simple height-based
-        // overview crops the left/right edges. Fitting the board's bounding circle against
-        // min(verticalFov, horizontalFov) guarantees every wall stays on-screen.
+        // Fit the actual rectangular board rather than its circumscribed circle. On a portrait
+        // iPhone the circle fit wasted ~30% of the available width. This keeps a ~9% safety
+        // margin while letting the full maze occupy most of the screen.
         const verticalFov = rad(camera.fov);
         const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
-        const limitingHalfFov = Math.max(rad(10), Math.min(verticalFov, horizontalFov) / 2);
-        const boardRadius = Math.hypot(manifest.width, manifest.depth) * 0.5 * 1.035;
-        overviewDistance = boardRadius / Math.sin(limitingHalfFov);
+        const widthDistance = (manifest.width * 0.5 * 1.09) / Math.tan(Math.max(rad(8), horizontalFov / 2));
+        const depthDistance = (manifest.depth * 0.5 * 1.09) / Math.tan(Math.max(rad(8), verticalFov / 2));
+        overviewDistance = Math.max(widthDistance, depthDistance) / Math.max(0.94, overviewDirection.y);
       };
       resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(mount);
@@ -1007,9 +1025,9 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         // the top of the screen. Velocity only nudges the look target, never the control basis.
         const lookLeadX = clamp(v.x * 0.24, -1.1, 1.1);
         const lookLeadZ = clamp(v.z * 0.24, -1.1, 1.1);
-        const chaseHeight = mobileish ? 7.15 : 5.35;
-        const chaseBack = mobileish ? 8.65 : 6.55;
-        const chaseForwardLook = mobileish ? 1.35 : 0.65;
+        const chaseHeight = mobileish ? 6.4 : 5.35;
+        const chaseBack = mobileish ? 7.55 : 6.55;
+        const chaseForwardLook = mobileish ? 1.55 : 0.65;
         cameraLocal.set(localBall.x, chaseHeight, localBall.z + chaseBack);
         lookLocal.set(localBall.x + lookLeadX, 0.48, localBall.z + lookLeadZ - chaseForwardLook);
         followCameraWorld.copy(cameraLocal).applyQuaternion(boardGroup.quaternion);
@@ -1061,6 +1079,8 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
           else material?.dispose?.();
         });
         renderer.dispose();
+        if (wakeLock) void wakeLock.release().catch(() => undefined);
+        wakeLock = null;
       };
     })().catch((error) => {
       console.error("Glass Roller initialization failed", error);
@@ -1198,7 +1218,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       {(phase === "playing" || phase === "ready") ? (
         <div className="game-camera-hint">
           <span className="game-camera-desktop">SPACE · toggle full-maze overview · steering stays live</span>
-          <span className="game-camera-mobile">PINCH · zoom between chase + full-maze overview · tilt stays live</span>
+          <span className="game-camera-mobile">PINCH · ZOOM</span>
         </div>
       ) : null}
 

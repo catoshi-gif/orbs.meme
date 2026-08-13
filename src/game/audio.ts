@@ -1,21 +1,29 @@
 "use client";
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const midiToHz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
 
 type WebkitWindow = Window & { webkitAudioContext?: typeof AudioContext };
+type OscType = OscillatorType;
 
 /**
- * Tiny procedural audio engine for Glass Roller.
- * No downloaded audio assets, no decode cost, and nothing runs until a user gesture unlocks audio.
+ * Lightweight procedural audio for Glass Roller.
+ *
+ * Design rules:
+ * - No rolling-noise bed. Broadband noise sounded like static on iPhone speakers, so V1 stays
+ *   silent while rolling until we have a genuinely good glass-roll asset/synthesis model.
+ * - Collision, victory and cash-register cues are short and sparse.
+ * - Music is a ~2 minute authored procedural chiptune form (verse → chorus → verse B →
+ *   bridge → final chorus), not an 8-note loop.
+ * - Nothing allocates or runs until a user gesture unlocks Web Audio.
  */
 export class GameAudioEngine {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
-  private rollGain: GainNode | null = null;
-  private rollFilter: BiquadFilterNode | null = null;
-  private rollSource: AudioBufferSourceNode | null = null;
+  private musicBus: GainNode | null = null;
   private musicTimer: number | null = null;
-  private musicIndex = 0;
+  private musicStep = 0;
+  private musicNextAt = 0;
   private muted = false;
   private lastThumpAt = 0;
 
@@ -25,33 +33,18 @@ export class GameAudioEngine {
       const Ctx = window.AudioContext ?? (window as WebkitWindow).webkitAudioContext;
       if (!Ctx) return;
       const context = new Ctx();
+
       const master = context.createGain();
-      master.gain.value = this.muted ? 0 : 0.72;
+      master.gain.value = this.muted ? 0 : 0.76;
       master.connect(context.destination);
 
-      const rollFilter = context.createBiquadFilter();
-      rollFilter.type = "bandpass";
-      rollFilter.frequency.value = 430;
-      rollFilter.Q.value = 0.75;
-      const rollGain = context.createGain();
-      rollGain.gain.value = 0;
-      rollFilter.connect(rollGain);
-      rollGain.connect(master);
-
-      const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      source.connect(rollFilter);
-      source.start();
+      const musicBus = context.createGain();
+      musicBus.gain.value = 0.9;
+      musicBus.connect(master);
 
       this.context = context;
       this.master = master;
-      this.rollFilter = rollFilter;
-      this.rollGain = rollGain;
-      this.rollSource = source;
+      this.musicBus = musicBus;
     }
     if (this.context.state === "suspended") await this.context.resume();
   }
@@ -59,15 +52,40 @@ export class GameAudioEngine {
   setMuted(muted: boolean) {
     this.muted = muted;
     if (!this.context || !this.master) return;
-    this.master.gain.setTargetAtTime(muted ? 0 : 0.72, this.context.currentTime, 0.03);
+    this.master.gain.setTargetAtTime(muted ? 0 : 0.76, this.context.currentTime, 0.03);
   }
 
-  setRollingSpeed(speed: number) {
-    if (!this.context || !this.rollGain || !this.rollFilter) return;
-    const normalized = clamp((speed - 1.35) / 3.25, 0, 1);
-    const targetGain = normalized * 0.037;
-    this.rollGain.gain.setTargetAtTime(targetGain, this.context.currentTime, 0.075);
-    this.rollFilter.frequency.setTargetAtTime(360 + normalized * 520, this.context.currentTime, 0.08);
+  /**
+   * Intentionally silent for V1.
+   * We keep the hook because the renderer/physics contract already exposes marble speed and a
+   * future real glass-rolling sample can be added without touching gameplay code.
+   */
+  setRollingSpeed(_speed: number) {
+    // no-op by design
+  }
+
+  private tone(
+    frequency: number,
+    start: number,
+    duration: number,
+    amount: number,
+    type: OscType,
+    destination: AudioNode,
+    detune = 0,
+  ) {
+    if (!this.context) return;
+    const osc = this.context.createOscillator();
+    const gain = this.context.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(frequency, start);
+    osc.detune.setValueAtTime(detune, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, amount), start + Math.min(0.012, duration * 0.18));
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.connect(gain);
+    gain.connect(destination);
+    osc.start(start);
+    osc.stop(start + duration + 0.015);
   }
 
   thump(intensity: number) {
@@ -95,76 +113,133 @@ export class GameAudioEngine {
   victory() {
     if (!this.context || !this.master || this.muted) return;
     const now = this.context.currentTime;
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    notes.forEach((frequency, index) => {
-      const start = now + index * 0.105;
-      const osc = this.context!.createOscillator();
-      const gain = this.context!.createGain();
-      osc.type = index === notes.length - 1 ? "sawtooth" : "triangle";
-      osc.frequency.value = frequency;
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(index === notes.length - 1 ? 0.09 : 0.055, start + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + (index === notes.length - 1 ? 0.42 : 0.19));
-      osc.connect(gain);
-      gain.connect(this.master!);
-      osc.start(start);
-      osc.stop(start + (index === notes.length - 1 ? 0.44 : 0.21));
+    const fanfare = [
+      { midi: 72, at: 0.00, len: 0.18, gain: 0.052 },
+      { midi: 76, at: 0.11, len: 0.18, gain: 0.056 },
+      { midi: 79, at: 0.22, len: 0.20, gain: 0.060 },
+      { midi: 84, at: 0.34, len: 0.48, gain: 0.080 },
+    ];
+    fanfare.forEach((note, index) => {
+      this.tone(midiToHz(note.midi), now + note.at, note.len, note.gain, index === fanfare.length - 1 ? "sawtooth" : "triangle", this.master!);
+      this.tone(midiToHz(note.midi - 12), now + note.at, note.len * 0.9, note.gain * 0.28, "square", this.master!, -4);
     });
   }
 
-  /** Call from the real successful claim flow after Anchor confirms/broadcasts the claim. */
+  /** Call only after a real successful Anchor claim. */
   cashRegister() {
     if (!this.context || !this.master || this.muted) return;
     const now = this.context.currentTime;
     [880, 1320, 1760].forEach((frequency, index) => {
-      const start = now + index * 0.045;
-      const osc = this.context!.createOscillator();
-      const gain = this.context!.createGain();
-      osc.type = "square";
-      osc.frequency.value = frequency;
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.032, start + 0.005);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.07);
-      osc.connect(gain);
-      gain.connect(this.master!);
-      osc.start(start);
-      osc.stop(start + 0.08);
+      this.tone(frequency, now + index * 0.045, 0.075, 0.030, "square", this.master!);
     });
-    const bellStart = now + 0.14;
-    const bell = this.context.createOscillator();
-    const bellGain = this.context.createGain();
-    bell.type = "sine";
-    bell.frequency.value = 1568;
-    bellGain.gain.setValueAtTime(0.0001, bellStart);
-    bellGain.gain.exponentialRampToValueAtTime(0.065, bellStart + 0.008);
-    bellGain.gain.exponentialRampToValueAtTime(0.0001, bellStart + 0.34);
-    bell.connect(bellGain);
-    bellGain.connect(this.master);
-    bell.start(bellStart);
-    bell.stop(bellStart + 0.36);
+    this.tone(1568, now + 0.14, 0.34, 0.064, "sine", this.master!);
+    this.tone(2093, now + 0.18, 0.23, 0.028, "triangle", this.master!);
+  }
+
+  /**
+   * Two-minute chiptune form at 132 BPM.
+   * 64 bars × 8 eighth-note steps ≈ 116 seconds before the composition repeats.
+   */
+  private scheduleMusicStep(stepIndex: number, at: number) {
+    if (!this.context || !this.musicBus || this.muted) return;
+
+    const stepInBar = stepIndex % 8;
+    const bar = Math.floor(stepIndex / 8) % 64;
+
+    type Section = "verseA" | "chorusA" | "verseB" | "bridge" | "chorusB";
+    const section: Section =
+      bar < 16 ? "verseA" :
+      bar < 32 ? "chorusA" :
+      bar < 48 ? "verseB" :
+      bar < 56 ? "bridge" : "chorusB";
+
+    // Roots are MIDI notes around C3. Each progression is long enough that the ear hears
+    // harmonic movement instead of a short repeating arpeggio.
+    const progressions: Record<Section, number[]> = {
+      verseA:  [48,45,41,43, 48,40,41,43, 45,41,48,43, 41,43,48,48],
+      chorusA: [41,43,40,45, 41,43,48,48, 41,43,40,45, 41,43,48,43],
+      verseB:  [45,41,48,43, 45,40,41,43, 48,45,41,43, 40,41,43,43],
+      bridge:  [38,45,41,43, 38,40,41,43],
+      chorusB: [41,43,48,45, 41,43,48,48],
+    };
+    const roots = progressions[section];
+    const root = roots[bar % roots.length]!;
+
+    // Major/minor quality based on the diatonic C-major harmony above.
+    const minorRootClasses = new Set([2, 4, 9, 11]);
+    const rootClass = ((root % 12) + 12) % 12;
+    const third = minorRootClasses.has(rootClass) ? 3 : 4;
+    const chord = [0, third, 7, 12];
+
+    // Bass: warm pulse on quarter notes.
+    if (stepInBar === 0 || stepInBar === 4) {
+      this.tone(midiToHz(root - 12), at, 0.19, section.startsWith("chorus") ? 0.016 : 0.013, "triangle", this.musicBus);
+    }
+
+    // Glassy chord/arpeggio bed. Different inversion every bar gives the long form motion.
+    const arpDegree = chord[(stepInBar + bar) % chord.length]!;
+    if (stepInBar % 2 === 0 || section.startsWith("chorus")) {
+      this.tone(midiToHz(root + 12 + arpDegree), at, 0.105, section.startsWith("chorus") ? 0.0085 : 0.0062, "square", this.musicBus, -3);
+    }
+
+    // Lead melody: five distinct motifs assigned by section and rotated across bars.
+    const motifs: Record<Section, number[][]> = {
+      verseA: [
+        [0,2,4,7,4,2,0,2], [4,7,9,7,4,2,4,7], [7,9,11,9,7,4,2,4], [4,2,0,2,4,7,4,2],
+      ],
+      chorusA: [
+        [7,9,12,11,9,7,4,7], [9,12,14,12,11,9,7,9], [12,11,9,7,9,11,12,14], [7,9,11,12,16,14,12,11],
+      ],
+      verseB: [
+        [9,7,4,2,4,7,9,7], [4,2,0,2,7,4,2,0], [7,11,9,7,4,7,9,11], [2,4,7,9,7,4,2,4],
+      ],
+      bridge: [
+        [2,5,9,7,5,4,2,0], [5,9,12,9,7,5,4,2], [4,7,11,9,7,4,2,4], [2,4,5,7,9,11,12,11],
+      ],
+      chorusB: [
+        [7,9,12,14,12,9,7,9], [12,14,16,14,12,11,9,7], [9,11,12,16,14,12,11,9], [7,9,11,12,14,16,19,16],
+      ],
+    };
+    const sectionMotifs = motifs[section];
+    const motif = sectionMotifs[bar % sectionMotifs.length]!;
+    const melodyOffset = motif[stepInBar]!;
+    const leadMidi = 72 + melodyOffset;
+
+    // Verse breathes on alternating eighth notes; choruses carry the melody more continuously.
+    const playLead = section.startsWith("chorus") || section === "bridge" || (stepInBar % 2 === (bar % 2));
+    if (playLead) {
+      const leadGain = section.startsWith("chorus") ? 0.020 : section === "bridge" ? 0.017 : 0.0155;
+      this.tone(midiToHz(leadMidi), at, 0.135, leadGain, "triangle", this.musicBus);
+      if (section === "chorusB" && (stepInBar === 0 || stepInBar === 4)) {
+        this.tone(midiToHz(leadMidi - 12), at, 0.17, 0.006, "square", this.musicBus);
+      }
+    }
+
+    // Tiny tonal percussion (no white noise/static). Kick on 1/3; bright click on 2/4.
+    if (stepInBar === 0 || stepInBar === 4) {
+      this.tone(58, at, 0.07, 0.009, "sine", this.musicBus);
+    } else if ((stepInBar === 2 || stepInBar === 6) && section !== "verseA") {
+      this.tone(1480, at, 0.025, 0.0032, "square", this.musicBus);
+    }
   }
 
   startMusic() {
     if (!this.context || this.musicTimer !== null) return;
-    const pattern = [261.63, 329.63, 392.0, 329.63, 293.66, 392.0, 440.0, 392.0];
-    const tick = () => {
-      if (!this.context || !this.master || this.muted) return;
-      const now = this.context.currentTime;
-      const osc = this.context.createOscillator();
-      const gain = this.context.createGain();
-      osc.type = "triangle";
-      osc.frequency.value = pattern[this.musicIndex % pattern.length]!;
-      this.musicIndex += 1;
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.0105, now + 0.008);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
-      osc.connect(gain);
-      gain.connect(this.master);
-      osc.start(now);
-      osc.stop(now + 0.12);
+    const secondsPerStep = (60 / 132) / 2;
+    this.musicStep = 0;
+    this.musicNextAt = this.context.currentTime + 0.05;
+
+    const schedule = () => {
+      if (!this.context || !this.musicBus) return;
+      const horizon = this.context.currentTime + 0.32;
+      while (this.musicNextAt < horizon) {
+        this.scheduleMusicStep(this.musicStep, this.musicNextAt);
+        this.musicStep = (this.musicStep + 1) % (64 * 8);
+        this.musicNextAt += secondsPerStep;
+      }
     };
-    tick();
-    this.musicTimer = window.setInterval(tick, 390);
+    schedule();
+    this.musicTimer = window.setInterval(schedule, 80);
   }
 
   stopMusic() {
@@ -174,10 +249,7 @@ export class GameAudioEngine {
 
   dispose() {
     this.stopMusic();
-    try { this.rollSource?.stop(); } catch { /* already stopped */ }
-    this.rollSource = null;
-    this.rollGain = null;
-    this.rollFilter = null;
+    this.musicBus = null;
     this.master = null;
     const context = this.context;
     this.context = null;

@@ -36,3 +36,47 @@ footer{border-top:1px solid var(--border);padding:36px 0;margin-top:auto}.footer
 /* Glass Roller V0.3 competition/audio polish */
 .game-audio-button{pointer-events:auto;height:42px;padding:0 12px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(5,8,23,.58);color:#BFD0EE;font:700 8px Lato;letter-spacing:.09em;backdrop-filter:blur(14px);white-space:nowrap;transition:border-color .18s ease,color .18s ease,background .18s ease}.game-audio-button:hover{border-color:rgba(32,227,210,.36);color:#fff;background:rgba(10,17,45,.72)}
 @media(max-width:640px){.game-audio-button{height:38px;padding:0 9px;font-size:7px}.game-hud-bottom{max-width:calc(100% - 126px);flex-wrap:wrap;gap:6px}.game-hud-bottom .game-hud-chip:nth-child(2){display:none}}
+
+
+/* Glass Roller V0.3.1 immersion + mobile HUD refinements */
+.game-page{height:100dvh;min-height:100dvh}
+.glass-roller{min-height:100dvh}
+
+/* The live game owns the viewport; SiteHeader already returns null, this is a defensive layout rule. */
+body:has(.game-page){overflow:hidden}
+body:has(.game-page) main{min-height:100dvh}
+
+/* Mobile: keep the useful HUD compact and move the camera hint away from the bottom controls. */
+@media(max-width:900px),(pointer:coarse){
+  .game-camera-hint{
+    top:58px;
+    bottom:auto;
+    left:50%;
+    width:max-content;
+    max-width:none;
+    padding:5px 9px;
+    border-radius:999px;
+    font-size:6.5px;
+    line-height:1;
+    letter-spacing:.12em;
+    background:rgba(5,8,23,.42);
+    color:rgba(225,236,255,.68);
+  }
+}
+@media(max-width:640px){
+  .game-page,.glass-roller{height:100dvh;min-height:100dvh}
+  .game-hud-top{top:max(10px,env(safe-area-inset-top));left:10px;right:10px}
+  .game-control-switcher{top:54px;right:10px}
+  .game-hud-bottom{
+    left:10px;
+    right:auto;
+    bottom:max(10px,env(safe-area-inset-bottom));
+    max-width:228px;
+    flex-wrap:nowrap;
+    gap:6px;
+  }
+  .game-hud-bottom .game-hud-chip:nth-child(2){display:none}
+  .game-hud-bottom .game-hud-chip{min-width:72px}
+  .game-style-lab-toggle{bottom:62px}
+  .game-touch-pad{bottom:64px}
+}
