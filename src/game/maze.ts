@@ -134,49 +134,103 @@ function addControlledLoops(cells: Cell[], grid: number, seed: number, loopCount
   }
 }
 
-function mazeMetrics(cells: Cell[], path: number[]) {
+function mazeMetrics(cells: Cell[], grid: number, path: number[]) {
+  const pathSet = new Set(path);
   let deadEnds = 0;
   let junctions = 0;
-  for (const cell of cells) {
+  let pathDecisions = 0;
+  let sideBranchEntrances = 0;
+  for (let idx = 0; idx < cells.length; idx += 1) {
+    const cell = cells[idx]!;
     let degree = 0;
-    for (const dir of DIRS) if (cell.openings & dir.bit) degree += 1;
+    let offPathNeighbors = 0;
+    for (const dir of DIRS) {
+      if ((cell.openings & dir.bit) === 0) continue;
+      degree += 1;
+      if (pathSet.has(idx)) {
+        const nx = cell.x + dir.dx;
+        const nz = cell.z + dir.dz;
+        const ni = indexFor(nx, nz, grid);
+        if (!pathSet.has(ni)) offPathNeighbors += 1;
+      }
+    }
     if (degree === 1) deadEnds += 1;
     if (degree >= 3) junctions += 1;
+    if (pathSet.has(idx) && degree >= 3) pathDecisions += 1;
+    sideBranchEntrances += offPathNeighbors;
   }
+
   let turns = 0;
-  for (let i = 1; i < path.length - 1; i += 1) {
+  let longestStraight = 1;
+  let currentStraight = 1;
+  let previousDx = 0;
+  let previousDz = 0;
+  for (let i = 1; i < path.length; i += 1) {
     const a = cells[path[i - 1]!]!;
     const b = cells[path[i]!]!;
-    const c = cells[path[i + 1]!]!;
-    if ((a.x - b.x) !== (b.x - c.x) || (a.z - b.z) !== (b.z - c.z)) turns += 1;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    if (i > 1 && (dx !== previousDx || dz !== previousDz)) {
+      turns += 1;
+      currentStraight = 1;
+    } else {
+      currentStraight += 1;
+      longestStraight = Math.max(longestStraight, currentStraight);
+    }
+    previousDx = dx;
+    previousDz = dz;
   }
-  return { deadEnds, junctions, turnRatio: path.length > 2 ? turns / (path.length - 2) : 0 };
+
+  const pathEdges = Math.max(1, path.length - 1);
+  return {
+    deadEnds,
+    junctions,
+    pathDecisions,
+    sideBranchEntrances,
+    decisionRatio: pathDecisions / Math.max(1, path.length),
+    branchRatio: sideBranchEntrances / Math.max(1, path.length),
+    turnRatio: turns / pathEdges,
+    longestStraight,
+  };
 }
 
 function selectCandidate(baseSeed: number, difficulty: DifficultyKey): LogicalMaze {
   const profile = DIFFICULTY_PROFILES[difficulty];
   let best: LogicalMaze | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
-  const tries = difficulty === "brutal" ? 42 : 32;
+  const tries = difficulty === "quick" ? 38 : difficulty === "classic" ? 46 : 54;
+
+  // The target route length establishes the broad 5/10/15 minute bands. These shape
+  // targets stop the generator from satisfying that number with a boring snake: harder
+  // boards deliberately contain more turns, route-adjacent false branches and decisions.
+  const desiredTurns = difficulty === "quick" ? 0.43 : difficulty === "classic" ? 0.47 : 0.50;
+  const desiredDecisionRatio = difficulty === "quick" ? 0.12 : difficulty === "classic" ? 0.16 : 0.20;
+  const desiredBranchRatio = difficulty === "quick" ? 0.16 : difficulty === "classic" ? 0.21 : 0.25;
+  const maxComfortStraight = difficulty === "quick" ? 9 : difficulty === "classic" ? 8 : 7;
+
   for (let i = 0; i < tries; i += 1) {
     const seed = hashString(`${baseSeed}:${difficulty}:candidate:${i}`);
     const cells = carve(seed, profile.grid);
     addControlledLoops(cells, profile.grid, seed, profile.loopCount, profile.targetPathCells);
     const { a, b, path } = findDiameter(cells, profile.grid);
-    const metrics = mazeMetrics(cells, path);
-    const targetError = Math.abs(path.length - profile.targetPathCells);
-    const desiredTurns = difficulty === "quick" ? 0.38 : difficulty === "classic" ? 0.43 : 0.47;
-    const turnPenalty = Math.abs(metrics.turnRatio - desiredTurns) * 18;
-    const desiredDeadEnds = profile.grid * (difficulty === "quick" ? 1.15 : 1.35);
-    const deadEndPenalty = Math.abs(metrics.deadEnds - desiredDeadEnds) * 0.12;
-    const junctionReward = Math.min(metrics.junctions, profile.loopCount * 2) * -0.18;
+    const metrics = mazeMetrics(cells, profile.grid, path);
+
+    const targetError = Math.abs(path.length - profile.targetPathCells) * 1.18;
+    const turnPenalty = Math.abs(metrics.turnRatio - desiredTurns) * 34;
+    const decisionPenalty = Math.abs(metrics.decisionRatio - desiredDecisionRatio) * 70;
+    const branchPenalty = Math.abs(metrics.branchRatio - desiredBranchRatio) * 42;
+    const straightPenalty = Math.max(0, metrics.longestStraight - maxComfortStraight) * 1.45;
+    const desiredDeadEnds = profile.grid * (difficulty === "quick" ? 1.2 : difficulty === "classic" ? 1.38 : 1.52);
+    const deadEndPenalty = Math.abs(metrics.deadEnds - desiredDeadEnds) * 0.11;
+    const junctionReward = Math.min(metrics.junctions, Math.ceil(profile.grid * 1.2)) * -0.08;
     const edgePenalty = Math.min(
       cells[a]!.x,
       cells[a]!.z,
       profile.grid - 1 - cells[a]!.x,
       profile.grid - 1 - cells[a]!.z,
-    ) * 0.35;
-    const score = targetError + turnPenalty + deadEndPenalty + junctionReward + edgePenalty;
+    ) * 0.24;
+
+    const score = targetError + turnPenalty + decisionPenalty + branchPenalty + straightPenalty + deadEndPenalty + junctionReward + edgePenalty;
     if (score < bestScore) {
       bestScore = score;
       best = { grid: profile.grid, cells, startIndex: a, goalIndex: b, pathIndices: path };
@@ -335,7 +389,7 @@ export function normalizeDifficulty(value?: string | null): DifficultyKey {
 
 export function generateGameManifest(slug: string, difficulty: DifficultyKey, style: GameStyle): GameManifest {
   const profile = DIFFICULTY_PROFILES[difficulty];
-  const baseSeed = hashString(`orbs-glass-roller:${slug}:${difficulty}:v1`);
+  const baseSeed = hashString(`orbs-glass-roller:${slug}:${difficulty}:v2`);
   const logical = selectCandidate(baseSeed, difficulty);
   const path = logical.pathIndices.map((idx) => worldPoint(logical.cells[idx]!, logical.grid, profile.cellSize));
   const pathCells = logical.pathIndices.map((idx) => logical.cells[idx]!);
@@ -348,7 +402,7 @@ export function generateGameManifest(slug: string, difficulty: DifficultyKey, st
   const fingerprint = `${slug}|${difficulty}|${baseSeed}|${path.length}|${walls.length}|${bumpers.length}|${gates.map((g) => `${g.x},${g.z},${g.phase.toFixed(4)}`).join(";")}`;
 
   return {
-    version: "glass-roller-local-v1",
+    version: "glass-roller-local-v2",
     slug,
     seed: baseSeed,
     difficulty,

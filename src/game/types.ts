@@ -55,7 +55,7 @@ export type DifficultyProfile = {
 };
 
 export type GameManifest = {
-  version: "glass-roller-local-v1";
+  version: "glass-roller-local-v2";
   slug: string;
   seed: number;
   difficulty: DifficultyKey;
