@@ -11,6 +11,7 @@ import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmount
 import type { DifficultyKey, GameStyle } from "@/game/types";
 
 const names = ["Identity", "Prize", "Game", "Launch", "Review", "Share"];
+const publicSiteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://orbs.meme").replace(/\/+$/, "");
 const profiles: { key: DifficultyKey; name: string; label: string; time: string }[] = [
   { key: "quick", name: "Quick", label: "Easy", time: "~5 min" },
   { key: "classic", name: "Classic", label: "Medium", time: "~10 min" },
@@ -30,7 +31,7 @@ function amount(value: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
-type CreatedOrb = { slug: string; commitment: string; startsAt: number };
+type CreatedOrb = { slug: string; commitment: string; createdAt: number; startsAt: number };
 
 export default function CreateWizard() {
   const initialLaunch = useMemo(() => localInputParts(new Date(Date.now() + 24 * 60 * 60 * 1000)), []);
@@ -146,7 +147,10 @@ export default function CreateWizard() {
     finally { setCreating(false); }
   };
 
-  const shareUrl = createdOrb ? `${typeof window !== "undefined" ? window.location.origin : "https://orbs.meme"}/orb/${createdOrb.slug}` : "";
+  const shareUrl = createdOrb ? `${publicSiteUrl}/orb/${encodeURIComponent(createdOrb.slug)}?v=${createdOrb.createdAt}` : "";
+  const shareCardUrl = createdOrb ? `${publicSiteUrl}/api/orbs/${encodeURIComponent(createdOrb.slug)}/share-card?v=${createdOrb.createdAt}` : "";
+  const hostShareText = `I just sealed an Orb for ${amount(prizeAmount)} ${token?.symbol || "SPL"} (≈${money(prizeUsd)}). First verified finish wins.\n\nJoin the waiting room and bring your fastest run.`;
+  const hostShareParams = new URLSearchParams({ text: hostShareText, url: shareUrl });
 
   return (
     <div className="wizard-layout">
@@ -186,9 +190,9 @@ export default function CreateWizard() {
 
         {step === 5 && createdOrb ? <>
           <span className="eyebrow">Step 6 of 6</span><h2>Your Orb is sealed.</h2><p>Your share card is ready. Post it on X, then take the same waiting-room link to Discord, Telegram and every community you want at the starting line.</p>
-          <div className="share-card-preview"><img src={`/api/orbs/${encodeURIComponent(createdOrb.slug)}/share-card`} alt={`${amount(prizeAmount)} ${token?.symbol || "SPL"} Orb share card`} /><div><strong>Built to stop the scroll.</strong><span>The token art, exact prize, USD estimate, host, difficulty and launch time travel with this link automatically—no separate image upload required.</span></div></div>
+          <div className="share-card-preview"><img src={shareCardUrl} alt={`${amount(prizeAmount)} ${token?.symbol || "SPL"} Orb share card`} /><div><strong>Built to stop the scroll.</strong><span>X unfurls this card from the waiting-room URL. Composer previews can be delayed; if X does not show it before posting, use Download card and attach the image manually.</span></div></div>
           <div className="sealed-orb"><span>GAME COMMITMENT</span><code>{createdOrb.commitment}</code><small>SHA-256 commitment · seed remains encrypted server-side until launch</small></div>
-          <div className="fields"><div className="field full"><label>Waiting-room URL</label><input value={shareUrl} readOnly /></div><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button><a className="btn-secondary" href={`https://x.com/intent/post?text=${encodeURIComponent(`I just sealed an Orb for ${amount(prizeAmount)} ${token?.symbol || "SPL"} (≈${money(prizeUsd)}). First verified finish wins.\n\nJoin the waiting room and bring your fastest run.\n\n${shareUrl}`)}`} target="_blank" rel="noreferrer">Launch it on X ↗</a></div>
+          <div className="fields"><div className="field full"><label>Waiting-room URL</label><input value={shareUrl} readOnly /></div><div className="share-actions field full"><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button><a className="btn-secondary" href={`https://x.com/intent/post?${hostShareParams.toString()}`} target="_blank" rel="noreferrer">Post with card on X ↗</a><a className="btn-secondary" href={shareCardUrl} download={`orbs-${createdOrb.slug}.jpg`} target="_blank" rel="noreferrer">Download card</a></div></div>
           <p className="share-wide-note">Share it far and wide—the bigger the waiting room, the bigger the live moment.</p>
         </> : null}
 

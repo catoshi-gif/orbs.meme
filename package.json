@@ -22,6 +22,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.87.0",
+    "sharp": "0.34.5",
     "three": "0.185.1",
     "@dimforge/rapier3d-compat": "0.20.0"
   },
