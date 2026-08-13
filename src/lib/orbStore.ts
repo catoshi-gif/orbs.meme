@@ -4,11 +4,9 @@ import { GAME_GENERATOR_VERSION, GAME_PHYSICS_VERSION, RAPIER_VERSION } from "@/
 import { generateGameManifestFromSecret } from "@/game/maze";
 import type { DifficultyKey, GameManifest, GameStyle } from "@/game/types";
 import type { WalletSplToken } from "@/lib/walletTokens";
+import { MIN_PRIZE_USD, ORBS_FEE_USD, feeTokenAmountForPrice } from "@/lib/prizeEconomics";
 import type { XProfile } from "@/lib/xAuth";
 import { redisGetJson, redisSetJson, upstashConfigured } from "@/lib/upstash";
-
-export const ORBS_FEE_USD = 1.10;
-export const MIN_PRIZE_USD = 6.00;
 
 export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice">;
 
@@ -26,7 +24,7 @@ export type OrbRecord = {
   token: OrbTokenSnapshot;
   prizeTokenAmount: number;
   prizeUsd: number;
-  feeUsd: 1.10;
+  feeUsd: number;
   feeTokenAmount: number;
   generatorVersion: string;
   physicsVersion: string;
@@ -93,8 +91,8 @@ export async function createTestOrb(input: {
   if (!Number.isFinite(input.prizeTokenAmount) || input.prizeTokenAmount <= 0) throw new Error("Invalid prize amount");
   const prizeUsd = input.prizeTokenAmount * input.token.usdPrice;
   if (prizeUsd < MIN_PRIZE_USD) throw new Error(`Prize must be at least $${MIN_PRIZE_USD.toFixed(2)}`);
-  const feeTokenAmount = ORBS_FEE_USD / input.token.usdPrice;
-  if (input.prizeTokenAmount + feeTokenAmount > input.token.balance * 1.000000001) throw new Error("Wallet balance does not cover the prize plus the $1.10 Orbs fee");
+  const feeTokenAmount = feeTokenAmountForPrice(input.token.usdPrice);
+  if (input.prizeTokenAmount + feeTokenAmount > input.token.balance * 1.000000001) throw new Error(`Wallet balance does not cover the prize plus the $${ORBS_FEE_USD.toFixed(2)} Orbs fee`);
   if (!Number.isFinite(input.startsAt) || input.startsAt < Date.now() + 30_000) throw new Error("Launch must be at least 30 seconds in the future");
   if (input.startsAt > Date.now() + 1000 * 60 * 60 * 24 * 30) throw new Error("Launch must be within 30 days");
 
@@ -109,6 +107,10 @@ export async function createTestOrb(input: {
     style,
     tokenMint: input.token.mint,
     prizeTokenAmount: input.prizeTokenAmount,
+    prizeUsd,
+    feeUsd: ORBS_FEE_USD,
+    feeTokenAmount,
+    tokenPriceUsd: input.token.usdPrice,
     startsAt: input.startsAt,
     generatorVersion: GAME_GENERATOR_VERSION,
     physicsVersion: GAME_PHYSICS_VERSION,

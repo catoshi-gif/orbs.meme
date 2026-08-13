@@ -7,6 +7,7 @@ import ConnectWallet from "@/components/ConnectWallet";
 import XConnect, { type XUser } from "@/components/XConnect";
 import TokenPicker, { type WalletSplToken } from "@/components/TokenPicker";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
+import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmountForPrice, maxPrizeTokenAmount, tokenInputValue } from "@/lib/prizeEconomics";
 import type { DifficultyKey, GameStyle } from "@/game/types";
 
 const names = ["Identity", "Prize", "Game", "Launch", "Review", "Share"];
@@ -41,6 +42,7 @@ export default function CreateWizard() {
   const [prizeInput, setPrizeInput] = useState("");
   const [launchDate, setLaunchDate] = useState(initialLaunch.date);
   const [launchTime, setLaunchTime] = useState(initialLaunch.time);
+  const [fundingAcknowledged, setFundingAcknowledged] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createdOrb, setCreatedOrb] = useState<CreatedOrb | null>(null);
@@ -49,11 +51,14 @@ export default function CreateWizard() {
 
   const prizeAmount = Number(prizeInput || 0);
   const prizeUsd = token?.usdPrice ? prizeAmount * token.usdPrice : 0;
-  const feeTokenAmount = token?.usdPrice ? 1.10 / token.usdPrice : 0;
+  const feeTokenAmount = feeTokenAmountForPrice(token?.usdPrice);
   const totalTokenAmount = prizeAmount + feeTokenAmount;
+  const totalUsd = prizeAmount > 0 ? prizeUsd + ORBS_FEE_USD : MIN_WALLET_REQUIREMENT_USD;
+  const maxPrizeAmount = token ? maxPrizeTokenAmount(token.balance, token.usdPrice, token.decimals) : 0;
+  const maxPrizeUsd = token?.usdPrice ? maxPrizeAmount * token.usdPrice : 0;
   const launchMs = new Date(`${launchDate}T${launchTime}:00`).getTime();
   const identityReady = connected && Boolean(publicKey) && Boolean(xUser && !xUser.protected);
-  const prizeReady = Boolean(token?.eligible && prizeAmount > 0 && prizeUsd >= 6 && totalTokenAmount <= (token?.balance || 0));
+  const prizeReady = Boolean(token?.eligible && prizeAmount > 0 && prizeUsd >= MIN_PRIZE_USD && totalTokenAmount <= (token?.balance || 0) * 1.000000001);
   const launchReady = Number.isFinite(launchMs) && launchMs > Date.now() + 30_000;
 
   const previewHref = useMemo(() => {
@@ -67,8 +72,27 @@ export default function CreateWizard() {
 
   const canContinue = step === 0 ? identityReady : step === 1 ? prizeReady : step === 3 ? launchReady : step < 4;
 
+  const handleTokenChange = (next: WalletSplToken | null) => {
+    const sameMint = Boolean(next && token && next.mint === token.mint);
+    setToken(next);
+    if (!sameMint) {
+      setPrizeInput("");
+      setFundingAcknowledged(false);
+    }
+  };
+
+  const setPrize = (value: string) => {
+    setPrizeInput(value);
+    setFundingAcknowledged(false);
+  };
+
+  const useMaxPrize = () => {
+    if (!token || maxPrizeAmount <= 0) return;
+    setPrize(tokenInputValue(maxPrizeAmount, token.decimals));
+  };
+
   const createOrb = async () => {
-    if (!publicKey || !token || !identityReady || !prizeReady || !launchReady) return;
+    if (!publicKey || !token || !identityReady || !prizeReady || !launchReady || !fundingAcknowledged) return;
     setCreating(true); setCreateError(null);
     try {
       const response = await fetch("/api/orbs", {
@@ -97,8 +121,8 @@ export default function CreateWizard() {
 
         {step === 1 ? <>
           <span className="eyebrow">Step 2 of 6</span><h2>Choose the prize.</h2>
-          <p>Pick from standard SPL tokens already in your connected wallet. The winner receives the full advertised prize; the $1.10 Orbs fee is added separately in the same token.</p>
-          <div className="fields"><div className="field full"><label>Prize token</label><TokenPicker value={token} onChange={(next) => { setToken(next); setPrizeInput(""); }} /></div>{token ? <><div className="field"><label>Prize amount · {token.symbol}</label><input type="number" min="0" step="any" value={prizeInput} onChange={(event) => setPrizeInput(event.target.value)} placeholder={`You have ${amount(token.balance)} ${token.symbol}`} /></div><div className="field"><label>Prize value</label><input value={prizeAmount > 0 ? money(prizeUsd) : "$6.00 minimum"} readOnly /></div><div className="field full"><div className={`prize-math ${prizeReady ? "ready" : ""}`}><div><span>Winner gets</span><strong>{prizeAmount > 0 ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{prizeAmount > 0 ? money(prizeUsd) : "$6 minimum"}</small></div><b>+</b><div><span>Orbs fee</span><strong>{amount(feeTokenAmount)} {token.symbol}</strong><small>$1.10</small></div><b>=</b><div><span>Wallet requirement</span><strong>{prizeAmount > 0 ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>Balance {amount(token.balance)}</small></div></div>{prizeAmount > 0 && prizeUsd < 6 ? <small className="field-warning">Increase the prize to at least $6.00.</small> : null}{prizeAmount > 0 && totalTokenAmount > token.balance ? <small className="field-warning">Your wallet does not have enough {token.symbol} for the prize + $1.10 fee.</small> : null}</div></> : null}</div>
+          <p>Pick from standard SPL tokens already in your connected wallet. The winner receives the full advertised prize; the {money(ORBS_FEE_USD)} Orbs fee is added separately in the same token.</p>
+          <div className="fields"><div className="field full"><label>Prize token</label><TokenPicker value={token} onChange={handleTokenChange} /></div>{token ? <><div className="field"><div className="field-label-row"><label>Prize amount · {token.symbol}</label><button type="button" className="input-max" disabled={maxPrizeUsd < MIN_PRIZE_USD} onClick={useMaxPrize}>Max</button></div><input type="number" min="0" step="any" value={prizeInput} onChange={(event) => setPrize(event.target.value)} placeholder={`You have ${amount(token.balance)} ${token.symbol}`} />{maxPrizeUsd >= MIN_PRIZE_USD ? <small className="field-help">Max reserves the Orbs fee and puts the rest into the winner prize.</small> : null}</div><div className="field"><label>Prize value</label><input value={prizeAmount > 0 ? money(prizeUsd) : `${money(MIN_PRIZE_USD)} minimum prize`} readOnly /></div><div className="field full"><div className={`prize-math ${prizeReady ? "ready" : ""}`}><div><span>Winner gets</span><strong>{prizeAmount > 0 ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{prizeAmount > 0 ? money(prizeUsd) : `${money(MIN_PRIZE_USD)} minimum prize`}</small></div><b>+</b><div><span>Orbs fee</span><strong>{amount(feeTokenAmount)} {token.symbol}</strong><small>{money(ORBS_FEE_USD)}</small></div><b>=</b><div><span>Wallet requirement</span><strong>{prizeAmount > 0 ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>{prizeAmount > 0 ? `${money(totalUsd)} total · balance ${money(token.usdValue || 0)}` : `${money(MIN_WALLET_REQUIREMENT_USD)} minimum total · balance ${money(token.usdValue || 0)}`}</small></div></div>{prizeAmount > 0 && prizeUsd < MIN_PRIZE_USD ? <small className="field-warning">Increase the winner prize to at least {money(MIN_PRIZE_USD)}.</small> : null}{prizeAmount > 0 && totalTokenAmount > token.balance * 1.000000001 ? <small className="field-warning">Your wallet does not have enough {token.symbol} for this prize plus the {money(ORBS_FEE_USD)} fee. Use Max to reserve the fee automatically.</small> : null}</div></> : null}</div>
         </> : null}
 
         {step === 2 ? <>
@@ -114,10 +138,11 @@ export default function CreateWizard() {
         </> : null}
 
         {step === 4 ? <>
-          <span className="eyebrow">Step 5 of 6</span><h2>Review the Orb.</h2><p>The pre-Anchor build can now create the complete sealed competition record in Upstash. No tokens move yet.</p>
-          <div className="orb-review-grid"><div><span>Host</span><strong>@{xUser?.username || "—"}</strong></div><div><span>Prize</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{money(prizeUsd)}</small></div><div><span>Orbs fee</span><strong>{token ? `${amount(feeTokenAmount)} ${token.symbol}` : "—"}</strong><small>$1.10</small></div><div><span>Game</span><strong>{profiles.find((p) => p.key === difficulty)?.label}</strong><small>{profiles.find((p) => p.key === difficulty)?.time}</small></div><div className="wide"><span>Launch</span><strong>{launchReady ? new Date(launchMs).toLocaleString() : "—"}</strong></div></div>
-          <div className="test-orb-note"><strong>Pre-Anchor test mode</strong><span>This creates the real hidden seed, SHA-256 commitment, share URL and JIT launch gate. Funding will replace this final button later without changing the game lifecycle.</span></div>
-          {createError ? <div className="form-error">{createError}</div> : null}<button className="btn-primary" disabled={!identityReady || !prizeReady || !launchReady || creating} onClick={() => void createOrb()}>{creating ? "Sealing Orb…" : "Create sealed test Orb →"}</button>
+          <span className="eyebrow">Step 5 of 6</span><h2>Review the Orb.</h2><p>Review the exact prize before sealing the competition. The production funding transaction will use this same confirmation step.</p>
+          <div className="orb-review-grid"><div><span>Host</span><strong>@{xUser?.username || "—"}</strong></div><div><span>Winner prize</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{money(prizeUsd)}</small></div><div><span>Orbs fee</span><strong>{token ? `${amount(feeTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(ORBS_FEE_USD)}</small></div><div><span>Total wallet debit</span><strong>{token && prizeAmount ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(totalUsd)}</small></div><div><span>Game</span><strong>{profiles.find((p) => p.key === difficulty)?.label}</strong><small>{profiles.find((p) => p.key === difficulty)?.time}</small></div><div><span>Launch</span><strong>{launchReady ? new Date(launchMs).toLocaleString() : "—"}</strong></div></div>
+          <div className="funding-review"><span className="funding-review-kicker">Funding commitment</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol} (${money(prizeUsd)}) goes to the winner.` : "Review your prize amount."}</strong><p>Once a funded Orb is launched, you cannot cancel it or withdraw the prize early. The prize remains locked for the competition. If the contract reaches its expiry without a valid winner claim, the protocol refund path returns the refundable prize funds to the host wallet.</p><label className="funding-ack"><input type="checkbox" checked={fundingAcknowledged} onChange={(event) => setFundingAcknowledged(event.target.checked)} /><span>I reviewed the prize and understand a funded Orb cannot be canceled or withdrawn early.</span></label></div>
+          <div className="test-orb-note"><strong>Pre-Anchor test mode</strong><span>No tokens move in this build. This creates the real hidden seed, SHA-256 commitment, share URL and JIT launch gate; the final Anchor funding transaction will replace the last action without changing this review flow.</span></div>
+          {createError ? <div className="form-error">{createError}</div> : null}<button className="btn-primary" disabled={!identityReady || !prizeReady || !launchReady || !fundingAcknowledged || creating} onClick={() => void createOrb()}>{creating ? "Sealing Orb…" : "Create sealed test Orb →"}</button>
         </> : null}
 
         {step === 5 && createdOrb ? <>

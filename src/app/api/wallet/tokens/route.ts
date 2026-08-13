@@ -27,7 +27,7 @@ export async function GET(request: Request) {
   try {
     const tokens = await getWalletSplTokens(wallet);
     return NextResponse.json({ ok: true, wallet, tokens, source: "classic-spl+jupiter-v3", updatedAt: Date.now() }, {
-      headers: { "Cache-Control": "private, max-age=10, stale-while-revalidate=20" },
+      headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not load wallet tokens" }, { status: 502 });

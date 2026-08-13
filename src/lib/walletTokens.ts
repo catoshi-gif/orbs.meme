@@ -193,12 +193,17 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
     };
   });
 
-  return tokens.sort((a, b) => {
-    const aEligible = a.eligible ? 1 : 0;
-    const bEligible = b.eligible ? 1 : 0;
-    if (aEligible !== bEligible) return bEligible - aEligible;
-    const usd = (b.usdValue || 0) - (a.usdValue || 0);
-    if (usd) return usd;
-    return a.symbol.localeCompare(b.symbol);
-  });
+  // Holdings that would render as $0.00 are noise for a prize picker and are
+  // overwhelmingly dust/spam. Keep small but genuinely valued holdings, while
+  // hiding unknown-price and sub-cent balances from the creation UI entirely.
+  return tokens
+    .filter((token) => token.eligible && token.usdValue !== null && token.usdValue >= 0.01)
+    .sort((a, b) => {
+      const aEligible = a.eligible ? 1 : 0;
+      const bEligible = b.eligible ? 1 : 0;
+      if (aEligible !== bEligible) return bEligible - aEligible;
+      const usd = (b.usdValue || 0) - (a.usdValue || 0);
+      if (usd) return usd;
+      return a.symbol.localeCompare(b.symbol);
+    });
 }
