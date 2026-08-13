@@ -61,11 +61,11 @@ export const DEFAULT_GAME_STYLE: GameStyle = {
 };
 
 export const BONK_GAME_STYLE: GameStyle = {
-  marble: "#4A77FF",
-  marbleSecondary: "#20E3D2",
-  walls: "#63F38B",
-  floor: "#130D0B",
-  accent: "#FF8B36",
+  marble: "#FF7200",
+  marbleSecondary: "#FFD166",
+  walls: "#FF9A1F",
+  floor: "#150704",
+  accent: "#FF4D00",
 };
 
 export const GAME_STYLE_PRESETS: ReadonlyArray<{ name: string; style: GameStyle }> = [
@@ -81,7 +81,7 @@ export const GAME_STYLE_PRESETS: ReadonlyArray<{ name: string; style: GameStyle 
   },
   {
     name: "Obsidian",
-    style: { marble: "#7857FF", marbleSecondary: "#D7D1FF", walls: "#6DE5FF", floor: "#030511", accent: "#A975FF" },
+    style: { marble: "#090B0F", marbleSecondary: "#6D7882", walls: "#182128", floor: "#010204", accent: "#5E8398" },
   },
 ];
 

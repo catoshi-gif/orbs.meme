@@ -4,7 +4,7 @@ import { GAME_GENERATOR_VERSION, GAME_PHYSICS_VERSION, RAPIER_VERSION } from "@/
 import { generateGameManifestFromSecret } from "@/game/maze";
 import type { DifficultyKey, GameManifest, GameStyle } from "@/game/types";
 import type { WalletSplToken } from "@/lib/walletTokens";
-import { MIN_PRIZE_USD, ORBS_FEE_USD, feeTokenAmountForPrice } from "@/lib/prizeEconomics";
+import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber } from "@/lib/prizeEconomics";
 import type { XProfile } from "@/lib/xAuth";
 import { redisGetJson, redisSetJson, upstashConfigured } from "@/lib/upstash";
 
@@ -23,9 +23,12 @@ export type OrbRecord = {
   style: GameStyle;
   token: OrbTokenSnapshot;
   prizeTokenAmount: number;
+  prizeRawAmount: string;
   prizeUsd: number;
   feeUsd: number;
   feeTokenAmount: number;
+  feeRawAmount: string;
+  priceQuotedAt: number;
   generatorVersion: string;
   physicsVersion: string;
   rapierVersion: string;
@@ -83,16 +86,22 @@ export async function createTestOrb(input: {
   style: GameStyle;
   token: WalletSplToken;
   prizeTokenAmount: number;
+  prizeRawAmount: string;
+  quotedUsdPrice: number;
+  feeRawAmount: string;
+  priceQuotedAt: number;
   startsAt: number;
 }) {
   if (!orbStoreConfigured()) throw new Error("Orb storage is not configured");
   if (input.hostX.protected) throw new Error("Orb hosts must use a public X account so players can follow immediately");
-  if (!input.token.eligible || !input.token.usdPrice) throw new Error(input.token.ineligibleReason || "Selected token is not fundable");
-  if (!Number.isFinite(input.prizeTokenAmount) || input.prizeTokenAmount <= 0) throw new Error("Invalid prize amount");
-  const prizeUsd = input.prizeTokenAmount * input.token.usdPrice;
+  if (!input.token.eligible) throw new Error(input.token.ineligibleReason || "Selected token is not fundable");
+  if (!Number.isFinite(input.prizeTokenAmount) || input.prizeTokenAmount <= 0 || !/^\d+$/.test(input.prizeRawAmount)) throw new Error("Invalid prize amount");
+  if (!Number.isFinite(input.quotedUsdPrice) || input.quotedUsdPrice <= 0 || !/^\d+$/.test(input.feeRawAmount)) throw new Error("Invalid funding quote");
+  const prizeUsd = input.prizeTokenAmount * input.quotedUsdPrice;
   if (prizeUsd < MIN_PRIZE_USD) throw new Error(`Prize must be at least $${MIN_PRIZE_USD.toFixed(2)}`);
-  const feeTokenAmount = feeTokenAmountForPrice(input.token.usdPrice);
-  if (input.prizeTokenAmount + feeTokenAmount > input.token.balance * 1.000000001) throw new Error(`Wallet balance does not cover the prize plus the $${ORBS_FEE_USD.toFixed(2)} Orbs fee`);
+  const feeTokenAmount = rawToTokenNumber(input.feeRawAmount, input.token.decimals);
+  const requiredRaw = BigInt(input.prizeRawAmount) + BigInt(input.feeRawAmount);
+  if (requiredRaw > BigInt(input.token.rawAmount)) throw new Error(`Wallet balance does not cover the prize plus the $${ORBS_FEE_USD.toFixed(2)} Orbs fee`);
   if (!Number.isFinite(input.startsAt) || input.startsAt < Date.now() + 30_000) throw new Error("Launch must be at least 30 seconds in the future");
   if (input.startsAt > Date.now() + 1000 * 60 * 60 * 24 * 30) throw new Error("Launch must be within 30 days");
 
@@ -107,10 +116,13 @@ export async function createTestOrb(input: {
     style,
     tokenMint: input.token.mint,
     prizeTokenAmount: input.prizeTokenAmount,
+    prizeRawAmount: input.prizeRawAmount,
     prizeUsd,
     feeUsd: ORBS_FEE_USD,
     feeTokenAmount,
-    tokenPriceUsd: input.token.usdPrice,
+    feeRawAmount: input.feeRawAmount,
+    tokenPriceUsd: input.quotedUsdPrice,
+    priceQuotedAt: input.priceQuotedAt,
     startsAt: input.startsAt,
     generatorVersion: GAME_GENERATOR_VERSION,
     physicsVersion: GAME_PHYSICS_VERSION,
@@ -134,12 +146,15 @@ export async function createTestOrb(input: {
       name: input.token.name,
       decimals: input.token.decimals,
       logoURI: input.token.logoURI,
-      usdPrice: input.token.usdPrice,
+      usdPrice: input.quotedUsdPrice,
     },
     prizeTokenAmount: input.prizeTokenAmount,
+    prizeRawAmount: input.prizeRawAmount,
     prizeUsd,
     feeUsd: ORBS_FEE_USD,
     feeTokenAmount,
+    feeRawAmount: input.feeRawAmount,
+    priceQuotedAt: input.priceQuotedAt,
     generatorVersion: GAME_GENERATOR_VERSION,
     physicsVersion: GAME_PHYSICS_VERSION,
     rapierVersion: RAPIER_VERSION,

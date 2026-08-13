@@ -1,4 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
+import type { PrizeQuoteSnapshot } from "@/lib/prizeEconomics";
 
 const CLASSIC_SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
@@ -16,6 +17,7 @@ export type WalletSplToken = {
   suspicious: boolean;
   eligible: boolean;
   ineligibleReason?: string;
+  prizeQuote?: PrizeQuoteSnapshot | null;
 };
 
 function rpcUrl() {

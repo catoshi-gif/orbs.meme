@@ -443,14 +443,21 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
       if (cancelled) return;
       setLoadingLabel("Forging your maze…");
 
-      const liftColor = (hex: string, minLightness: number) => {
+      const liftColor = (hex: string, minLightness: number, preserveSaturation = false) => {
         const color = new THREE.Color(hex);
         const hsl = { h: 0, s: 0, l: 0 };
         color.getHSL(hsl);
-        if (hsl.l < minLightness) color.setHSL(hsl.h, Math.max(hsl.s, 0.45), minLightness);
+        // Preserve intentional neutral/obsidian palettes. The old saturation floor
+        // turned near-black glass into an unrelated jewel color when lifted.
+        const saturation = preserveSaturation ? hsl.s : hsl.s < 0.18 ? hsl.s : Math.max(hsl.s, 0.45);
+        if (hsl.l < minLightness) color.setHSL(hsl.h, saturation, minLightness);
         return color;
       };
-      const displayWall = liftColor(style.walls, 0.48);
+      const sourceWall = new THREE.Color(style.walls);
+      const sourceWallHsl = { h: 0, s: 0, l: 0 };
+      sourceWall.getHSL(sourceWallHsl);
+      const darkNeutralGlass = sourceWallHsl.l < 0.2 && sourceWallHsl.s < 0.35;
+      const displayWall = liftColor(style.walls, darkNeutralGlass ? 0.24 : 0.48, darkNeutralGlass);
       const displayAccent = liftColor(style.accent, 0.5);
       const displayMarbleSecondary = liftColor(style.marbleSecondary, 0.5);
       const displayFloor = new THREE.Color(style.floor).lerp(new THREE.Color("#050817"), 0.46);
