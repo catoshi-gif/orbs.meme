@@ -54,6 +54,8 @@ export type DifficultyProfile = {
   maxTiltDeg: number;
 };
 
+export type DriveProfile = "desktop" | "mobile";
+
 export type ReplayFrame = { tick: number; x: number; y: number };
 export type ReplayEvent = { tick: number; type: "reset" };
 
@@ -65,6 +67,8 @@ export type ReplayEnvelope = {
   physicsVersion: string;
   rapierVersion: string;
   sampleHz: 20;
+  driveProfile: DriveProfile;
+  finishTick: number;
   elapsedMs: number;
   resets: number;
   checkpoints: number;

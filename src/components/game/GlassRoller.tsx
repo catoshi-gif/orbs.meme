@@ -6,7 +6,8 @@ import { PHYSICS } from "@/game/constants";
 import { GameAudioEngine } from "@/game/audio";
 import { generateGameManifest } from "@/game/maze";
 import { buildReplayEnvelope } from "@/game/replay";
-import type { DifficultyKey, GameStyle, ReplayEvent, ReplayFrame } from "@/game/types";
+import { clampPlanarSpeed, gateRotation, nextPlanarVelocity } from "@/game/simulation";
+import type { DifficultyKey, DriveProfile, GameStyle, ReplayEnvelope, ReplayEvent, ReplayFrame } from "@/game/types";
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 const rad = (deg: number) => (deg * Math.PI) / 180;
@@ -23,7 +24,7 @@ type Props = {
   style: GameStyle;
 };
 
-type Phase = "loading" | "ready" | "countdown" | "playing" | "won";
+type Phase = "loading" | "ready" | "countdown" | "playing" | "verifying" | "won" | "lost" | "verify-error";
 type ControlMode = "keys" | "sensor" | "touch";
 
 
@@ -245,6 +246,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
   const startRef = useRef<(() => void) | null>(null);
   const cameraToggleRef = useRef<(() => void) | null>(null);
   const audioRef = useRef<GameAudioEngine | null>(null);
+  const lastReplayRef = useRef<ReplayEnvelope | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [controlMode, setControlModeState] = useState<ControlMode>("keys");
   const controlModeRef = useRef<ControlMode>("keys");
@@ -258,6 +260,8 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
   const [sensorMessage, setSensorMessage] = useState<string | null>(null);
   const [loadingLabel, setLoadingLabel] = useState("Warming the glass world…");
   const [audioMuted, setAudioMuted] = useState(false);
+  const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
+  const [verifiedHash, setVerifiedHash] = useState<string | null>(null);
 
   useEffect(() => {
     const engine = new GameAudioEngine();
@@ -277,6 +281,43 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
     phaseRef.current = next;
     setPhase(next);
   }, []);
+
+  const submitFinish = useCallback(async (replay: ReplayEnvelope) => {
+    setVerificationMessage("Replaying your run on the Orbs verifier…");
+    setVerifiedHash(null);
+    try {
+      const response = await fetch("/api/game/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, difficulty, style, replay }),
+      });
+      const payload = await response.json() as {
+        verified?: boolean;
+        firstWinner?: boolean;
+        winnerStore?: "upstash" | "verification-only";
+        error?: string;
+        verification?: { replayHash?: string; manifestHash?: string; elapsedMs?: number };
+      };
+      if (!response.ok || !payload.verified) {
+        setVerificationMessage(payload.error || "The server could not reproduce this run.");
+        changePhase("verify-error");
+        return;
+      }
+      setVerifiedHash(payload.verification?.replayHash?.slice(0, 12).toUpperCase() || null);
+      if (payload.firstWinner === false) {
+        setVerificationMessage("A different verified finish reached the winner lock first.");
+        changePhase("lost");
+        return;
+      }
+      setVerificationMessage(payload.winnerStore === "upstash" ? "Verified + first-winner lock secured." : "Verified by deterministic server replay.");
+      audioRef.current?.victory();
+      changePhase("won");
+    } catch (error) {
+      console.error("Orbs replay verification failed", error);
+      setVerificationMessage("Verification is temporarily unavailable. Your replay is still saved on this device.");
+      changePhase("verify-error");
+    }
+  }, [changePhase, difficulty, slug, style]);
 
   const requestMotion = useCallback(async () => {
     await audioRef.current?.unlock();
@@ -691,8 +732,10 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       let lastSafe = { ...manifest.start };
       let resetCount = 0;
       let runStartTick = 0;
+      let runDriveProfile: DriveProfile = controlModeRef.current === "keys" ? "desktop" : "mobile";
       const replay: ReplayFrame[] = [];
       const replayEvents: ReplayEvent[] = [];
+      let pendingReset = false;
       const localBall = new THREE.Vector3();
       const cameraLocal = new THREE.Vector3();
       const cameraWorld = new THREE.Vector3();
@@ -758,15 +801,19 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         renderer.domElement.addEventListener("pointercancel", onCameraPointerUp);
       }
 
-      const resetBall = () => {
-        if (phaseRef.current === "playing") replayEvents.push({ tick: physicsTick - runStartTick, type: "reset" });
+      const performReset = (logReplay: boolean, tick: number) => {
+        if (logReplay) replayEvents.push({ tick, type: "reset" });
         ballBody.setTranslation({ x: lastSafe.x, y: PHYSICS.ballRadius + 0.08, z: lastSafe.z }, true);
         ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
         ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
         resetCount += 1;
         setResets(resetCount);
       };
-      resetRef.current = resetBall;
+      const requestReset = () => {
+        if (phaseRef.current === "playing") pendingReset = true;
+        else performReset(false, 0);
+      };
+      resetRef.current = requestReset;
 
       let wakeLock: { release: () => Promise<void> } | null = null;
       const begin = () => {
@@ -796,8 +843,20 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
             setCountdown(0);
             startTime = performance.now() / 1000;
             runStartTick = physicsTick;
+            runDriveProfile = controlModeRef.current === "keys" ? "desktop" : "mobile";
             replay.length = 0;
             replayEvents.length = 0;
+            pendingReset = false;
+            resetCount = 0;
+            nextCheckpoint = 0;
+            lastSafe = { ...manifest.start };
+            setResets(0);
+            setCheckpoint(0);
+            setVerificationMessage(null);
+            setVerifiedHash(null);
+            ballBody.setTranslation({ x: manifest.start.x, y: PHYSICS.ballRadius + 0.06, z: manifest.start.z }, true);
+            ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+            ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
             changePhase("playing");
             audioRef.current?.startMusic();
           } else {
@@ -898,39 +957,18 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               boardQuat.setFromEuler(euler);
             }
 
-            let steerX = sampledInputX;
-            let steerY = sampledInputY;
-            const inputMagnitude = Math.hypot(steerX, steerY);
-            if (inputMagnitude > 1) {
-              steerX /= inputMagnitude;
-              steerY /= inputMagnitude;
-            }
-
             const velocityBeforeStep = ballBody.linvel();
-            const planarBeforeStep = Math.hypot(velocityBeforeStep.x, velocityBeforeStep.z);
-            const maxDriveSpeed = directDesktop ? PHYSICS.desktopMaxSpeed : PHYSICS.mobileMaxSpeed;
-            const desiredX = steerX * maxDriveSpeed;
-            const desiredZ = -steerY * maxDriveSpeed;
-            const desiredMagnitude = Math.hypot(desiredX, desiredZ);
-            const directionDot = velocityBeforeStep.x * desiredX + velocityBeforeStep.z * desiredZ;
-            const reversing = desiredMagnitude > 0.05 && planarBeforeStep > 0.18 && directionDot < 0;
-            const response = desiredMagnitude < 0.05
-              ? (directDesktop ? PHYSICS.desktopCoastResponse : PHYSICS.mobileCoastResponse)
-              : reversing
-                ? (directDesktop ? PHYSICS.desktopReverseResponse : PHYSICS.mobileReverseResponse)
-                : (directDesktop ? PHYSICS.desktopResponse : PHYSICS.mobileResponse);
-            const steeringBlend = 1 - Math.exp(-response * PHYSICS.fixedStep);
-
-            ballBody.setLinvel({
-              x: velocityBeforeStep.x + (desiredX - velocityBeforeStep.x) * steeringBlend,
-              y: velocityBeforeStep.y,
-              z: velocityBeforeStep.z + (desiredZ - velocityBeforeStep.z) * steeringBlend,
-            }, true);
+            const driveProfile = runDriveProfile;
+            const steered = nextPlanarVelocity(
+              { x: velocityBeforeStep.x, z: velocityBeforeStep.z },
+              sampledInputX,
+              sampledInputY,
+              driveProfile,
+            );
+            ballBody.setLinvel({ x: steered.x, y: velocityBeforeStep.y, z: steered.z }, true);
 
             manifest.gates.forEach((gate, i) => {
-              const angle = gate.phase + simTime * gate.speed;
-              const half = angle / 2;
-              gateBodies[i]!.setNextKinematicRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
+              gateBodies[i]!.setNextKinematicRotation(gateRotation(gate, simTime));
             });
 
             const preWorldVelocity = ballBody.linvel();
@@ -946,39 +984,46 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               audioRef.current?.thump(clamp((collisionDelta - 0.42) / 1.6, 0, 1));
             }
             if (physicsTick % 3 === 0) audioRef.current?.setRollingSpeed(planarSpeed);
-            const speedLimit = controlModeRef.current === "keys" ? PHYSICS.desktopMaxSpeed : PHYSICS.mobileMaxSpeed;
-            if (planarSpeed > speedLimit) {
-              const factor = speedLimit / planarSpeed;
-              ballBody.setLinvel({ x: v.x * factor, y: v.y, z: v.z * factor }, true);
+            const clampedVelocity = clampPlanarSpeed({ x: v.x, z: v.z }, driveProfile);
+            if (clampedVelocity.x !== v.x || clampedVelocity.z !== v.z) {
+              ballBody.setLinvel({ x: clampedVelocity.x, y: v.y, z: clampedVelocity.z }, true);
             }
 
             const p = ballBody.translation();
-            if (p.y < -2.2) resetBall();
+            if (pendingReset || p.y < -2.2) {
+              performReset(true, physicsTick - runStartTick);
+              pendingReset = false;
+            }
 
+            const competitionPosition = ballBody.translation();
             if (nextCheckpoint < manifest.checkpoints.length) {
               const cp = manifest.checkpoints[nextCheckpoint]!;
-              if (Math.hypot(p.x - cp.x, p.z - cp.z) < manifest.cellSize * 0.38) {
+              if (Math.hypot(competitionPosition.x - cp.x, competitionPosition.z - cp.z) < manifest.cellSize * 0.38) {
                 lastSafe = { x: cp.x, z: cp.z };
                 nextCheckpoint += 1;
                 setCheckpoint(nextCheckpoint);
               }
             }
 
-            if (nextCheckpoint >= manifest.checkpoints.length && Math.hypot(p.x - manifest.goal.x, p.z - manifest.goal.z) < 0.64) {
+            if (nextCheckpoint >= manifest.checkpoints.length && Math.hypot(competitionPosition.x - manifest.goal.x, competitionPosition.z - manifest.goal.z) < 0.64) {
               const finish = now - startTime;
+              const finishTick = physicsTick - runStartTick;
               setElapsed(finish);
-              changePhase("won");
+              changePhase("verifying");
               audioRef.current?.setRollingSpeed(0);
               audioRef.current?.stopMusic();
-              audioRef.current?.victory();
-              const envelope = buildReplayEnvelope(manifest, replay, replayEvents, finish * 1000, resetCount, nextCheckpoint);
+              const envelope = buildReplayEnvelope(manifest, replay, replayEvents, runDriveProfile, finishTick, finish * 1000, resetCount, nextCheckpoint);
+              lastReplayRef.current = envelope;
               try {
                 sessionStorage.setItem(`orbs:replay:${slug}`, JSON.stringify(envelope));
               } catch {
-                // Replay persistence is diagnostic scaffolding only; never block a valid local finish.
+                // Local persistence is recovery/diagnostic support only; the server still verifies independently.
               }
               ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
               ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+              void submitFinish(envelope);
+              accumulator = 0;
+              break;
             }
 
             physicsTick += 1;
@@ -1097,10 +1142,15 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       disposeEngine?.();
       while (mount.firstChild) mount.removeChild(mount.firstChild);
     };
-  }, [changePhase, manifest, style.accent, style.floor, style.marble, style.marbleSecondary, style.walls]);
+  }, [changePhase, manifest, style.accent, style.floor, style.marble, style.marbleSecondary, style.walls, submitFinish]);
 
   const begin = useCallback(() => startRef.current?.(), []);
   const reset = useCallback(() => resetRef.current?.(), []);
+  const retryVerification = useCallback(() => {
+    if (!lastReplayRef.current) return;
+    changePhase("verifying");
+    void submitFinish(lastReplayRef.current);
+  }, [changePhase, submitFinish]);
   const toggleAudio = useCallback(() => {
     setAudioMuted((current) => {
       const next = !current;
@@ -1188,15 +1238,54 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
 
       {phase === "countdown" ? <div className="game-countdown">{countdown || "GO"}</div> : null}
 
+      {phase === "verifying" ? (
+        <div className="game-overlay game-overlay-card game-verify-card">
+          <div className="game-loader-orb" />
+          <span className="game-kicker">VERIFYING FINISH</span>
+          <h1>Replaying every move.</h1>
+          <p>{verificationMessage || "The server is rebuilding this exact maze and replaying your 20 Hz control stream through the locked Rapier physics contract."}</p>
+          <div className="game-verification-pills">
+            <span>{manifest.physicsVersion}</span><span>Rapier {manifest.rapierVersion}</span><span>20 Hz replay</span>
+          </div>
+        </div>
+      ) : null}
+
       {phase === "won" ? (
         <div className="game-overlay game-overlay-card game-win-card">
-          <span className="game-kicker">ORB CLEARED</span>
+          <span className="game-kicker">ORB CLEARED · SERVER VERIFIED</span>
           <h1>You found the light.</h1>
           <div className="game-win-time">{formatTime(elapsed)}</div>
-          <p>{resets === 0 ? "A clean run." : `${resets} recovery ${resets === 1 ? "reset" : "resets"}.`} In a funded Orb, this finish now enters deterministic verification.</p>
+          <p>{resets === 0 ? "A clean run." : `${resets} recovery ${resets === 1 ? "reset" : "resets"}.`} {verificationMessage}</p>
+          {verifiedHash ? <div className="game-verified-hash"><span>REPLAY PROOF</span><strong>{verifiedHash}</strong></div> : null}
           <div className="game-ready-actions">
             <Link className="btn-primary" href={`/orb/${slug}/results`}>Preview winner state</Link>
             <button className="btn-secondary" onClick={() => window.location.reload()}>Run it again</button>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "lost" ? (
+        <div className="game-overlay game-overlay-card game-win-card">
+          <span className="game-kicker">ORB COMPLETE</span>
+          <h1>Someone got there first.</h1>
+          <div className="game-win-time">{formatTime(elapsed)}</div>
+          <p>{verificationMessage || "Your run verified, but another verified finish secured the winner lock first."}</p>
+          <div className="game-ready-actions">
+            <Link className="btn-primary" href={`/orb/${slug}/results`}>See the winner</Link>
+            <button className="btn-secondary" onClick={() => window.location.reload()}>Run it for fun</button>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "verify-error" ? (
+        <div className="game-overlay game-overlay-card game-win-card">
+          <span className="game-kicker">RUN SAVED</span>
+          <h1>Verification needs another try.</h1>
+          <div className="game-win-time">{formatTime(elapsed)}</div>
+          <p>{verificationMessage}</p>
+          <div className="game-ready-actions">
+            <button className="btn-primary" onClick={retryVerification}>Retry verification</button>
+            <button className="btn-secondary" onClick={() => window.location.reload()}>Start a new run</button>
           </div>
         </div>
       ) : null}

@@ -6,6 +6,8 @@ export const RAPIER_VERSION = "0.20.0" as const;
 
 
 export const DIFFICULTY_PROFILES: Record<DifficultyKey, DifficultyProfile> = {
+  // CALIBRATION LOCK (Aug 2026): validated human completion 04:17 on iPhone/desktop-feel build.
+  // Do not change Quick geometry/control constants without bumping GAME_GENERATOR_VERSION.
   quick: {
     key: "quick",
     label: "Quick",

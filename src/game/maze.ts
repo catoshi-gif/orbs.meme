@@ -387,9 +387,8 @@ export function normalizeDifficulty(value?: string | null): DifficultyKey {
   return "classic";
 }
 
-export function generateGameManifest(slug: string, difficulty: DifficultyKey, style: GameStyle): GameManifest {
+function generateManifestWithBaseSeed(slug: string, difficulty: DifficultyKey, style: GameStyle, baseSeed: number): GameManifest {
   const profile = DIFFICULTY_PROFILES[difficulty];
-  const baseSeed = hashString(`orbs-glass-roller:${slug}:${difficulty}:v2`);
   const logical = selectCandidate(baseSeed, difficulty);
   const path = logical.pathIndices.map((idx) => worldPoint(logical.cells[idx]!, logical.grid, profile.cellSize));
   const pathCells = logical.pathIndices.map((idx) => logical.cells[idx]!);
@@ -427,3 +426,27 @@ export function generateGameManifest(slug: string, difficulty: DifficultyKey, st
     manifestId: localManifestId(fingerprint),
   };
 }
+
+/** Current public/demo generator. The seed is derivable from the URL and is therefore not secret. */
+export function generateGameManifest(slug: string, difficulty: DifficultyKey, style: GameStyle): GameManifest {
+  const baseSeed = hashString(`orbs-glass-roller:${slug}:${difficulty}:v2`);
+  return generateManifestWithBaseSeed(slug, difficulty, style, baseSeed);
+}
+
+/**
+ * Funded-Orb JIT entry point. The secret seed source is persisted encrypted server-side before
+ * starts_at and never sent to the countdown client. This preserves the already-calibrated maze
+ * algorithm while allowing the future canonical manifest service to reveal one deterministic
+ * board only when the Orb goes live.
+ */
+export function generateGameManifestFromSecret(
+  slug: string,
+  difficulty: DifficultyKey,
+  style: GameStyle,
+  secretSeedHex: string,
+): GameManifest {
+  if (!/^[0-9a-fA-F]{64}$/.test(secretSeedHex)) throw new Error("secretSeedHex must be 32 bytes encoded as hex");
+  const baseSeed = hashString(`orbs-glass-roller:${slug}:${difficulty}:secret:${secretSeedHex.toLowerCase()}:v2`);
+  return generateManifestWithBaseSeed(slug, difficulty, style, baseSeed);
+}
+
