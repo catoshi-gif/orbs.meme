@@ -12,6 +12,8 @@ Orbs is a gamified community-growth protocol built around the **Glass Roller**: 
 - Solana mainnet wallet connection
 - Responsive home, create flow, Orb lobby, live game, result and account routes
 - Orbs visual system: Deep Orbit / Indigo / Violet / Aqua / Sky / Cloud
+- Per-Orb Open Graph prize cards with token art and year-long CDN caching
+- Wallet-indexed hosted Orb dashboard
 
 ### Glass Roller vertical slice
 - Three.js renderer loaded only on `/orb/[slug]/play`
@@ -64,9 +66,9 @@ The local V0.2 play route derives a deterministic development seed from the Orb 
 2. Glass Roller vertical slice — current
 3. Human playtest + difficulty calibration
 4. JIT game manifest + deterministic finish verifier
-5. X / qualification / Turnstile
+5. X / follow / wallet / Turnstile / verified entry-post qualification
 6. SPL picker + price/fee quote
 7. Anchor funding / refund
 8. Turnkey winner claim
-9. Analytics + share cards
+9. Analytics + share-card measurement
 10. Mainnet public beta

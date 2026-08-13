@@ -6,7 +6,7 @@ import type { DifficultyKey, GameManifest, GameStyle } from "@/game/types";
 import type { WalletSplToken } from "@/lib/walletTokens";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber } from "@/lib/prizeEconomics";
 import type { XProfile } from "@/lib/xAuth";
-import { redisGetJson, redisSetJson, upstashConfigured } from "@/lib/upstash";
+import { redisCommand, redisGetJson, upstashConfigured } from "@/lib/upstash";
 
 export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice">;
 
@@ -40,6 +40,7 @@ export type OrbRecord = {
 export type PublicOrbRecord = Omit<OrbRecord, "encryptedSecretSeed">;
 
 const orbKey = (slug: string) => `orbs:v1:orb:${slug}`;
+const hostedOrbsKey = (wallet: string) => `orbs:v1:hosted:${wallet}`;
 
 function gameSecret() {
   const value = (process.env.ORBS_GAME_SECRET_KEY || "").trim();
@@ -163,7 +164,27 @@ export async function createTestOrb(input: {
     encryptedSecretSeed: encryptSeed(secretSeedHex),
   };
   const ttl = Math.max(60 * 60 * 24 * 7, Math.ceil((input.startsAt - Date.now()) / 1000) + 60 * 60 * 24 * 14);
-  await redisSetJson(orbKey(slug), record, { exSeconds: ttl });
+  const storeScript = `
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
+    redis.call('ZADD', KEYS[2], ARGV[2], ARGV[4])
+    local count = redis.call('ZCARD', KEYS[2])
+    if count > 100 then redis.call('ZREMRANGEBYRANK', KEYS[2], 0, count - 101) end
+    local index_ttl = redis.call('TTL', KEYS[2])
+    if index_ttl < tonumber(ARGV[3]) then redis.call('EXPIRE', KEYS[2], ARGV[3]) end
+    return 'OK'
+  `;
+  const stored = await redisCommand<string>([
+    "EVAL",
+    storeScript,
+    "2",
+    orbKey(slug),
+    hostedOrbsKey(record.hostWallet),
+    JSON.stringify(record),
+    String(record.createdAt),
+    String(ttl),
+    slug,
+  ]);
+  if (stored !== "OK") throw new Error("Could not persist the Orb");
   return publicRecord(record);
 }
 
@@ -175,6 +196,23 @@ export async function getOrbRecord(slug: string) {
 export async function getPublicOrb(slug: string): Promise<PublicOrbRecord | null> {
   const record = await getOrbRecord(slug);
   return record ? publicRecord(record) : null;
+}
+
+export async function listHostedOrbs(wallet: string, limit = 50): Promise<PublicOrbRecord[]> {
+  if (!upstashConfigured()) return [];
+  const slugs = await redisCommand<string[]>([
+    "ZREVRANGE",
+    hostedOrbsKey(wallet),
+    "0",
+    String(Math.max(0, Math.min(100, limit) - 1)),
+  ]);
+  if (!slugs?.length) return [];
+  const raw = await redisCommand<Array<string | null>>(["MGET", ...slugs.map(orbKey)]);
+  return (raw || []).flatMap((value) => {
+    if (!value) return [];
+    try { return [publicRecord(JSON.parse(value) as OrbRecord)]; }
+    catch { return []; }
+  });
 }
 
 export async function getCanonicalOrbManifest(slug: string): Promise<{ record: OrbRecord; manifest: GameManifest; manifestHash: string }> {

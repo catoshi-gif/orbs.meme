@@ -4,7 +4,7 @@ import { redisDelete, redisGetJson, redisSetJson, upstashConfigured } from "@/li
 
 const SESSION_COOKIE = "orbs_x_session";
 const OAUTH_TTL_SECONDS = 10 * 60;
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 35;
 
 export type XProfile = {
   id: string;
@@ -196,6 +196,47 @@ export async function getCurrentXSession(): Promise<{ id: string; user: XProfile
     try { stored = await refreshSession(id, stored); } catch { return null; }
   }
   return { id, user: stored.user, accessToken: decrypt(stored.accessToken) };
+}
+
+export type XRecentPost = {
+  id: string;
+  text: string;
+  createdAt: number;
+  urls: string[];
+};
+
+export async function getRecentXPostsForCurrentSession(maxResults = 5): Promise<{ user: XProfile; posts: XRecentPost[] }> {
+  const session = await getCurrentXSession();
+  if (!session) throw new Error("X_NOT_CONNECTED");
+  const url = new URL(`https://api.x.com/2/users/${session.user.id}/tweets`);
+  url.searchParams.set("max_results", String(Math.max(5, Math.min(10, maxResults))));
+  url.searchParams.set("tweet.fields", "created_at,entities");
+  url.searchParams.set("exclude", "retweets,replies");
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${session.accessToken}` },
+    cache: "no-store",
+  });
+  const json = await response.json() as {
+    data?: Array<{
+      id?: string;
+      text?: string;
+      created_at?: string;
+      entities?: { urls?: Array<{ expanded_url?: string; unwound_url?: string; url?: string }> };
+    }>;
+    detail?: string;
+    title?: string;
+  };
+  if (!response.ok) throw new Error(json.detail || json.title || `X post verification failed (${response.status})`);
+  const posts = (json.data || []).flatMap((post): XRecentPost[] => {
+    const createdAt = Date.parse(post.created_at || "");
+    if (!post.id || !Number.isFinite(createdAt)) return [];
+    const urls = (post.entities?.urls || []).flatMap((entry) => {
+      const value = entry.unwound_url || entry.expanded_url || entry.url;
+      return value ? [value] : [];
+    });
+    return [{ id: post.id, text: post.text || "", createdAt, urls }];
+  });
+  return { user: session.user, posts };
 }
 
 export async function setXSessionCookie(sessionId: string) {

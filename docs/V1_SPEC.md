@@ -2,7 +2,7 @@
 
 **Tagline:** Grow your community. Share the love. Join the movement.
 
-**V1 definition:** A host creates a timed 3D marble-tilt challenge, funds a prize using a standard SPL token, and shares a unique Orb URL. Players qualify by connecting X, completing the host-follow step, connecting a Solana wallet, and passing anti-automation checks. At launch, everyone races through the same committed game. The first server-validated finish wins the escrowed prize.
+**V1 definition:** A host creates a timed 3D marble-tilt challenge, funds a prize using a standard SPL token, and shares a unique Orb URL. Players qualify by connecting X, completing the host-follow step, connecting a Solana wallet, passing anti-automation checks, and publishing one original entry post containing the Orb link. At launch, everyone races through the same committed game. The first server-validated finish wins the escrowed prize.
 
 **V1 token policy:** Standard SPL Token Program only. Token-2022 is out of scope.
 
@@ -53,7 +53,7 @@ Discovery tabs: Live, Starting Soon, Trending, Big Orbs. Cards show host, token 
 3. Game: Quick ~5m / Classic ~10m / Brutal ~15m, marble color, board color.
 4. Launch: date/time/timezone and share-card preview.
 5. Review + Fund: prize and fee separate; wallet transaction creates/funds Orb.
-6. Share: unique URL, copy, X intent, Open Graph card.
+6. Share: unique URL, copy, X intent, deterministic Open Graph card.
 
 Recommended V1 economics: advertised prize minimum `$6` equivalent; `$1` fee is added separately and converted into the same token at funding time so the winner receives the full advertised prize.
 
@@ -67,6 +67,7 @@ Qualification:
 2. Follow host on X and return to press **I followed**. If no paid X relationship API is used, record click + attestation; do not call it verified.
 3. Connect wallet + sign ownership nonce; unique wallet per Orb entrant.
 4. Pass Turnstile + abuse-risk policy; validate challenge server-side.
+5. Add an original line, publish the Orb link through an explicit X Web Intent, then verify the connected account's recent posts through the official X API. Store the verified post ID once per entrant/Orb. Do not auto-publish or encourage duplicate/near-duplicate contest posts.
 
 At T-10 seconds enter full-screen launch state. At T0 reveal the maze seed and enter the game.
 
@@ -105,7 +106,7 @@ For the `$1` same-token fee across arbitrary quoteable SPL mints, use a short-li
 - Game service: WebSockets, synchronized launch, authoritative physics/winner.
 - Database: relational durable state.
 - Cache/realtime: presence, counts, locks, rate limits.
-- Object/CDN: assets and share cards.
+- Object/CDN: assets where needed. Orb share cards are deterministic responses generated once from the immutable Orb record and cached at the CDN; do not store a separate image record per share.
 - RPC: Solana interaction.
 - Price adapter: provider-agnostic USD quote layer.
 

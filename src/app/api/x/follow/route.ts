@@ -51,7 +51,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await followXUser(orb.hostX.id);
-    if (result.following && !result.pending) await redisSetJson(proofKey, { confirmedAt: Date.now() }, { exSeconds: 60 * 60 * 24 * 30 });
+    if (result.following && !result.pending) await redisSetJson(proofKey, { confirmedAt: Date.now() }, { exSeconds: 60 * 60 * 24 * 35 });
     return NextResponse.json({ ok: true, ...result, confirmed: result.following && !result.pending });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not follow host";

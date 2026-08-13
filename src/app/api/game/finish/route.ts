@@ -8,7 +8,7 @@ import type { GameStyle, ReplayEnvelope } from "@/game/types";
 import { verifyReplay } from "@/game/verifier";
 import { getOrbRecord, getCanonicalOrbManifest } from "@/lib/orbStore";
 import { hashXUserId, sessionMatchesManifest, verifyCompetitiveSession } from "@/lib/competitiveSession";
-import { hasFollowProof, hasWalletProof } from "@/lib/qualification";
+import { hasFollowProof, hasShareProof, hasWalletProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
 import { getCurrentXSession } from "@/lib/xAuth";
 import { getWinner, tryAcquireWinner, type WinnerRecord } from "@/lib/upstashWinner";
@@ -91,12 +91,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Competitive session is not bound to this game manifest" }, { status: 403 });
     }
 
-    const [followed, walletVerified, humanVerified] = await Promise.all([
+    const [followed, walletVerified, humanVerified, shared] = await Promise.all([
       hasFollowProof(x.user.id, realOrb.hostX.id),
       hasWalletProof(slug, x.user.id, wallet),
       hasHumanProof(slug, x.user.id, wallet),
+      hasShareProof(slug, x.user.id, wallet),
     ]);
-    if (!followed || !walletVerified || !humanVerified) return NextResponse.json({ ok: false, error: "Competition qualification is no longer valid" }, { status: 403 });
+    if (!followed || !walletVerified || !humanVerified || !shared) return NextResponse.json({ ok: false, error: "Competition qualification is no longer valid" }, { status: 403 });
 
     lockId = realOrb.id;
     const existing = await getWinner(lockId);

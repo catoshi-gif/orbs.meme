@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getCanonicalOrbManifest, getPublicOrb } from "@/lib/orbStore";
 import { issueCompetitiveSession, competitiveSessionsConfigured } from "@/lib/competitiveSession";
-import { hasFollowProof, hasWalletProof } from "@/lib/qualification";
+import { hasFollowProof, hasShareProof, hasWalletProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
 import { getCurrentXSession } from "@/lib/xAuth";
 
@@ -27,14 +27,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const wallet = normalizeWallet(body.wallet);
   if (!wallet) return NextResponse.json({ ok: false, error: "Invalid wallet" }, { status: 400 });
 
-  const [followed, walletVerified, humanVerified] = await Promise.all([
+  const [followed, walletVerified, humanVerified, shared] = await Promise.all([
     hasFollowProof(x.user.id, orb.hostX.id),
     hasWalletProof(slug, x.user.id, wallet),
     hasHumanProof(slug, x.user.id, wallet),
+    hasShareProof(slug, x.user.id, wallet),
   ]);
   if (!followed) return NextResponse.json({ ok: false, error: "Host follow is not confirmed" }, { status: 403 });
   if (!walletVerified) return NextResponse.json({ ok: false, error: "Wallet ownership is not verified" }, { status: 403 });
   if (!humanVerified) return NextResponse.json({ ok: false, error: "Human check is not verified" }, { status: 403 });
+  if (!shared) return NextResponse.json({ ok: false, error: "Your Orb entry post is not verified" }, { status: 403 });
 
   try {
     const { record, manifest, manifestHash } = await getCanonicalOrbManifest(slug);

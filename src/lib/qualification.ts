@@ -4,6 +4,7 @@ import { redisCommand, redisDelete, redisGetJson, redisSetJson } from "@/lib/ups
 
 export const followProofKey = (sourceXId: string, targetXId: string) => `orbs:v1:x:followproof:${sourceXId}:${targetXId}`;
 export const walletProofKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:walletproof:${slug}:${xUserId}:${wallet}`;
+export const shareProofKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:shareproof:${slug}:${xUserId}:${wallet}`;
 const walletNonceKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:walletnonce:${slug}:${xUserId}:${wallet}`;
 const entrantXKey = (slug: string, xUserId: string) => `orbs:v1:entrant:x:${slug}:${xUserId}`;
 const entrantWalletKey = (slug: string, wallet: string) => `orbs:v1:entrant:wallet:${slug}:${wallet}`;
@@ -18,7 +19,7 @@ async function bindEntrantIdentity(slug: string, xUserId: string, wallet: string
     redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
     return 'OK'
   `;
-  const result = await redisCommand<string>(['EVAL', script, '2', entrantXKey(slug, xUserId), entrantWalletKey(slug, wallet), wallet, xUserId, String(60 * 60 * 48)]);
+  const result = await redisCommand<string>(['EVAL', script, '2', entrantXKey(slug, xUserId), entrantWalletKey(slug, wallet), wallet, xUserId, String(60 * 60 * 24 * 35)]);
   if (result === 'X_BOUND') throw new Error('This X account is already qualified with a different wallet for this Orb.');
   if (result === 'WALLET_BOUND') throw new Error('This wallet is already qualified with a different X account for this Orb.');
   if (result !== 'OK') throw new Error('Could not reserve this Orb identity.');
@@ -53,8 +54,25 @@ export async function verifyWalletChallenge(slug: string, xUserId: string, walle
   if (!ok) return false;
   await bindEntrantIdentity(slug, xUserId, normalized);
   await redisDelete(walletNonceKey(slug, xUserId, normalized));
-  await redisSetJson(walletProofKey(slug, xUserId, normalized), { verifiedAt: Date.now() }, { exSeconds: 60 * 60 * 48 });
+  await redisSetJson(walletProofKey(slug, xUserId, normalized), { verifiedAt: Date.now() }, { exSeconds: 60 * 60 * 24 * 35 });
   return true;
+}
+
+export type ShareProof = { postId: string; postCreatedAt: number; confirmedAt: number };
+
+export async function storeShareProof(slug: string, xUserId: string, wallet: string, proof: ShareProof, ttlSeconds: number) {
+  const normalized = new PublicKey(wallet).toBase58();
+  await redisSetJson(shareProofKey(slug, xUserId, normalized), proof, { exSeconds: Math.max(60, ttlSeconds) });
+}
+
+export async function getShareProof(slug: string, xUserId: string, wallet: string) {
+  let normalized: string;
+  try { normalized = new PublicKey(wallet).toBase58(); } catch { return null; }
+  return redisGetJson<ShareProof>(shareProofKey(slug, xUserId, normalized));
+}
+
+export async function hasShareProof(slug: string, xUserId: string, wallet: string) {
+  return Boolean(await getShareProof(slug, xUserId, wallet));
 }
 
 export async function hasWalletProof(slug: string, xUserId: string, wallet: string) {

@@ -30,7 +30,7 @@ export async function verifyAndStoreHumanProof(input: { slug: string; xUserId: s
   await redisSetJson(humanProofKey(input.slug, input.xUserId, input.wallet), {
     verifiedAt: Date.now(),
     hostname: result.hostname || null,
-  }, { exSeconds: 60 * 60 * 12 });
+  }, { exSeconds: 60 * 60 * 24 * 35 });
   return true;
 }
 

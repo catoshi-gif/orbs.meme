@@ -64,7 +64,7 @@ export default function TurnstileGate({ slug, wallet, enabled, onVerified }: Pro
       sitekey: siteKey,
       action: "orb-qualify",
       theme: "auto",
-      size: "flexible",
+      size: containerRef.current.clientWidth < 300 ? "compact" : "flexible",
       callback: (token: string) => void submitToken(token),
       "expired-callback": () => onVerified(false),
       "error-callback": () => { onVerified(false); setError("Human check could not load. Please retry."); },

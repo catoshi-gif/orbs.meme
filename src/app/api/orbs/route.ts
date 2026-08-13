@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
-import { createTestOrb } from "@/lib/orbStore";
+import { createTestOrb, listHostedOrbs } from "@/lib/orbStore";
 import { getWalletSplTokens } from "@/lib/walletTokens";
 import { verifyPrizeQuote } from "@/lib/prizeQuote";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber, tokenInputToRaw } from "@/lib/prizeEconomics";
@@ -13,6 +13,19 @@ import type { GameStyle } from "@/game/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 20;
+
+export async function GET(request: Request) {
+  const hostWallet = new URL(request.url).searchParams.get("hostWallet")?.trim() || "";
+  let normalized: string;
+  try { normalized = new PublicKey(hostWallet).toBase58(); }
+  catch { return NextResponse.json({ ok: false, error: "Invalid host wallet" }, { status: 400 }); }
+  try {
+    const orbs = await listHostedOrbs(normalized);
+    return NextResponse.json({ ok: true, orbs }, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not load hosted Orbs" }, { status: 502 });
+  }
+}
 
 type Body = {
   hostWallet?: unknown;
