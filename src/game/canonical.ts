@@ -76,7 +76,16 @@ export function canonicalReplayPayload(replay: ReplayEnvelope) {
 }
 
 export async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(value));
+  // WebCrypto requires an ArrayBuffer-backed BufferSource. Newer TypeScript DOM
+  // typings allow TextEncoder.encode() to be backed by ArrayBufferLike, which
+  // includes SharedArrayBuffer and fails the stricter SubtleCrypto overload.
+  // Copy into an explicit ArrayBuffer so this is type-safe in both browser and
+  // Node/Vercel WebCrypto without relying on an unsafe cast.
+  const encoded = textEncoder.encode(value);
+  const input = new ArrayBuffer(encoded.byteLength);
+  new Uint8Array(input).set(encoded);
+
+  const digest = await crypto.subtle.digest("SHA-256", input);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
