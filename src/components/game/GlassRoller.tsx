@@ -7,7 +7,7 @@ import { GameAudioEngine } from "@/game/audio";
 import { generateGameManifest } from "@/game/maze";
 import { buildReplayEnvelope } from "@/game/replay";
 import { clampPlanarSpeed, gateRotation, nextPlanarVelocity } from "@/game/simulation";
-import type { DifficultyKey, DriveProfile, GameStyle, ReplayEnvelope, ReplayEvent, ReplayFrame } from "@/game/types";
+import type { DifficultyKey, DriveProfile, GameManifest, GameStyle, ReplayEnvelope, ReplayEvent, ReplayFrame } from "@/game/types";
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 const rad = (deg: number) => (deg * Math.PI) / 180;
@@ -22,9 +22,13 @@ type Props = {
   slug: string;
   difficulty: DifficultyKey;
   style: GameStyle;
+  manifestOverride?: GameManifest;
+  competitiveSession?: string;
+  wallet?: string;
+  manifestHash?: string;
 };
 
-type Phase = "loading" | "ready" | "countdown" | "playing" | "verifying" | "won" | "lost" | "verify-error";
+type Phase = "loading" | "ready" | "countdown" | "playing" | "verifying" | "won" | "lost" | "fun" | "fun-finished" | "verify-error";
 type ControlMode = "keys" | "sensor" | "touch";
 
 
@@ -236,8 +240,8 @@ function makeRoundedWallGeometry(THREE: typeof import("three"), thickness: numbe
   return geometry;
 }
 
-export default function GlassRoller({ slug, difficulty, style }: Props) {
-  const manifest = useMemo(() => generateGameManifest(slug, difficulty, style), [slug, difficulty, style]);
+export default function GlassRoller({ slug, difficulty, style, manifestOverride, competitiveSession, wallet, manifestHash: trustedManifestHash }: Props) {
+  const manifest = useMemo(() => manifestOverride || generateGameManifest(slug, difficulty, style), [manifestOverride, slug, difficulty, style]);
   const mountRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<Phase>("loading");
   const controlsRef = useRef({ up: false, down: false, left: false, right: false, touchX: 0, touchY: 0 });
@@ -289,26 +293,27 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       const response = await fetch("/api/game/finish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, difficulty, style, replay }),
+        body: JSON.stringify(competitiveSession ? { slug, wallet, competitiveSession, replay } : { slug, difficulty, style, replay }),
       });
       const payload = await response.json() as {
         verified?: boolean;
         firstWinner?: boolean;
         winnerStore?: "upstash" | "verification-only";
         error?: string;
+        winner?: { wallet?: string; xUsername?: string };
         verification?: { replayHash?: string; manifestHash?: string; elapsedMs?: number };
       };
+      if (payload.firstWinner === false && payload.winner) {
+        setVerificationMessage(payload.winner.xUsername ? `@${payload.winner.xUsername} secured the first verified finish.` : "Another player secured the first verified finish.");
+        changePhase("lost");
+        return;
+      }
       if (!response.ok || !payload.verified) {
         setVerificationMessage(payload.error || "The server could not reproduce this run.");
         changePhase("verify-error");
         return;
       }
       setVerifiedHash(payload.verification?.replayHash?.slice(0, 12).toUpperCase() || null);
-      if (payload.firstWinner === false) {
-        setVerificationMessage("A different verified finish reached the winner lock first.");
-        changePhase("lost");
-        return;
-      }
       setVerificationMessage(payload.winnerStore === "upstash" ? "Verified + first-winner lock secured." : "Verified by deterministic server replay.");
       audioRef.current?.victory();
       changePhase("won");
@@ -317,7 +322,28 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       setVerificationMessage("Verification is temporarily unavailable. Your replay is still saved on this device.");
       changePhase("verify-error");
     }
-  }, [changePhase, difficulty, slug, style]);
+  }, [changePhase, competitiveSession, difficulty, slug, style, wallet]);
+
+  useEffect(() => {
+    if (!competitiveSession || !wallet || phase !== "playing") return;
+    let cancelled = false;
+    const checkWinner = async () => {
+      try {
+        const response = await fetch(`/api/game/status?slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
+        const payload = await response.json() as { winner?: { wallet?: string; xUsername?: string } | null };
+        if (cancelled || !payload.winner?.wallet || payload.winner.wallet === wallet) return;
+        setVerificationMessage(payload.winner.xUsername ? `@${payload.winner.xUsername} secured the first verified finish. Your exact run is paused where it is.` : "Another player secured the first verified finish. Your exact run is paused where it is.");
+        audioRef.current?.setRollingSpeed(0);
+        audioRef.current?.stopMusic();
+        changePhase("lost");
+      } catch {
+        // Winner propagation is best-effort. The authoritative finish endpoint still enforces the lock.
+      }
+    };
+    const timer = window.setInterval(() => void checkWinner(), 10_000);
+    void checkWinner();
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [changePhase, competitiveSession, phase, slug, wallet]);
 
   const requestMotion = useCallback(async () => {
     await audioRef.current?.unlock();
@@ -371,7 +397,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
       if (down && event.code === "KeyR") resetRef.current?.();
       if (down && event.code === "Space" && !event.repeat) {
         if (phaseRef.current === "ready") startRef.current?.();
-        else if (phaseRef.current === "playing") cameraToggleRef.current?.();
+        else if (phaseRef.current === "playing" || phaseRef.current === "fun") cameraToggleRef.current?.();
       }
     };
     const kd = (e: KeyboardEvent) => onKey(e, true);
@@ -810,7 +836,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         setResets(resetCount);
       };
       const requestReset = () => {
-        if (phaseRef.current === "playing") pendingReset = true;
+        if (phaseRef.current === "playing" || phaseRef.current === "fun") pendingReset = true;
         else performReset(false, 0);
       };
       resetRef.current = requestReset;
@@ -897,7 +923,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         last = now;
         accumulator = Math.min(accumulator + dt, PHYSICS.fixedStep * 4);
 
-        if (phaseRef.current === "playing") {
+        if (phaseRef.current === "playing" || phaseRef.current === "fun") {
           while (accumulator >= PHYSICS.fixedStep) {
             if (physicsTick % 3 === 0) {
               const keys = controlsRef.current;
@@ -931,7 +957,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               const quantizedY = Math.round(clamp(inputY, -1, 1) * 127);
               sampledInputX = quantizedX / 127;
               sampledInputY = quantizedY / 127;
-              replay.push({ tick: physicsTick - runStartTick, x: quantizedX, y: quantizedY });
+              if (phaseRef.current === "playing") replay.push({ tick: physicsTick - runStartTick, x: quantizedX, y: quantizedY });
             }
 
             const directDesktop = controlModeRef.current === "keys";
@@ -991,7 +1017,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
 
             const p = ballBody.translation();
             if (pendingReset || p.y < -2.2) {
-              performReset(true, physicsTick - runStartTick);
+              performReset(phaseRef.current === "playing", physicsTick - runStartTick);
               pendingReset = false;
             }
 
@@ -1009,19 +1035,20 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
               const finish = now - startTime;
               const finishTick = physicsTick - runStartTick;
               setElapsed(finish);
-              changePhase("verifying");
               audioRef.current?.setRollingSpeed(0);
               audioRef.current?.stopMusic();
-              const envelope = buildReplayEnvelope(manifest, replay, replayEvents, runDriveProfile, finishTick, finish * 1000, resetCount, nextCheckpoint);
-              lastReplayRef.current = envelope;
-              try {
-                sessionStorage.setItem(`orbs:replay:${slug}`, JSON.stringify(envelope));
-              } catch {
-                // Local persistence is recovery/diagnostic support only; the server still verifies independently.
-              }
               ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
               ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-              void submitFinish(envelope);
+              if (phaseRef.current === "fun") {
+                audioRef.current?.victory();
+                changePhase("fun-finished");
+              } else {
+                changePhase("verifying");
+                const envelope = buildReplayEnvelope(manifest, replay, replayEvents, runDriveProfile, finishTick, finish * 1000, resetCount, nextCheckpoint);
+                lastReplayRef.current = envelope;
+                try { sessionStorage.setItem(`orbs:replay:${slug}`, JSON.stringify(envelope)); } catch {}
+                void submitFinish(envelope);
+              }
               accumulator = 0;
               break;
             }
@@ -1087,7 +1114,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         camera.lookAt(lookWorld);
 
         if (now >= nextHudAt) {
-          if (phaseRef.current === "playing") setElapsed(now - startTime);
+          if (phaseRef.current === "playing" || phaseRef.current === "fun") setElapsed(now - startTime);
           setSpeed(Math.hypot(v.x, v.z));
           nextHudAt = now + 0.12;
         }
@@ -1151,6 +1178,12 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
     changePhase("verifying");
     void submitFinish(lastReplayRef.current);
   }, [changePhase, submitFinish]);
+  const continueForFun = useCallback(() => {
+    setVerificationMessage("Prize race closed · personal run continues from this exact spot.");
+    changePhase("fun");
+    void audioRef.current?.unlock().then(() => audioRef.current?.startMusic());
+  }, [changePhase]);
+
   const toggleAudio = useCallback(() => {
     setAudioMuted((current) => {
       const next = !current;
@@ -1188,9 +1221,11 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
 
       <div className="game-hud game-hud-top">
         <div className="game-hud-chip"><span>ORB</span><strong>{slug}</strong></div>
-        <div className="game-hud-chip game-manifest-chip"><span>{manifest.profile.label}</span><strong>#{manifest.manifestId}</strong></div>
+        <div className="game-hud-chip game-manifest-chip"><span>{manifest.profile.label}</span><strong>#{trustedManifestHash ? trustedManifestHash.slice(0, 8).toUpperCase() : manifest.manifestId}</strong></div>
         <div className="game-hud-chip"><span>TIME</span><strong>{formatTime(elapsed)}</strong></div>
       </div>
+
+      {phase === "fun" ? <div className="game-fun-badge">FUN MODE · PRIZE RACE CLOSED</div> : null}
 
       <div className="game-hud game-hud-bottom">
         <div className="game-hud-chip"><span>CHECKPOINTS</span><strong>{checkpoint}/{manifest.checkpoints.length}</strong></div>
@@ -1272,8 +1307,18 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
           <p>{verificationMessage || "Your run verified, but another verified finish secured the winner lock first."}</p>
           <div className="game-ready-actions">
             <Link className="btn-primary" href={`/orb/${slug}/results`}>See the winner</Link>
-            <button className="btn-secondary" onClick={() => window.location.reload()}>Run it for fun</button>
+            <button className="btn-secondary" onClick={continueForFun}>Continue playing for fun</button>
           </div>
+        </div>
+      ) : null}
+
+      {phase === "fun-finished" ? (
+        <div className="game-overlay game-overlay-card game-win-card">
+          <span className="game-kicker">PERSONAL CLEAR · FUN MODE</span>
+          <h1>You still found the light.</h1>
+          <div className="game-win-time">{formatTime(elapsed)}</div>
+          <p>The prize was already claimed by the first verified finisher, but this personal clear is yours.</p>
+          <div className="game-ready-actions"><Link className="btn-primary" href={`/orb/${slug}/results`}>See the winner</Link><Link className="btn-secondary" href="/create">Create your own Orb</Link></div>
         </div>
       ) : null}
 
@@ -1290,7 +1335,7 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         </div>
       ) : null}
 
-      {(phase === "playing" || phase === "ready") && controlMode === "touch" ? (
+      {(phase === "playing" || phase === "fun" || phase === "ready") && controlMode === "touch" ? (
         <div
           className="game-touch-pad"
           onPointerDown={touchStart}
@@ -1304,14 +1349,14 @@ export default function GlassRoller({ slug, difficulty, style }: Props) {
         </div>
       ) : null}
 
-      {(phase === "playing" || phase === "ready") ? (
+      {(phase === "playing" || phase === "fun" || phase === "ready") ? (
         <div className="game-camera-hint">
           <span className="game-camera-desktop">SPACE · toggle full-maze overview · steering stays live</span>
           <span className="game-camera-mobile">PINCH · ZOOM</span>
         </div>
       ) : null}
 
-      {phase === "playing" && sensorAvailable ? (
+      {(phase === "playing" || phase === "fun") && sensorAvailable ? (
         <div className="game-control-switcher">
           {controlMode === "sensor" ? (
             <><button onClick={recalibrate}>Recalibrate</button><button onClick={() => setControlMode("touch")}>Touch control</button></>

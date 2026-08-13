@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
+import XConnect, { type XUser } from "@/components/XConnect";
+import TokenPicker, { type WalletSplToken } from "@/components/TokenPicker";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
 import type { DifficultyKey, GameStyle } from "@/game/types";
 
@@ -14,97 +16,117 @@ const profiles: { key: DifficultyKey; name: string; label: string; time: string 
   { key: "brutal", name: "Brutal", label: "Hard", time: "~15 min" },
 ];
 
-const presetStyles = GAME_STYLE_PRESETS;
+function localInputParts(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return { date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`, time: `${pad(date.getHours())}:${pad(date.getMinutes())}` };
+}
 
+function money(value: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value || 0);
+}
+
+function amount(value: number) {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+type CreatedOrb = { slug: string; commitment: string; startsAt: number };
 
 export default function CreateWizard() {
+  const initialLaunch = useMemo(() => localInputParts(new Date(Date.now() + 24 * 60 * 60 * 1000)), []);
   const [step, setStep] = useState(0);
   const [difficulty, setDifficulty] = useState<DifficultyKey>("classic");
   const [style, setStyle] = useState<GameStyle>(DEFAULT_GAME_STYLE);
-  const { connected } = useWallet();
+  const [xUser, setXUser] = useState<XUser | null>(null);
+  const [token, setToken] = useState<WalletSplToken | null>(null);
+  const [prizeInput, setPrizeInput] = useState("");
+  const [launchDate, setLaunchDate] = useState(initialLaunch.date);
+  const [launchTime, setLaunchTime] = useState(initialLaunch.time);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createdOrb, setCreatedOrb] = useState<CreatedOrb | null>(null);
+  const [copied, setCopied] = useState(false);
+  const { connected, publicKey } = useWallet();
+
+  const prizeAmount = Number(prizeInput || 0);
+  const prizeUsd = token?.usdPrice ? prizeAmount * token.usdPrice : 0;
+  const feeTokenAmount = token?.usdPrice ? 1.10 / token.usdPrice : 0;
+  const totalTokenAmount = prizeAmount + feeTokenAmount;
+  const launchMs = new Date(`${launchDate}T${launchTime}:00`).getTime();
+  const identityReady = connected && Boolean(publicKey) && Boolean(xUser && !xUser.protected);
+  const prizeReady = Boolean(token?.eligible && prizeAmount > 0 && prizeUsd >= 6 && totalTokenAmount <= (token?.balance || 0));
+  const launchReady = Number.isFinite(launchMs) && launchMs > Date.now() + 30_000;
 
   const previewHref = useMemo(() => {
-    const q = new URLSearchParams({
-      difficulty,
-      marble: style.marble,
-      marble2: style.marbleSecondary,
-      walls: style.walls,
-      floor: style.floor,
-      accent: style.accent,
-    });
+    const q = new URLSearchParams({ difficulty, marble: style.marble, marble2: style.marbleSecondary, walls: style.walls, floor: style.floor, accent: style.accent });
     return `/orb/demo/play?${q.toString()}`;
   }, [difficulty, style]);
 
   const colorField = (key: keyof GameStyle, label: string) => (
-    <div className="field game-color-field">
-      <label>{label}</label>
-      <div className="color-input-wrap">
-        <input type="color" value={style[key]} onChange={(event) => setStyle((current) => ({ ...current, [key]: event.target.value }))} />
-        <span>{style[key].toUpperCase()}</span>
-      </div>
-    </div>
+    <div className="field game-color-field"><label>{label}</label><div className="color-input-wrap"><input type="color" value={style[key]} onChange={(event) => setStyle((current) => ({ ...current, [key]: event.target.value }))} /><span>{style[key].toUpperCase()}</span></div></div>
   );
+
+  const canContinue = step === 0 ? identityReady : step === 1 ? prizeReady : step === 3 ? launchReady : step < 4;
+
+  const createOrb = async () => {
+    if (!publicKey || !token || !identityReady || !prizeReady || !launchReady) return;
+    setCreating(true); setCreateError(null);
+    try {
+      const response = await fetch("/api/orbs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostWallet: publicKey.toBase58(), mint: token.mint, prizeTokenAmount: prizeAmount, difficulty, style, startsAt: launchMs }),
+      });
+      const payload = await response.json() as { ok?: boolean; orb?: CreatedOrb; error?: string };
+      if (!response.ok || !payload.ok || !payload.orb) throw new Error(payload.error || "Could not create Orb");
+      setCreatedOrb(payload.orb); setStep(5);
+    } catch (error) { setCreateError(error instanceof Error ? error.message : "Could not create Orb"); }
+    finally { setCreating(false); }
+  };
+
+  const shareUrl = createdOrb ? `${typeof window !== "undefined" ? window.location.origin : "https://orbs.meme"}/orb/${createdOrb.slug}` : "";
 
   return (
     <div className="wizard-layout">
-      <aside className="wizard-nav">
-        {names.map((name, i) => <button key={name} className={step === i ? "active" : ""} onClick={() => setStep(i)}>{i + 1}. {name}</button>)}
-      </aside>
+      <aside className="wizard-nav">{names.map((name, i) => <button key={name} className={step === i ? "active" : ""} disabled={i === 5 && !createdOrb} onClick={() => { if (i !== 5 || createdOrb) setStep(i); }}>{i + 1}. {name}</button>)}</aside>
       <section className="wizard">
         {step === 0 ? <>
           <span className="eyebrow">Step 1 of 6</span><h2>Who is hosting?</h2>
-          <p>Connect the identities that will own and promote this Orb. Wallet connection is live now; X connection arrives with the qualification backend.</p>
-          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>Ready for the future funding flow</small></div></div> : <ConnectWallet />}</div><div className="field full"><label>X account</label><button className="btn-secondary" disabled>Connect X · next phase</button></div></div>
+          <p>Connect the Solana wallet that will fund the prize and the public X account whose community will play it.</p>
+          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>{publicKey?.toBase58().slice(0, 6)}…{publicKey?.toBase58().slice(-6)}</small></div></div> : <ConnectWallet />}</div><div className="field full"><label>X host account</label><XConnect returnTo="/create" requirePublic onChange={setXUser} />{xUser?.protected ? <small className="field-warning">Orb hosts must be public so every player can complete the Follow Host requirement immediately.</small> : null}</div></div>
         </> : null}
 
         {step === 1 ? <>
           <span className="eyebrow">Step 2 of 6</span><h2>Choose the prize.</h2>
-          <p>The final build will reuse the proven SPL token picker. The displayed prize stays intact; the $1.10 Orbs fee is separate.</p>
-          <div className="fields"><div className="field"><label>Token</label><input placeholder="Search supported SPL token" disabled /></div><div className="field"><label>Prize amount</label><input placeholder="$6 minimum" disabled /></div><div className="field full"><label>Fee preview</label><input value="$1.10 equivalent in selected token · integration next phase" readOnly /></div></div>
+          <p>Pick from standard SPL tokens already in your connected wallet. The winner receives the full advertised prize; the $1.10 Orbs fee is added separately in the same token.</p>
+          <div className="fields"><div className="field full"><label>Prize token</label><TokenPicker value={token} onChange={(next) => { setToken(next); setPrizeInput(""); }} /></div>{token ? <><div className="field"><label>Prize amount · {token.symbol}</label><input type="number" min="0" step="any" value={prizeInput} onChange={(event) => setPrizeInput(event.target.value)} placeholder={`You have ${amount(token.balance)} ${token.symbol}`} /></div><div className="field"><label>Prize value</label><input value={prizeAmount > 0 ? money(prizeUsd) : "$6.00 minimum"} readOnly /></div><div className="field full"><div className={`prize-math ${prizeReady ? "ready" : ""}`}><div><span>Winner gets</span><strong>{prizeAmount > 0 ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{prizeAmount > 0 ? money(prizeUsd) : "$6 minimum"}</small></div><b>+</b><div><span>Orbs fee</span><strong>{amount(feeTokenAmount)} {token.symbol}</strong><small>$1.10</small></div><b>=</b><div><span>Wallet requirement</span><strong>{prizeAmount > 0 ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>Balance {amount(token.balance)}</small></div></div>{prizeAmount > 0 && prizeUsd < 6 ? <small className="field-warning">Increase the prize to at least $6.00.</small> : null}{prizeAmount > 0 && totalTokenAmount > token.balance ? <small className="field-warning">Your wallet does not have enough {token.symbol} for the prize + $1.10 fee.</small> : null}</div></> : null}</div>
         </> : null}
 
         {step === 2 ? <>
-          <span className="eyebrow">Step 3 of 6</span><h2>Design the game.</h2>
-          <p>Choose the target solve-time band and your community palette. The same settings will be frozen into every participant&apos;s canonical game manifest.</p>
-          <div className="difficulty">
-            {profiles.map((profile) => <button key={profile.key} className={difficulty === profile.key ? "active" : ""} onClick={() => setDifficulty(profile.key)}><span className="difficulty-tag">{profile.label}</span><strong>{profile.name}</strong><small>{profile.time} target solve</small></button>)}
-          </div>
-          <div className="game-style-builder">
-            <div className="game-style-preview" style={{ background: `radial-gradient(circle at 35% 30%, ${style.marbleSecondary}, ${style.marble} 30%, ${style.accent} 66%, ${style.floor})`, borderColor: style.walls }}>
-              <div className="style-preview-orb" style={{ background: `radial-gradient(circle at 35% 28%, #fff, ${style.marbleSecondary} 14%, ${style.marble} 44%, ${style.accent} 72%, ${style.floor})` }} />
-              <div className="style-preview-rail" style={{ background: style.walls, boxShadow: `0 0 28px ${style.walls}` }} />
-              <span>LIVE PALETTE</span>
-            </div>
-            <div>
-              <div className="game-presets">{presetStyles.map((preset) => <button key={preset.name} onClick={() => setStyle(preset.style)}>{preset.name}</button>)}</div>
-              <div className="fields game-color-grid">
-                {colorField("marble", "Marble core")}
-                {colorField("marbleSecondary", "Marble glow")}
-                {colorField("walls", "Glass rails")}
-                {colorField("floor", "World / floor")}
-                {colorField("accent", "Goal / accent")}
-              </div>
-            </div>
-          </div>
-          <div className="game-preview-row"><Link className="btn-primary" href={previewHref}>Play this style →</Link><span>Local deterministic prototype · no prize</span></div>
+          <span className="eyebrow">Step 3 of 6</span><h2>Design the game.</h2><p>Choose the target solve-time band and your community palette. These settings are frozen into every participant&apos;s canonical game.</p>
+          <div className="difficulty">{profiles.map((profile) => <button key={profile.key} className={difficulty === profile.key ? "active" : ""} onClick={() => setDifficulty(profile.key)}><span className="difficulty-tag">{profile.label}</span><strong>{profile.name}</strong><small>{profile.time} target solve</small></button>)}</div>
+          <div className="game-style-builder"><div className="game-style-preview" style={{ background: `radial-gradient(circle at 35% 30%, ${style.marbleSecondary}, ${style.marble} 30%, ${style.accent} 66%, ${style.floor})`, borderColor: style.walls }}><div className="style-preview-orb" style={{ background: `radial-gradient(circle at 35% 28%, #fff, ${style.marbleSecondary} 14%, ${style.marble} 44%, ${style.accent} 72%, ${style.floor})` }} /><div className="style-preview-rail" style={{ background: style.walls, boxShadow: `0 0 28px ${style.walls}` }} /><span>LIVE PALETTE</span></div><div><div className="game-presets">{GAME_STYLE_PRESETS.map((preset) => <button key={preset.name} onClick={() => setStyle(preset.style)}>{preset.name}</button>)}</div><div className="fields game-color-grid">{colorField("marble", "Marble core")}{colorField("marbleSecondary", "Marble glow")}{colorField("walls", "Glass rails")}{colorField("floor", "World / floor")}{colorField("accent", "Goal / accent")}</div></div></div>
+          <div className="game-preview-row"><Link className="btn-primary" href={previewHref}>Play this style →</Link><span>Deterministic preview · no prize</span></div>
         </> : null}
 
         {step === 3 ? <>
-          <span className="eyebrow">Step 4 of 6</span><h2>Schedule launch.</h2><p>Give the post time to cook. The final funding transaction will commit the absolute start timestamp on-chain.</p>
-          <div className="fields"><div className="field"><label>Date</label><input type="date" /></div><div className="field"><label>Time</label><input type="time" /></div><div className="field full"><label>Share URL preview</label><input value="orbs.meme/orb/your-orb" readOnly /></div></div>
+          <span className="eyebrow">Step 4 of 6</span><h2>Schedule launch.</h2><p>Give the X post time to cook. The exact timestamp becomes immutable when Anchor funding is connected.</p>
+          <div className="fields"><div className="field"><label>Date</label><input type="date" value={launchDate} onChange={(event) => setLaunchDate(event.target.value)} /></div><div className="field"><label>Time · your local timezone</label><input type="time" value={launchTime} onChange={(event) => setLaunchTime(event.target.value)} /></div><div className="field full"><div className="launch-preview"><span>Scheduled start</span><strong>{launchReady ? new Date(launchMs).toLocaleString([], { dateStyle: "full", timeStyle: "short" }) : "Choose a future launch time"}</strong><small>The maze seed and geometry remain sealed until this moment.</small></div></div></div>
         </> : null}
 
         {step === 4 ? <>
-          <span className="eyebrow">Step 5 of 6</span><h2>Review + fund.</h2><p>This is where Anchor will create the isolated prize vault, transfer the full prize, and send the separate protocol fee to the hardcoded treasury.</p>
-          <div className="q-list"><div className="q-row"><span className="q-num">1</span><div><strong>Prize escrow</strong><small>Anchor integration next phase</small></div></div><div className="q-row"><span className="q-num">2</span><div><strong>Game commitment</strong><small>Glass Roller manifest now implemented locally</small></div></div><div className="q-row"><span className="q-num">3</span><div><strong>Fund Orb</strong><small>Disabled until program integration</small></div></div></div>
+          <span className="eyebrow">Step 5 of 6</span><h2>Review the Orb.</h2><p>The pre-Anchor build can now create the complete sealed competition record in Upstash. No tokens move yet.</p>
+          <div className="orb-review-grid"><div><span>Host</span><strong>@{xUser?.username || "—"}</strong></div><div><span>Prize</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{money(prizeUsd)}</small></div><div><span>Orbs fee</span><strong>{token ? `${amount(feeTokenAmount)} ${token.symbol}` : "—"}</strong><small>$1.10</small></div><div><span>Game</span><strong>{profiles.find((p) => p.key === difficulty)?.label}</strong><small>{profiles.find((p) => p.key === difficulty)?.time}</small></div><div className="wide"><span>Launch</span><strong>{launchReady ? new Date(launchMs).toLocaleString() : "—"}</strong></div></div>
+          <div className="test-orb-note"><strong>Pre-Anchor test mode</strong><span>This creates the real hidden seed, SHA-256 commitment, share URL and JIT launch gate. Funding will replace this final button later without changing the game lifecycle.</span></div>
+          {createError ? <div className="form-error">{createError}</div> : null}<button className="btn-primary" disabled={!identityReady || !prizeReady || !launchReady || creating} onClick={() => void createOrb()}>{creating ? "Sealing Orb…" : "Create sealed test Orb →"}</button>
         </> : null}
 
-        {step === 5 ? <>
-          <span className="eyebrow">Step 6 of 6</span><h2>Share the Orb.</h2><p>After funding succeeds, this screen will reveal the permanent unique link and X share intent.</p>
-          <div className="fields"><div className="field full"><label>Public URL</label><input value="orbs.meme/orb/9xL4Q" readOnly /></div><button className="btn-primary" disabled>Copy link</button><button className="btn-secondary" disabled>Post to X</button></div>
+        {step === 5 && createdOrb ? <>
+          <span className="eyebrow">Step 6 of 6</span><h2>Your Orb is sealed.</h2><p>The unique maze does not exist in any public page payload before launch. Share the lobby now and let the countdown build.</p>
+          <div className="sealed-orb"><span>GAME COMMITMENT</span><code>{createdOrb.commitment}</code><small>SHA-256 commitment · seed remains encrypted server-side until launch</small></div>
+          <div className="fields"><div className="field full"><label>Public URL</label><input value={shareUrl} readOnly /></div><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button><a className="btn-secondary" href={`https://x.com/intent/post?text=${encodeURIComponent(`I just dropped an Orb. ${money(prizeUsd)} in ${token?.symbol || "SPL"} goes to the first player who clears it.\n\n${shareUrl}`)}`} target="_blank" rel="noreferrer">Post to X ↗</a></div>
         </> : null}
 
-        <div className="wizard-actions"><button className="btn-ghost" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>← Back</button><button className="btn-primary" disabled={step === names.length - 1} onClick={() => setStep((value) => Math.min(names.length - 1, value + 1))}>Continue →</button></div>
+        {step < 4 ? <div className="wizard-actions"><button className="btn-ghost" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>← Back</button><button className="btn-primary" disabled={!canContinue} onClick={() => setStep((value) => Math.min(4, value + 1))}>Continue →</button></div> : step === 4 ? <div className="wizard-actions"><button className="btn-ghost" onClick={() => setStep(3)}>← Back</button></div> : null}
       </section>
     </div>
   );

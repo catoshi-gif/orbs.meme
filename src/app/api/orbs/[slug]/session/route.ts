@@ -1,0 +1,60 @@
+import { NextResponse } from "next/server";
+import { PublicKey } from "@solana/web3.js";
+import { getCanonicalOrbManifest, getPublicOrb } from "@/lib/orbStore";
+import { issueCompetitiveSession, competitiveSessionsConfigured } from "@/lib/competitiveSession";
+import { hasFollowProof, hasWalletProof } from "@/lib/qualification";
+import { hasHumanProof } from "@/lib/turnstile";
+import { getCurrentXSession } from "@/lib/xAuth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 20;
+
+function normalizeWallet(value: unknown) {
+  if (typeof value !== "string") return null;
+  try { return new PublicKey(value).toBase58(); } catch { return null; }
+}
+
+export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const [orb, x] = await Promise.all([getPublicOrb(slug), getCurrentXSession()]);
+  if (!orb) return NextResponse.json({ ok: false, error: "Orb not found" }, { status: 404 });
+  if (!x) return NextResponse.json({ ok: false, error: "Connect X first" }, { status: 401 });
+  if (!competitiveSessionsConfigured()) return NextResponse.json({ ok: false, error: "Competitive session signing is not configured" }, { status: 503 });
+  if (Date.now() < orb.startsAt) return NextResponse.json({ ok: false, error: "GAME_NOT_LIVE", startsAt: orb.startsAt, commitment: orb.commitment }, { status: 403 });
+
+  const body = await request.json().catch(() => ({})) as { wallet?: unknown };
+  const wallet = normalizeWallet(body.wallet);
+  if (!wallet) return NextResponse.json({ ok: false, error: "Invalid wallet" }, { status: 400 });
+
+  const [followed, walletVerified, humanVerified] = await Promise.all([
+    hasFollowProof(x.user.id, orb.hostX.id),
+    hasWalletProof(slug, x.user.id, wallet),
+    hasHumanProof(slug, x.user.id, wallet),
+  ]);
+  if (!followed) return NextResponse.json({ ok: false, error: "Host follow is not confirmed" }, { status: 403 });
+  if (!walletVerified) return NextResponse.json({ ok: false, error: "Wallet ownership is not verified" }, { status: 403 });
+  if (!humanVerified) return NextResponse.json({ ok: false, error: "Human check is not verified" }, { status: 403 });
+
+  try {
+    const { record, manifest, manifestHash } = await getCanonicalOrbManifest(slug);
+    const issued = issueCompetitiveSession({
+      orbId: record.id,
+      slug,
+      wallet,
+      xUserId: x.user.id,
+      manifestHash,
+      expiresAt: Math.max(Date.now() + 1000 * 60 * 60, record.startsAt + 1000 * 60 * 60 * 6),
+    });
+    return NextResponse.json({
+      ok: true,
+      session: issued.token,
+      manifest,
+      manifestHash,
+      entrant: { wallet, x: { id: x.user.id, username: x.user.username, name: x.user.name, profileImageUrl: x.user.profileImageUrl || null } },
+    }, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not issue game session";
+    return NextResponse.json({ ok: false, error: message }, { status: message === "ORB_NOT_LIVE" ? 403 : 409 });
+  }
+}

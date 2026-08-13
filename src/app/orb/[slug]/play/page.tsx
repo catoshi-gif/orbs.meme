@@ -11,6 +11,7 @@ export default async function PlayPage({ params, searchParams }: { params: Param
     <div className="game-page">
       <GameRouteClient
         slug={slug}
+        wallet={one(query.wallet)}
         difficulty={one(query.difficulty)}
         marble={one(query.marble)}
         marble2={one(query.marble2)}
