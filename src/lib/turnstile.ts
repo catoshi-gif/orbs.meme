@@ -27,10 +27,11 @@ export async function verifyAndStoreHumanProof(input: { slug: string; xUserId: s
   const result = await response.json() as { success?: boolean; action?: string; hostname?: string; "error-codes"?: string[] };
   if (!response.ok || !result.success || result.action !== TURNSTILE_ACTION) return false;
 
-  await redisSetJson(humanProofKey(input.slug, input.xUserId, input.wallet), {
+  const stored = await redisSetJson(humanProofKey(input.slug, input.xUserId, input.wallet), {
     verifiedAt: Date.now(),
     hostname: result.hostname || null,
   }, { exSeconds: 60 * 60 * 24 * 35 });
+  if (!stored) throw new Error("Human proof storage is temporarily unavailable");
   return true;
 }
 

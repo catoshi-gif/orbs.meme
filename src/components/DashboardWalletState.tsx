@@ -5,51 +5,97 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
 import Link from "next/link";
 
-type HostedOrb = {
+type Orb = {
   id: string;
   slug: string;
   createdAt: number;
   startsAt: number;
-  status: string;
+  endsAt: number;
   token: { symbol: string; logoURI: string | null };
   prizeTokenAmount: number;
   prizeUsd: number;
-  difficulty: string;
   hostX: { username: string };
+};
+
+type Activity = {
+  orb: Orb;
+  hosted: boolean;
+  entered: boolean;
+  phase: "upcoming" | "live" | "completed" | "expired";
+  outcome: "entered" | "racing" | "won" | "dnf" | null;
+  verifiedElapsedMs: number | null;
+  winner: { wallet?: string; xUsername?: string; verifiedElapsedMs: number } | null;
 };
 
 function money(value: number) { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }
 function amount(value: number) { return value.toLocaleString(undefined, { maximumFractionDigits: 6 }); }
+function finishTime(ms: number | null) {
+  if (!ms) return null;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.floor((ms % 60_000) / 1000);
+  const millis = Math.floor(ms % 1000);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+}
+
+function status(activity: Activity) {
+  if (activity.outcome === "won") return { label: `Won · ${finishTime(activity.verifiedElapsedMs)}`, tone: "won" };
+  if (activity.outcome === "dnf") return { label: "DNF", tone: "dnf" };
+  if (activity.outcome === "racing") return { label: "Racing now", tone: "live" };
+  if (activity.outcome === "entered") return { label: "Entered", tone: "entered" };
+  if (activity.phase === "completed") return { label: "Winner verified", tone: "complete" };
+  if (activity.phase === "expired") return { label: "Expired", tone: "dnf" };
+  if (activity.phase === "live") return { label: "Live now", tone: "live" };
+  return { label: "Upcoming", tone: "entered" };
+}
+
+function ActivityRow({ activity, role }: { activity: Activity; role: "Host" | "Player" }) {
+  const { orb } = activity;
+  const state = status(activity);
+  const href = activity.phase === "completed" || activity.phase === "expired" ? `/orb/${orb.slug}/results` : `/orb/${orb.slug}`;
+  return <Link className="hosted-orb-row" href={href}>
+    <div className="hosted-orb-token">{orb.token.logoURI ? <img src={orb.token.logoURI} alt="" referrerPolicy="no-referrer" /> : <span>{orb.token.symbol.slice(0, 2)}</span>}<div><strong>{amount(orb.prizeTokenAmount)} {orb.token.symbol}</strong><small>{money(orb.prizeUsd)} · hosted by @{orb.hostX.username}</small><div className="activity-tags"><em>{role}</em><em className={state.tone}>{state.label}</em></div></div></div>
+    <div className="hosted-orb-launch"><strong>{activity.phase === "upcoming" ? "Launches" : activity.phase === "live" ? "Closes" : "Closed"}</strong><small>{new Date(activity.phase === "upcoming" ? orb.startsAt : orb.endsAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></div>
+    <span className="hosted-orb-open">{activity.phase === "completed" || activity.phase === "expired" ? "Result" : "Open"} →</span>
+  </Link>;
+}
 
 export default function Dashboard() {
   const { connected, publicKey } = useWallet();
-  const [orbs, setOrbs] = useState<HostedOrb[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wallet = publicKey?.toBase58() || "";
 
   useEffect(() => {
-    setOrbs([]); setError(null);
+    setActivities([]); setError(null);
     if (!wallet) { setLoading(false); return; }
     const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/orbs?hostWallet=${encodeURIComponent(wallet)}`, { cache: "no-store", signal: controller.signal })
+    fetch(`/api/orbs?wallet=${encodeURIComponent(wallet)}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
-        const payload = await response.json() as { ok?: boolean; orbs?: HostedOrb[]; error?: string };
-        if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load your Orbs");
-        setOrbs(payload.orbs || []);
+        const text = await response.text();
+        let payload: { ok?: boolean; activities?: Activity[]; error?: string };
+        try { payload = JSON.parse(text) as typeof payload; }
+        catch { throw new Error(`Activity service is temporarily unavailable (${response.status})`); }
+        if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not load your Orb activity");
+        setActivities(payload.activities || []);
       })
       .catch((cause) => { if (cause instanceof Error && cause.name !== "AbortError") setError(cause.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [wallet]);
 
-  const upcoming = useMemo(() => orbs.filter((orb) => orb.startsAt > Date.now()).length, [orbs]);
+  const entered = useMemo(() => activities.filter((activity) => activity.entered), [activities]);
+  const hosted = useMemo(() => activities.filter((activity) => activity.hosted), [activities]);
+  const wins = useMemo(() => entered.filter((activity) => activity.outcome === "won").length, [entered]);
 
-  if (!connected || !publicKey) return <div className="card empty"><h3>Connect your wallet.</h3><p>Your hosted Orbs are indexed to the wallet that created them.</p><ConnectWallet/></div>;
+  if (!connected || !publicKey) return <div className="card empty"><h3>Connect your wallet.</h3><p>Hosted and entered Orbs are indexed to the wallet used for creation or qualification.</p><ConnectWallet/></div>;
 
   return <>
-    <div className="dashboard"><div className="metric"><span>Hosted</span><strong>{orbs.length}</strong></div><div className="metric"><span>Upcoming</span><strong>{upcoming}</strong></div><div className="metric"><span>Wins</span><strong>0</strong></div><div className="metric"><span>Wallet</span><strong>{wallet.slice(0,4)}…{wallet.slice(-4)}</strong></div></div>
-    {loading ? <div className="card empty"><h3>Loading your Orbs…</h3></div> : error ? <div className="card empty"><h3>Couldn&apos;t load your Orbs.</h3><p>{error}</p></div> : orbs.length ? <div className="hosted-orb-list">{orbs.map((orb) => <Link className="hosted-orb-row" href={`/orb/${orb.slug}`} key={orb.id}><div className="hosted-orb-token">{orb.token.logoURI ? <img src={orb.token.logoURI} alt="" referrerPolicy="no-referrer" /> : <span>{orb.token.symbol.slice(0, 2)}</span>}<div><strong>{amount(orb.prizeTokenAmount)} {orb.token.symbol}</strong><small>{money(orb.prizeUsd)} · @{orb.hostX.username}</small></div></div><div className="hosted-orb-launch"><strong>{orb.startsAt > Date.now() ? "Upcoming" : "Launched"}</strong><small>{new Date(orb.startsAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></div><span className="hosted-orb-open">Open →</span></Link>)}</div> : <div className="card empty"><h3>No Orbs from this wallet yet.</h3><p>Create one and it will appear here as soon as it is sealed.</p><Link className="btn-primary" href="/create">Create an Orb</Link></div>}
+    <div className="dashboard"><div className="metric"><span>Hosted</span><strong>{hosted.length}</strong></div><div className="metric"><span>Entered</span><strong>{entered.length}</strong></div><div className="metric"><span>Wins</span><strong>{wins}</strong></div><div className="metric"><span>Wallet</span><strong>{wallet.slice(0,4)}…{wallet.slice(-4)}</strong></div></div>
+    {loading ? <div className="card empty"><h3>Loading your Orb history…</h3></div> : error ? <div className="card empty"><h3>Couldn&apos;t load your activity.</h3><p>{error}</p></div> : activities.length ? <div className="activity-sections">
+      <section><div className="activity-section-head"><div><span className="eyebrow">Player history</span><h2>Entered Orbs.</h2></div><small>Upcoming, live, won and DNF results</small></div>{entered.length ? <div className="hosted-orb-list">{entered.map((activity) => <ActivityRow activity={activity} role="Player" key={`entered:${activity.orb.id}`} />)}</div> : <div className="card activity-empty">No verified entries from this wallet yet.</div>}</section>
+      <section><div className="activity-section-head"><div><span className="eyebrow">Creator history</span><h2>Hosted Orbs.</h2></div><small>One active Orb per wallet; admin test wallet exempt</small></div>{hosted.length ? <div className="hosted-orb-list">{hosted.map((activity) => <ActivityRow activity={activity} role="Host" key={`hosted:${activity.orb.id}`} />)}</div> : <div className="card activity-empty">No hosted Orbs from this wallet yet.</div>}</section>
+    </div> : <div className="card empty"><h3>No Orb activity from this wallet yet.</h3><p>Create an Orb or verify an entry post and it will appear here automatically.</p><Link className="btn-primary" href="/create">Create an Orb</Link></div>}
   </>;
 }

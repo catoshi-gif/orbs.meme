@@ -33,6 +33,13 @@ function amount(value: number) {
 }
 
 type CreatedOrb = { slug: string; commitment: string; createdAt: number; startsAt: number };
+type CreationPolicy = { adminExempt: boolean; activeOrb: CreatedOrb | null };
+
+async function jsonPayload<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  try { return JSON.parse(text) as T; }
+  catch { throw new Error(response.ok ? "The server returned an invalid response" : `The server is temporarily unavailable (${response.status})`); }
+}
 
 export default function CreateWizard() {
   const initialLaunch = useMemo(() => localInputParts(new Date(Date.now() + 24 * 60 * 60 * 1000)), []);
@@ -54,7 +61,8 @@ export default function CreateWizard() {
   const [copied, setCopied] = useState(false);
   const [shareCardReady, setShareCardReady] = useState(false);
   const [shareCardFailed, setShareCardFailed] = useState(false);
-  const { connected, publicKey } = useWallet();
+  const [creationPolicy, setCreationPolicy] = useState<CreationPolicy | null>(null);
+  const { connected, publicKey, signMessage } = useWallet();
 
   const prizeAmount = Number(prizeInput || 0);
   const quote = token?.prizeQuote || null;
@@ -69,9 +77,25 @@ export default function CreateWizard() {
   const prizeRaw = token ? tokenInputToRaw(prizeInput || "0", token.decimals) : null;
   const rawCoverageReady = Boolean(token && quote && prizeRaw !== null && /^\d+$/.test(quote.feeRawAmount) && prizeRaw + BigInt(quote.feeRawAmount) <= BigInt(token.rawAmount));
   const launchMs = new Date(`${launchDate}T${launchTime}:00`).getTime();
-  const identityReady = connected && Boolean(publicKey) && Boolean(xUser && !xUser.protected);
+  const creationBlocked = Boolean(creationPolicy?.activeOrb && !creationPolicy.adminExempt);
+  const identityReady = connected && Boolean(publicKey) && Boolean(signMessage) && Boolean(xUser && !xUser.protected) && !creationBlocked;
   const prizeReady = Boolean(token?.eligible && quote && prizeAmount > 0 && prizeUsd >= MIN_PRIZE_USD && rawCoverageReady);
   const launchReady = Number.isFinite(launchMs) && launchMs > Date.now() + 30_000;
+
+  useEffect(() => {
+    setCreationPolicy(null);
+    const wallet = publicKey?.toBase58();
+    if (!wallet) return;
+    const controller = new AbortController();
+    fetch(`/api/orbs?wallet=${encodeURIComponent(wallet)}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const payload = await jsonPayload<{ ok?: boolean; creationPolicy?: CreationPolicy; error?: string }>(response);
+        if (!response.ok || !payload.ok || !payload.creationPolicy) throw new Error(payload.error || "Could not check this wallet's Orb status");
+        setCreationPolicy(payload.creationPolicy);
+      })
+      .catch((cause) => { if (!(cause instanceof Error && cause.name === "AbortError")) setCreateError(cause instanceof Error ? cause.message : "Could not check this wallet's Orb status"); });
+    return () => controller.abort();
+  }, [publicKey]);
 
   const previewHref = useMemo(() => {
     const q = new URLSearchParams({ difficulty, marble: style.marble, marble2: style.marbleSecondary, walls: style.walls, floor: style.floor, accent: style.accent });
@@ -135,15 +159,24 @@ export default function CreateWizard() {
   };
 
   const createOrb = async () => {
-    if (!publicKey || !token || !identityReady || !prizeReady || !launchReady || !fundingAcknowledged) return;
+    if (!publicKey || !signMessage || !token || !identityReady || !prizeReady || !launchReady || !fundingAcknowledged) return;
     setCreating(true); setCreateError(null);
     try {
+      const nonceResponse = await fetch("/api/orbs/create/nonce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet: publicKey.toBase58() }),
+      });
+      const nonce = await jsonPayload<{ ok?: boolean; message?: string; error?: string }>(nonceResponse);
+      if (!nonceResponse.ok || !nonce.ok || !nonce.message) throw new Error(nonce.error || "Could not authorize this host wallet");
+      const signatureBytes = await signMessage(new TextEncoder().encode(nonce.message));
+      const hostAuthorizationSignature = window.btoa(String.fromCharCode(...signatureBytes));
       const response = await fetch("/api/orbs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostWallet: publicKey.toBase58(), mint: token.mint, prizeTokenAmount: prizeInput, prizeQuoteToken: quote?.token, difficulty, style, startsAt: launchMs }),
+        body: JSON.stringify({ hostWallet: publicKey.toBase58(), hostAuthorizationSignature, mint: token.mint, prizeTokenAmount: prizeInput, prizeQuoteToken: quote?.token, difficulty, style, startsAt: launchMs }),
       });
-      const payload = await response.json() as { ok?: boolean; orb?: CreatedOrb; error?: string };
+      const payload = await jsonPayload<{ ok?: boolean; orb?: CreatedOrb; error?: string }>(response);
       if (!response.ok || !payload.ok || !payload.orb) throw new Error(payload.error || "Could not create Orb");
       setCreatedOrb(payload.orb); setStep(5);
     } catch (error) { setCreateError(error instanceof Error ? error.message : "Could not create Orb"); }
@@ -167,7 +200,7 @@ export default function CreateWizard() {
         {step === 0 ? <>
           <span className="eyebrow">Step 1 of 6</span><h2>Who is hosting?</h2>
           <p>Connect the Solana wallet that will fund the prize and the public X account whose community will play it.</p>
-          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>{publicKey?.toBase58().slice(0, 6)}…{publicKey?.toBase58().slice(-6)}</small></div></div> : <ConnectWallet />}</div><div className="field full"><label>X host account</label><XConnect returnTo="/create" requirePublic onChange={setXUser} />{xUser?.protected ? <small className="field-warning">Orb hosts must be public so every player can complete the Follow Host requirement immediately.</small> : null}</div></div>
+          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>{publicKey?.toBase58().slice(0, 6)}…{publicKey?.toBase58().slice(-6)}</small></div></div> : <ConnectWallet />}{connected && !signMessage ? <small className="field-warning">This wallet cannot sign messages. Choose a compatible wallet to prove creator ownership.</small> : null}{creationBlocked && creationPolicy?.activeOrb ? <div className="active-orb-warning"><strong>One Orb is already active.</strong><span>This wallet can create its next Orb after the current race closes.</span><Link href={`/orb/${creationPolicy.activeOrb.slug}`}>Open active Orb →</Link></div> : null}{creationPolicy?.adminExempt ? <small className="field-help">Admin test wallet: concurrent Orb creation is enabled.</small> : null}</div><div className="field full"><label>X host account</label><XConnect returnTo="/create" requirePublic onChange={setXUser} />{xUser?.protected ? <small className="field-warning">Orb hosts must be public so every player can complete the Follow Host requirement immediately.</small> : null}</div></div>
         </> : null}
 
         {step === 1 ? <>

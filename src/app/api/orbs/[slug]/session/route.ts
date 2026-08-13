@@ -5,6 +5,8 @@ import { issueCompetitiveSession, competitiveSessionsConfigured } from "@/lib/co
 import { hasFollowProof, hasShareProof, hasWalletProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
 import { getCurrentXSession } from "@/lib/xAuth";
+import { orbEndsAt } from "@/lib/orbLifecycle";
+import { getWinner } from "@/lib/upstashWinner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +24,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (!x) return NextResponse.json({ ok: false, error: "Connect X first" }, { status: 401 });
   if (!competitiveSessionsConfigured()) return NextResponse.json({ ok: false, error: "Competitive session signing is not configured" }, { status: 503 });
   if (Date.now() < orb.startsAt) return NextResponse.json({ ok: false, error: "GAME_NOT_LIVE", startsAt: orb.startsAt, commitment: orb.commitment }, { status: 403 });
+  const endsAt = orbEndsAt(orb);
+  const winner = await getWinner(orb.id);
+  if (winner || Date.now() >= endsAt) return NextResponse.json({ ok: false, error: "ORB_CLOSED", endsAt, winner: Boolean(winner) }, { status: 409 });
 
   const body = await request.json().catch(() => ({})) as { wallet?: unknown };
   const wallet = normalizeWallet(body.wallet);
@@ -46,13 +51,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       wallet,
       xUserId: x.user.id,
       manifestHash,
-      expiresAt: Math.max(Date.now() + 1000 * 60 * 60, record.startsAt + 1000 * 60 * 60 * 6),
+      expiresAt: orbEndsAt(record),
     });
     return NextResponse.json({
       ok: true,
       session: issued.token,
       manifest,
       manifestHash,
+      endsAt,
       entrant: { wallet, x: { id: x.user.id, username: x.user.username, name: x.user.name, profileImageUrl: x.user.profileImageUrl || null } },
     }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {

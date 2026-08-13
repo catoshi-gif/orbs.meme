@@ -7,6 +7,8 @@ import type { WalletSplToken } from "@/lib/walletTokens";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber } from "@/lib/prizeEconomics";
 import type { XProfile } from "@/lib/xAuth";
 import { redisCommand, redisGetJson, upstashConfigured } from "@/lib/upstash";
+import { activeHostedOrbKey, enteredOrbsKey, isAdminWallet, ORB_COMPETITION_WINDOW_MS, ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
+import { getWinner, getWinners } from "@/lib/upstashWinner";
 
 export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice">;
 
@@ -16,6 +18,7 @@ export type OrbRecord = {
   slug: string;
   createdAt: number;
   startsAt: number;
+  endsAt?: number;
   status: "scheduled-test" | "live-test" | "won-test";
   hostWallet: string;
   hostX: XProfile;
@@ -37,7 +40,7 @@ export type OrbRecord = {
   encryptedSecretSeed: string;
 };
 
-export type PublicOrbRecord = Omit<OrbRecord, "encryptedSecretSeed">;
+export type PublicOrbRecord = Omit<OrbRecord, "encryptedSecretSeed" | "endsAt"> & { endsAt: number };
 
 const orbKey = (slug: string) => `orbs:v1:orb:${slug}`;
 const hostedOrbsKey = (wallet: string) => `orbs:v1:hosted:${wallet}`;
@@ -72,8 +75,53 @@ function cleanStyle(style: GameStyle): GameStyle {
 }
 
 function publicRecord(record: OrbRecord): PublicOrbRecord {
-  const { encryptedSecretSeed: _secret, ...safe } = record;
-  return safe;
+  const { encryptedSecretSeed: _secret, endsAt: _storedEndsAt, ...safe } = record;
+  return { ...safe, endsAt: orbEndsAt(record) };
+}
+
+async function releaseActiveLock(wallet: string, slug: string) {
+  await redisCommand<number>([
+    "EVAL",
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end; return 0",
+    "1",
+    activeHostedOrbKey(wallet),
+    slug,
+  ]);
+}
+
+export async function releaseActiveHostedOrb(wallet: string, slug: string) {
+  if (!upstashConfigured() || isAdminWallet(wallet)) return;
+  await releaseActiveLock(wallet, slug);
+}
+
+export async function getActiveHostedOrb(wallet: string): Promise<PublicOrbRecord | null> {
+  if (!upstashConfigured() || isAdminWallet(wallet)) return null;
+  const slug = await redisCommand<string>(["GET", activeHostedOrbKey(wallet)]);
+  if (!slug) {
+    // Backfill the lock for Orbs created before the one-active rule shipped.
+    // This runs only on creator/dashboard policy checks and keeps deployment migration DB-light.
+    const hosted = await listHostedOrbs(wallet, 100);
+    const winners = await getWinners(hosted.map((orb) => orb.id));
+    const legacyActive = hosted.find((orb) => Date.now() < orbEndsAt(orb) && !winners.has(orb.id));
+    if (!legacyActive) return null;
+    const ttl = Math.max(60, Math.ceil((orbEndsAt(legacyActive) - Date.now()) / 1000));
+    const stored = await redisCommand<string>(["SET", activeHostedOrbKey(wallet), legacyActive.slug, "NX", "EX", ttl]);
+    if (stored === "OK") return legacyActive;
+    const competingLock = await redisCommand<string>(["GET", activeHostedOrbKey(wallet)]);
+    if (!competingLock) throw new Error("Could not reserve this wallet's active Orb policy");
+    return getActiveHostedOrb(wallet);
+  }
+  const record = await getOrbRecord(slug);
+  if (!record) {
+    await releaseActiveLock(wallet, slug);
+    return null;
+  }
+  const winner = await getWinner(record.id);
+  if (winner || Date.now() >= orbEndsAt(record)) {
+    await releaseActiveLock(wallet, slug);
+    return null;
+  }
+  return publicRecord(record);
 }
 
 export function orbStoreConfigured() {
@@ -136,6 +184,7 @@ export async function createTestOrb(input: {
     slug,
     createdAt: Date.now(),
     startsAt: Math.floor(input.startsAt),
+    endsAt: Math.floor(input.startsAt) + ORB_COMPETITION_WINDOW_MS,
     status: "scheduled-test",
     hostWallet: input.hostWallet,
     hostX: input.hostX,
@@ -163,8 +212,18 @@ export async function createTestOrb(input: {
     commitment,
     encryptedSecretSeed: encryptSeed(secretSeedHex),
   };
-  const ttl = Math.max(60 * 60 * 24 * 7, Math.ceil((input.startsAt - Date.now()) / 1000) + 60 * 60 * 24 * 14);
+  const ttl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(record) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
+  const enforceSingleActive = !isAdminWallet(record.hostWallet);
+  if (enforceSingleActive) {
+    const active = await getActiveHostedOrb(record.hostWallet);
+    if (active) throw new Error(`This wallet already has an active Orb (${active.slug}). It can create another after that race closes.`);
+  }
+  const activeTtl = Math.max(60, Math.ceil((orbEndsAt(record) - Date.now()) / 1000));
   const storeScript = `
+    if ARGV[5] == '1' then
+      local locked = redis.call('SET', KEYS[3], ARGV[4], 'NX', 'EX', ARGV[6])
+      if not locked then return 'ACTIVE_EXISTS' end
+    end
     redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
     redis.call('ZADD', KEYS[2], ARGV[2], ARGV[4])
     local count = redis.call('ZCARD', KEYS[2])
@@ -176,14 +235,18 @@ export async function createTestOrb(input: {
   const stored = await redisCommand<string>([
     "EVAL",
     storeScript,
-    "2",
+    "3",
     orbKey(slug),
     hostedOrbsKey(record.hostWallet),
+    activeHostedOrbKey(record.hostWallet),
     JSON.stringify(record),
     String(record.createdAt),
     String(ttl),
     slug,
+    enforceSingleActive ? "1" : "0",
+    String(activeTtl),
   ]);
+  if (stored === "ACTIVE_EXISTS") throw new Error("This wallet already has an active Orb. It can create another after that race closes.");
   if (stored !== "OK") throw new Error("Could not persist the Orb");
   return publicRecord(record);
 }
@@ -203,6 +266,23 @@ export async function listHostedOrbs(wallet: string, limit = 50): Promise<Public
   const slugs = await redisCommand<string[]>([
     "ZREVRANGE",
     hostedOrbsKey(wallet),
+    "0",
+    String(Math.max(0, Math.min(100, limit) - 1)),
+  ]);
+  if (!slugs?.length) return [];
+  const raw = await redisCommand<Array<string | null>>(["MGET", ...slugs.map(orbKey)]);
+  return (raw || []).flatMap((value) => {
+    if (!value) return [];
+    try { return [publicRecord(JSON.parse(value) as OrbRecord)]; }
+    catch { return []; }
+  });
+}
+
+export async function listEnteredOrbs(wallet: string, limit = 50): Promise<PublicOrbRecord[]> {
+  if (!upstashConfigured()) return [];
+  const slugs = await redisCommand<string[]>([
+    "ZREVRANGE",
+    enteredOrbsKey(wallet),
     "0",
     String(Math.max(0, Math.min(100, limit) - 1)),
   ]);

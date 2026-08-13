@@ -25,16 +25,18 @@ export default function TurnstileGate({ slug, wallet, enabled, onVerified }: Pro
   const widgetIdRef = useRef<string | null>(null);
   const [scriptReady, setScriptReady] = useState(false);
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [verified, setVerified] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "";
 
   useEffect(() => {
-    if (!enabled || !wallet) { setConfigured(null); onVerified(false); return; }
+    if (!enabled || !wallet) { setConfigured(null); setVerified(false); onVerified(false); return; }
     fetch(`/api/orbs/${encodeURIComponent(slug)}/qualify/human?wallet=${encodeURIComponent(wallet)}`, { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: { configured?: boolean; verified?: boolean }) => {
         setConfigured(Boolean(payload.configured));
+        setVerified(Boolean(payload.verified));
         onVerified(Boolean(payload.verified));
       })
       .catch(() => { setConfigured(Boolean(siteKey)); onVerified(false); });
@@ -50,6 +52,7 @@ export default function TurnstileGate({ slug, wallet, enabled, onVerified }: Pro
       });
       const payload = await response.json() as { verified?: boolean; error?: string };
       if (!response.ok || !payload.verified) throw new Error(payload.error || "Human check failed");
+      setVerified(true);
       onVerified(true);
     } catch (cause) {
       onVerified(false);
@@ -59,7 +62,7 @@ export default function TurnstileGate({ slug, wallet, enabled, onVerified }: Pro
   }, [onVerified, slug, wallet]);
 
   useEffect(() => {
-    if (!enabled || !scriptReady || !siteKey || !containerRef.current || !window.turnstile || widgetIdRef.current) return;
+    if (!enabled || verified || !scriptReady || !siteKey || !containerRef.current || !window.turnstile || widgetIdRef.current) return;
     const id = window.turnstile.render(containerRef.current, {
       sitekey: siteKey,
       action: "orb-qualify",
@@ -74,10 +77,11 @@ export default function TurnstileGate({ slug, wallet, enabled, onVerified }: Pro
       if (widgetIdRef.current) window.turnstile?.remove(widgetIdRef.current);
       widgetIdRef.current = null;
     };
-  }, [enabled, onVerified, scriptReady, siteKey, submitToken]);
+  }, [enabled, onVerified, scriptReady, siteKey, submitToken, verified]);
 
   if (!enabled) return <small>Complete X, follow, and wallet verification first.</small>;
   if (configured === false || !siteKey) return <small className="q-error">Turnstile is not configured yet. Add the Cloudflare keys to enable competitive entry.</small>;
+  if (verified) return <small className="human-proof-saved">✓ Human proof saved for this Orb</small>;
 
   return <div className="turnstile-gate">
     <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onLoad={() => setScriptReady(true)} />

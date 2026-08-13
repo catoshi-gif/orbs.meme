@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getPublicOrb } from "@/lib/orbStore";
-import { getShareProof, hasFollowProof, hasWalletProof, storeShareProof } from "@/lib/qualification";
+import { getShareProof, hasFollowProof, hasWalletProof, indexEnteredOrb, storeShareProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
 import { getCurrentXSession, getRecentXPostsForCurrentSession, XApiRequestError } from "@/lib/xAuth";
 import { redisCommand } from "@/lib/upstash";
+import { ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
+import { getWinner } from "@/lib/upstashWinner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +36,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
   const x = await getCurrentXSession();
   if (!x || !wallet) return NextResponse.json({ ok: true, verified: false });
   const proof = await getShareProof(slug, x.user.id, wallet);
+  if (proof) {
+    try { await indexEnteredOrb(slug, wallet, proof.confirmedAt); }
+    catch (error) { console.warn("[orbs:entry-index] Could not backfill entrant activity", error); }
+  }
   return NextResponse.json({
     ok: true,
     verified: Boolean(proof),
@@ -53,7 +59,14 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   if (!x) return NextResponse.json({ ok: false, error: "Connect X first" }, { status: 401 });
 
   const existing = await getShareProof(slug, x.user.id, wallet);
-  if (existing) return NextResponse.json({ ok: true, verified: true, postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${existing.postId}` });
+  if (existing) {
+    try { await indexEnteredOrb(slug, wallet, existing.confirmedAt); }
+    catch (error) { console.warn("[orbs:entry-index] Could not backfill entrant activity", error); }
+    return NextResponse.json({ ok: true, verified: true, postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${existing.postId}` });
+  }
+  if (Date.now() >= orbEndsAt(orb) || await getWinner(orb.id)) {
+    return NextResponse.json({ ok: false, error: "This Orb is already closed. New entries are no longer accepted." }, { status: 409 });
+  }
   if (originalLine.length < 12 || originalLine.length > 70) return NextResponse.json({ ok: false, error: "Use the same original line you added before opening the X composer." }, { status: 400 });
 
   const [followed, walletVerified, humanVerified] = await Promise.all([
@@ -75,8 +88,9 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   const expectedLine = originalLine.toLocaleLowerCase();
   const match = posts.find((post) => post.createdAt >= orb.createdAt - 5 * 60_000 && post.text.replace(/\s+/g, " ").toLocaleLowerCase().includes(expectedLine) && post.urls.some((url) => isOrbUrl(url, slug)));
   if (!match) return NextResponse.json({ ok: false, verified: false, error: "No recent post from this X account contains the exact Orb link yet. Publish it, wait a few seconds, then verify again." }, { status: 422 });
-  const ttl = Math.max(60 * 60 * 24 * 2, Math.ceil((orb.startsAt - Date.now()) / 1000) + 60 * 60 * 24 * 2);
-  await storeShareProof(slug, x.user.id, wallet, { postId: match.id, postCreatedAt: match.createdAt, confirmedAt: Date.now() }, ttl);
+  const ttl = Math.max(60 * 60 * 24 * 2, Math.ceil((orbEndsAt(orb) - Date.now()) / 1000) + 60 * 60 * 24 * 2);
+  const activityTtl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(orb) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
+  await storeShareProof(slug, x.user.id, wallet, { postId: match.id, postCreatedAt: match.createdAt, confirmedAt: Date.now() }, ttl, activityTtl);
   return NextResponse.json({ ok: true, verified: true, postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${match.id}` });
 }
 

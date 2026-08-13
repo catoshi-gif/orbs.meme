@@ -6,12 +6,13 @@ import { generateGameManifest, normalizeDifficulty } from "@/game/maze";
 import { safeColor } from "@/game/theme";
 import type { GameStyle, ReplayEnvelope } from "@/game/types";
 import { verifyReplay } from "@/game/verifier";
-import { getOrbRecord, getCanonicalOrbManifest } from "@/lib/orbStore";
+import { getOrbRecord, getCanonicalOrbManifest, releaseActiveHostedOrb } from "@/lib/orbStore";
 import { hashXUserId, sessionMatchesManifest, verifyCompetitiveSession } from "@/lib/competitiveSession";
 import { hasFollowProof, hasShareProof, hasWalletProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
 import { getCurrentXSession } from "@/lib/xAuth";
 import { getWinner, tryAcquireWinner, type WinnerRecord } from "@/lib/upstashWinner";
+import { orbEndsAt } from "@/lib/orbLifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +79,9 @@ export async function POST(request: Request) {
   let xUsername: string | undefined;
 
   if (realOrb) {
+    const existing = await getWinner(realOrb.id);
+    if (existing) return NextResponse.json({ ok: true, verified: false, firstWinner: false, winnerStore: "upstash", winner: publicWinner(existing), error: "A verified winner has already cleared this Orb." }, { status: 409 });
+    if (Date.now() >= orbEndsAt(realOrb)) return NextResponse.json({ ok: false, verified: false, error: "This Orb has expired." }, { status: 409 });
     const [x, canonical] = await Promise.all([getCurrentXSession(), getCanonicalOrbManifest(slug)]);
     if (!x) return NextResponse.json({ ok: false, error: "Your X session expired. Reconnect X from the Orb lobby." }, { status: 401 });
     wallet = cleanWallet(body.wallet) || undefined;
@@ -100,9 +104,6 @@ export async function POST(request: Request) {
     if (!followed || !walletVerified || !humanVerified || !shared) return NextResponse.json({ ok: false, error: "Competition qualification is no longer valid" }, { status: 403 });
 
     lockId = realOrb.id;
-    const existing = await getWinner(lockId);
-    if (existing) return NextResponse.json({ ok: true, verified: false, firstWinner: false, winnerStore: "upstash", winner: publicWinner(existing), error: "A verified winner has already cleared this Orb." }, { status: 409 });
-
     manifest = canonical.manifest;
     manifestHash = canonical.manifestHash;
     xUserId = x.user.id;
@@ -134,6 +135,10 @@ export async function POST(request: Request) {
     xUsername,
   };
   const winner = await tryAcquireWinner(lockId, record);
+  if (realOrb && winner.acquired) {
+    try { await releaseActiveHostedOrb(realOrb.hostWallet, slug); }
+    catch (error) { console.error("Could not release completed host Orb lock", error); }
+  }
 
   return NextResponse.json({
     ok: true,

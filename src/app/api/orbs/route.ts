@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
-import { createTestOrb, listHostedOrbs } from "@/lib/orbStore";
+import { createTestOrb, getActiveHostedOrb } from "@/lib/orbStore";
 import { getWalletSplTokens } from "@/lib/walletTokens";
 import { verifyPrizeQuote } from "@/lib/prizeQuote";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber, tokenInputToRaw } from "@/lib/prizeEconomics";
@@ -9,21 +9,33 @@ import { normalizeDifficulty } from "@/game/maze";
 import { DEFAULT_GAME_STYLE } from "@/game/constants";
 import { safeColor } from "@/game/theme";
 import type { GameStyle } from "@/game/types";
+import { listWalletOrbActivity } from "@/lib/orbActivity";
+import { isAdminWallet } from "@/lib/orbLifecycle";
+import { consumeHostAuthorization } from "@/lib/hostAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 20;
 
 export async function GET(request: Request) {
-  const hostWallet = new URL(request.url).searchParams.get("hostWallet")?.trim() || "";
+  const url = new URL(request.url);
+  const hostWallet = (url.searchParams.get("wallet") || url.searchParams.get("hostWallet"))?.trim() || "";
   let normalized: string;
   try { normalized = new PublicKey(hostWallet).toBase58(); }
   catch { return NextResponse.json({ ok: false, error: "Invalid host wallet" }, { status: 400 }); }
   try {
-    const orbs = await listHostedOrbs(normalized);
-    return NextResponse.json({ ok: true, orbs }, { headers: { "Cache-Control": "private, no-store" } });
+    const [activities, activeOrb] = await Promise.all([
+      listWalletOrbActivity(normalized),
+      getActiveHostedOrb(normalized),
+    ]);
+    return NextResponse.json({
+      ok: true,
+      activities,
+      orbs: activities.filter((activity) => activity.hosted).map((activity) => activity.orb),
+      creationPolicy: { adminExempt: isAdminWallet(normalized), activeOrb },
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not load hosted Orbs" }, { status: 502 });
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not load wallet activity" }, { status: 503 });
   }
 }
 
@@ -35,6 +47,7 @@ type Body = {
   difficulty?: unknown;
   style?: Partial<Record<keyof GameStyle, unknown>>;
   startsAt?: unknown;
+  hostAuthorizationSignature?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -45,8 +58,10 @@ export async function POST(request: Request) {
   let body: Body;
   try { body = await request.json(); } catch { return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 }); }
 
-  const hostWallet = typeof body.hostWallet === "string" ? body.hostWallet.trim() : "";
-  try { new PublicKey(hostWallet); } catch { return NextResponse.json({ ok: false, error: "Invalid host wallet" }, { status: 400 }); }
+  let hostWallet = typeof body.hostWallet === "string" ? body.hostWallet.trim() : "";
+  try { hostWallet = new PublicKey(hostWallet).toBase58(); } catch { return NextResponse.json({ ok: false, error: "Invalid host wallet" }, { status: 400 }); }
+  const hostAuthorizationSignature = typeof body.hostAuthorizationSignature === "string" ? body.hostAuthorizationSignature.trim() : "";
+  if (!hostAuthorizationSignature) return NextResponse.json({ ok: false, error: "Approve the host-wallet authorization before creating this Orb" }, { status: 401 });
 
   const mint = typeof body.mint === "string" ? body.mint.trim() : "";
   const prizeText = typeof body.prizeTokenAmount === "string"
@@ -68,6 +83,12 @@ export async function POST(request: Request) {
     const quote = prizeQuoteToken ? verifyPrizeQuote(prizeQuoteToken) : null;
     if (!quote) throw new Error("Your funding quote expired. Go back to Prize and reopen the token list to refresh it.");
     if (quote.wallet !== hostWallet || quote.mint !== mint) throw new Error("Funding quote does not match this wallet and token");
+    const hostAuthorized = await consumeHostAuthorization(hostWallet, x.user.id, hostAuthorizationSignature);
+    if (!hostAuthorized) return NextResponse.json({ ok: false, error: "Host-wallet authorization expired or was rejected. Please approve it again." }, { status: 401 });
+    const activeOrb = await getActiveHostedOrb(hostWallet);
+    if (activeOrb) {
+      return NextResponse.json({ ok: false, error: `This wallet already has active Orb ${activeOrb.slug}. It can create another after that race closes.`, activeOrb }, { status: 409 });
+    }
 
     // Re-read Helius at the final action so the browser never gets to assert its
     // own balance. Jupiter may have moved since the quote, but the signed quote
@@ -106,6 +127,12 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, orb, shareUrl: `/orb/${orb.slug}` });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not create Orb" }, { status: 400 });
+    const message = error instanceof Error ? error.message : "Could not create Orb";
+    const status = /already has an active Orb/i.test(message)
+      ? 409
+      : /temporarily unavailable|not configured|Upstash request failed/i.test(message)
+        ? 503
+        : 400;
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

@@ -3,6 +3,8 @@ import { followXUser, getCurrentXSession } from "@/lib/xAuth";
 import { redisCommand, redisGetJson, redisSetJson } from "@/lib/upstash";
 import { followProofKey } from "@/lib/qualification";
 import { getPublicOrb } from "@/lib/orbStore";
+import { orbEndsAt } from "@/lib/orbLifecycle";
+import { getWinner } from "@/lib/upstashWinner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +43,7 @@ export async function POST(request: Request) {
   const proofKey = followProofKey(session.user.id, orb.hostX.id);
   const existing = await redisGetJson<{ confirmedAt: number }>(proofKey);
   if (existing) return NextResponse.json({ ok: true, following: true, pending: false, confirmed: true, cached: true });
+  if (Date.now() >= orbEndsAt(orb) || await getWinner(orb.id)) return NextResponse.json({ ok: false, error: "This Orb is already closed." }, { status: 409 });
 
   // Cost guard: never let a modified client turn the Orbs endpoint into an unbounded X write proxy.
   const minute = Math.floor(Date.now() / 60_000);
@@ -51,10 +54,13 @@ export async function POST(request: Request) {
 
   try {
     const result = await followXUser(orb.hostX.id);
-    if (result.following && !result.pending) await redisSetJson(proofKey, { confirmedAt: Date.now() }, { exSeconds: 60 * 60 * 24 * 35 });
+    if (result.following && !result.pending) {
+      const stored = await redisSetJson(proofKey, { confirmedAt: Date.now() }, { exSeconds: 60 * 60 * 24 * 35 });
+      if (!stored) throw new Error("Follow succeeded, but proof storage is temporarily unavailable");
+    }
     return NextResponse.json({ ok: true, ...result, confirmed: result.following && !result.pending });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not follow host";
-    return NextResponse.json({ ok: false, error: message }, { status: message === "X_NOT_CONNECTED" ? 401 : 502 });
+    return NextResponse.json({ ok: false, error: message }, { status: message === "X_NOT_CONNECTED" ? 401 : 503 });
   }
 }

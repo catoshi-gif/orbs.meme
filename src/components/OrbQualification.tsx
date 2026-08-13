@@ -13,6 +13,7 @@ type Props = {
   hostUsername: string;
   createdAt: number;
   startsAt: number;
+  endsAt: number;
   prizeTokenAmount: number;
   prizeUsd: number;
   tokenSymbol: string;
@@ -47,7 +48,7 @@ async function apiPayload<T extends { error?: string }>(response: Response): Pro
   }
 }
 
-export default function OrbQualification({ slug, hostXId, hostUsername, createdAt, startsAt, prizeTokenAmount, prizeUsd, tokenSymbol }: Props) {
+export default function OrbQualification({ slug, hostXId, hostUsername, createdAt, startsAt, endsAt, prizeTokenAmount, prizeUsd, tokenSymbol }: Props) {
   const { connected, publicKey, signMessage } = useWallet();
   const [xUser, setXUser] = useState<XUser | null>(null);
   const [followed, setFollowed] = useState(false);
@@ -169,6 +170,9 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   const readyForShare = readyForHuman && humanVerified;
   const qualified = readyForShare && shareVerified;
   const live = now >= startsAt;
+  const closed = now >= endsAt;
+
+  if (closed) return <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>This Orb has expired.</h3><p className="muted">The six-hour race window ended. New qualification and entry are closed.</p><a className="btn-primary" href={`/orb/${slug}/results`}>View result →</a></aside>;
 
   return <aside id="qualify" className="card qualify">
     <span className="eyebrow">Before you play</span><h3>Qualify for this Orb.</h3>

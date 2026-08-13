@@ -330,9 +330,9 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
     const checkWinner = async () => {
       try {
         const response = await fetch(`/api/game/status?slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
-        const payload = await response.json() as { winner?: { wallet?: string; xUsername?: string } | null };
-        if (cancelled || !payload.winner?.wallet || payload.winner.wallet === wallet) return;
-        setVerificationMessage(payload.winner.xUsername ? `@${payload.winner.xUsername} secured the first verified finish. Your exact run is paused where it is.` : "Another player secured the first verified finish. Your exact run is paused where it is.");
+        const payload = await response.json() as { closed?: boolean; phase?: string; winner?: { wallet?: string; xUsername?: string } | null };
+        if (cancelled || !payload.closed || payload.winner?.wallet === wallet) return;
+        setVerificationMessage(payload.winner?.xUsername ? `@${payload.winner.xUsername} secured the first verified finish. Your exact run is paused where it is.` : payload.winner ? "Another player secured the first verified finish. Your exact run is paused where it is." : "The Orb's race window expired. Your run is paused where it is.");
         audioRef.current?.setRollingSpeed(0);
         audioRef.current?.stopMusic();
         changePhase("lost");

@@ -4,6 +4,8 @@ import { getPublicOrb } from "@/lib/orbStore";
 import { hasFollowProof, hasWalletProof } from "@/lib/qualification";
 import { getCurrentXSession } from "@/lib/xAuth";
 import { hasHumanProof, turnstileConfigured, verifyAndStoreHumanProof } from "@/lib/turnstile";
+import { orbEndsAt } from "@/lib/orbLifecycle";
+import { getWinner } from "@/lib/upstashWinner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const [orb, x] = await Promise.all([getPublicOrb(slug), getCurrentXSession()]);
   if (!orb) return NextResponse.json({ ok: false, error: "Orb not found" }, { status: 404 });
   if (!x) return NextResponse.json({ ok: false, error: "Connect X first" }, { status: 401 });
+  if (Date.now() >= orbEndsAt(orb) || await getWinner(orb.id)) return NextResponse.json({ ok: false, error: "This Orb is already closed." }, { status: 409 });
   if (!turnstileConfigured()) return NextResponse.json({ ok: false, error: "Turnstile is not configured" }, { status: 503 });
 
   const body = await request.json().catch(() => ({})) as { wallet?: unknown; token?: unknown };
@@ -48,6 +51,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     const verified = await verifyAndStoreHumanProof({ slug, xUserId: x.user.id, wallet, token, remoteIp: clientIp(request) });
     return NextResponse.json({ ok: verified, verified }, { status: verified ? 200 : 422 });
   } catch (error) {
-    return NextResponse.json({ ok: false, verified: false, error: error instanceof Error ? error.message : "Human verification failed" }, { status: 502 });
+    return NextResponse.json({ ok: false, verified: false, error: error instanceof Error ? error.message : "Human verification failed" }, { status: 503 });
   }
 }

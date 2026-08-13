@@ -36,6 +36,6 @@ export async function GET(request: Request) {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not load wallet tokens" }, { status: 502 });
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not load wallet tokens" }, { status: 503 });
   }
 }

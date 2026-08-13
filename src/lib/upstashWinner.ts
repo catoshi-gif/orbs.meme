@@ -1,4 +1,5 @@
 import { getUpstashConfig, redisCommand } from "@/lib/upstash";
+import { ORB_HISTORY_TTL_SECONDS } from "@/lib/orbLifecycle";
 
 export type WinnerRecord = {
   slug: string;
@@ -18,7 +19,7 @@ export type WinnerLockResult =
   | { configured: true; acquired: true; record: WinnerRecord }
   | { configured: true; acquired: false; record: WinnerRecord | null };
 
-function winnerKey(lockId: string) {
+export function winnerKey(lockId: string) {
   return `orbs:v1:winner:${lockId}`;
 }
 
@@ -27,12 +28,23 @@ export async function tryAcquireWinner(lockId: string, record: WinnerRecord): Pr
   const credentials = getUpstashConfig();
   if (!credentials) return { configured: false, acquired: true, record };
 
-  const ttlSeconds = 60 * 60 * 24 * 30;
-  const result = await redisCommand<string>(["SET", winnerKey(lockId), JSON.stringify(record), "NX", "EX", ttlSeconds]);
+  const result = await redisCommand<string>(["SET", winnerKey(lockId), JSON.stringify(record), "NX", "EX", ORB_HISTORY_TTL_SECONDS]);
   if (result === "OK") return { configured: true, acquired: true, record };
 
   const existing = await getWinner(lockId);
   return { configured: true, acquired: false, record: existing };
+}
+
+export async function getWinners(lockIds: string[]) {
+  const unique = [...new Set(lockIds.filter(Boolean))];
+  const winners = new Map<string, WinnerRecord>();
+  if (!getUpstashConfig() || !unique.length) return winners;
+  const raw = await redisCommand<Array<string | null>>(["MGET", ...unique.map(winnerKey)]);
+  (raw || []).forEach((value, index) => {
+    if (!value) return;
+    try { winners.set(unique[index]!, JSON.parse(value) as WinnerRecord); } catch {}
+  });
+  return winners;
 }
 
 export async function getWinner(lockId: string): Promise<WinnerRecord | null> {
