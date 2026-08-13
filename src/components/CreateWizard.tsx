@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Connection, Transaction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import ConnectWallet from "@/components/ConnectWallet";
 import XConnect, { type XUser } from "@/components/XConnect";
 import TokenPicker, { type WalletSplToken } from "@/components/TokenPicker";
@@ -12,6 +12,7 @@ import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmount
 import { ORB_CREATION_MIN_LEAD_MS } from "@/lib/orbLifecycle";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import type { DifficultyKey, GameStyle } from "@/game/types";
+import { assertReviewedFundingTransaction } from "@/lib/orbsFundingFirewall";
 
 const names = ["Identity", "Prize", "Game", "Launch", "Review", "Share"];
 const publicSiteUrl = canonicalPublicSiteUrl();
@@ -177,6 +178,17 @@ export default function CreateWizard() {
     if (!fundingPayload.funding) throw new Error("Could not prepare the funding transaction");
     const bytes = Uint8Array.from(atob(fundingPayload.funding.transactionBase64), (char) => char.charCodeAt(0));
     const transaction = Transaction.from(bytes);
+    const reviewedPrizeRaw = token ? tokenInputToRaw(prizeInput || "0", token.decimals) : null;
+    if (!publicKey || !token || !quote || reviewedPrizeRaw === null || reviewedPrizeRaw <= BigInt(0)) {
+      throw new Error("The reviewed funding intent is no longer available. Return to Review and authorize it again.");
+    }
+    assertReviewedFundingTransaction(transaction, {
+      host: publicKey,
+      mint: new PublicKey(token.mint),
+      prizeRawAmount: reviewedPrizeRaw,
+      feeRawAmount: BigInt(quote.feeRawAmount),
+      startsAtUnixSeconds: BigInt(Math.floor(launchMs / 1000)),
+    });
     const signed = await signTransaction(transaction);
     const connection = new Connection(rpc, "confirmed");
     const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });

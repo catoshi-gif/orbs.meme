@@ -6,6 +6,10 @@ import { ORBS_FEE_USD, rawToTokenNumber, type PrizeQuoteSnapshot } from "@/lib/p
 const QUOTE_SCHEMA_VERSION = 1 as const;
 // Keep UI/server quotes comfortably inside the program's absolute 10-minute cap.
 const QUOTE_TTL_MS = 8 * 60 * 1000;
+// Atomic rounding is allowed to move the $1.15 fee upward, but never by more
+// than one cent. Tokens too coarse to represent the fee closely are rejected
+// rather than silently charging a materially larger real USD amount.
+const MAX_FEE_ROUNDING_OVERAGE_USD = 0.01;
 
 type PrizeQuotePayload = {
   schemaVersion: typeof QUOTE_SCHEMA_VERSION;
@@ -79,6 +83,10 @@ function encodePayload(payload: PrizeQuotePayload) {
 export function issuePrizeQuote(input: { wallet: string; mint: string; decimals: number; usdPrice: number }): PrizeQuoteSnapshot {
   const now = Date.now();
   const feeRawAmount = feeRawForPrice(input.usdPrice, input.decimals).toString();
+  const roundedFeeUsd = rawToTokenNumber(feeRawAmount, input.decimals) * input.usdPrice;
+  if (!Number.isFinite(roundedFeeUsd) || roundedFeeUsd > ORBS_FEE_USD + MAX_FEE_ROUNDING_OVERAGE_USD + 1e-9) {
+    throw new Error("This token atomic unit is too coarse to represent the $1.15 Orbs fee safely");
+  }
   const payload: PrizeQuotePayload = {
     schemaVersion: QUOTE_SCHEMA_VERSION,
     wallet: input.wallet,
@@ -115,6 +123,10 @@ export function verifyPrizeQuote(token: string): PrizeQuotePayload | null {
   if (!payload.wallet || !payload.mint || !Number.isInteger(payload.decimals) || payload.decimals < 0) return null;
   if (!Number.isFinite(payload.usdPrice) || payload.usdPrice <= 0 || payload.feeUsd !== ORBS_FEE_USD) return null;
   if (!/^\d+$/.test(payload.feeRawAmount) || BigInt(payload.feeRawAmount) <= BigInt(0)) return null;
+  const expectedFeeRaw = feeRawForPrice(payload.usdPrice, payload.decimals).toString();
+  if (payload.feeRawAmount !== expectedFeeRaw) return null;
+  const roundedFeeUsd = rawToTokenNumber(payload.feeRawAmount, payload.decimals) * payload.usdPrice;
+  if (!Number.isFinite(roundedFeeUsd) || roundedFeeUsd > ORBS_FEE_USD + MAX_FEE_ROUNDING_OVERAGE_USD + 1e-9) return null;
   const now = Date.now();
   if (!Number.isFinite(payload.issuedAt) || !Number.isFinite(payload.expiresAt)) return null;
   if (payload.issuedAt > now + 30_000 || payload.expiresAt <= now) return null;

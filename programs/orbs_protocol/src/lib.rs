@@ -45,6 +45,11 @@ pub const CURRENT_VERSION: u8 = 1;
 /// cannot be proven without an oracle. The immutable V1 policy is $1.15 per Orb.
 pub const ORBS_FEE_USD_MICROS: u64 = 1_150_000;
 pub const MIN_PRIZE_USD_MICROS: u64 = 5_000_000;
+/// Independent fail-safe: because prize and fee use the same mint, a genuine
+/// $1.15 fee on a >=$5 prize should remain below 23% before atomic rounding.
+/// Allow 25% to absorb safe upward rounding while rejecting grossly malformed
+/// or malicious fee quotes even if the low-custody quote signer is compromised.
+pub const MAX_FEE_BPS_OF_PRIZE: u128 = 2_500;
 
 /// A fee/prize quote must be short-lived. The quote authority signs the exact
 /// creation transaction, so the client cannot alter mint/amounts after signing.
@@ -188,10 +193,21 @@ pub mod orbs_protocol {
         require!(args.game_commitment != [0u8; 32], OrbsError::InvalidGameCommitment);
         require!(args.prize_amount > 0, OrbsError::InvalidPrizeAmount);
         require!(args.fee_amount > 0, OrbsError::InvalidFeeAmount);
+        let fee_bps_numerator = (args.fee_amount as u128)
+            .checked_mul(10_000)
+            .ok_or(OrbsError::MathOverflow)?;
+        let fee_bps_limit = (args.prize_amount as u128)
+            .checked_mul(MAX_FEE_BPS_OF_PRIZE)
+            .ok_or(OrbsError::MathOverflow)?;
+        require!(fee_bps_numerator <= fee_bps_limit, OrbsError::ExcessiveFeeAmount);
         require!(
             args.prize_usd_micros >= MIN_PRIZE_USD_MICROS,
             OrbsError::PrizeBelowUsdMinimum
         );
+        // A classic SPL mint with a freeze authority can freeze the Orb vault
+        // after funding and prevent both winner payout and the permissionless
+        // expiry refund. V1 therefore accepts only non-freezable classic SPL mints.
+        require!(ctx.accounts.mint.freeze_authority.is_none(), OrbsError::FreezeAuthorityNotAllowed);
         let min_start = now
             .checked_add(MIN_START_LEAD_SECONDS)
             .ok_or(OrbsError::MathOverflow)?;
@@ -961,6 +977,10 @@ pub enum OrbsError {
     InvalidPrizeAmount,
     #[msg("Protocol fee amount must be greater than zero")]
     InvalidFeeAmount,
+    #[msg("Protocol fee is too large relative to the advertised prize")]
+    ExcessiveFeeAmount,
+    #[msg("Classic SPL mints with a freeze authority are not supported in Orbs V1")]
+    FreezeAuthorityNotAllowed,
     #[msg("Quoted prize is below the $5.00 V1 minimum")]
     PrizeBelowUsdMinimum,
     #[msg("Start time must be in the future")]

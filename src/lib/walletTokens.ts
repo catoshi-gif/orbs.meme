@@ -78,6 +78,32 @@ type RpcTokenAccounts = {
   }>;
 };
 
+
+type RpcMintAccounts = {
+  value: Array<{
+    owner?: string;
+    data?: {
+      parsed?: { info?: { freezeAuthority?: string | null } };
+    };
+  } | null>;
+};
+
+async function fetchMintSafety(mints: string[]) {
+  const nonFreezable = new Map<string, boolean>();
+  for (const batch of batches(mints, 100)) {
+    const result = await rpcRequest<RpcMintAccounts>("getMultipleAccounts", [
+      batch,
+      { encoding: "jsonParsed", commitment: "confirmed" },
+    ]);
+    batch.forEach((mint, index) => {
+      const account = result.value?.[index];
+      const freezeAuthority = account?.data?.parsed?.info?.freezeAuthority;
+      nonFreezable.set(mint, account?.owner === CLASSIC_SPL_TOKEN_PROGRAM && freezeAuthority === null);
+    });
+  }
+  return nonFreezable;
+}
+
 type JupiterMeta = Record<string, unknown> & {
   id?: string;
   address?: string;
@@ -172,7 +198,7 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
 
   const mints = Array.from(aggregated.keys());
   if (!mints.length) return [];
-  const [metaMap, priceMap] = await Promise.all([fetchMetadata(mints), fetchPrices(mints)]);
+  const [metaMap, priceMap, mintSafety] = await Promise.all([fetchMetadata(mints), fetchPrices(mints), fetchMintSafety(mints)]);
 
   const tokens = mints.map((mint): WalletSplToken => {
     const balance = aggregated.get(mint)!;
@@ -183,7 +209,8 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
     const suspicious = Boolean(meta?.audit?.isSus) || Boolean(meta?.tags?.includes("banned"));
     const logo = [meta?.icon, meta?.logoURI, meta?.logoUri].find((value) => typeof value === "string" && /^https:\/\//i.test(value)) as string | undefined;
     const correctProgram = !meta?.tokenProgram || meta.tokenProgram === CLASSIC_SPL_TOKEN_PROGRAM;
-    const eligible = usdPrice !== null && !suspicious && correctProgram;
+    const nonFreezable = mintSafety.get(mint) === true;
+    const eligible = usdPrice !== null && !suspicious && correctProgram && nonFreezable;
     return {
       mint,
       symbol: String(meta?.symbol || `${mint.slice(0, 4)}…${mint.slice(-4)}`),
@@ -197,7 +224,15 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
       verified: meta?.isVerified === true || (Array.isArray(meta?.tags) ? meta!.tags!.includes("verified") : false),
       suspicious,
       eligible,
-      ineligibleReason: suspicious ? "Jupiter flags this token as suspicious" : !correctProgram ? "Token-2022 is not supported in Orbs V1" : usdPrice === null ? "No reliable USD price available" : undefined,
+      ineligibleReason: suspicious
+        ? "Jupiter flags this token as suspicious"
+        : !correctProgram
+          ? "Token-2022 is not supported in Orbs V1"
+          : !nonFreezable
+            ? "Tokens with a freeze authority are not supported because the prize/refund could be frozen"
+            : usdPrice === null
+              ? "No reliable USD price available"
+              : undefined,
     };
   });
 

@@ -26,12 +26,22 @@ export async function GET(request: Request) {
   const wallet = new URL(request.url).searchParams.get("wallet")?.trim() || "";
   try { new PublicKey(wallet); } catch { return NextResponse.json({ ok: false, error: "Invalid Solana wallet" }, { status: 400 }); }
   try {
-    const tokens = (await getWalletSplTokens(wallet)).map((token) => ({
-      ...token,
-      prizeQuote: token.eligible && token.usdPrice
-        ? issuePrizeQuote({ wallet, mint: token.mint, decimals: token.decimals, usdPrice: token.usdPrice })
-        : null,
-    }));
+    const tokens = (await getWalletSplTokens(wallet)).map((token) => {
+      if (!token.eligible || !token.usdPrice) return { ...token, prizeQuote: null };
+      try {
+        return {
+          ...token,
+          prizeQuote: issuePrizeQuote({ wallet, mint: token.mint, decimals: token.decimals, usdPrice: token.usdPrice }),
+        };
+      } catch (error) {
+        return {
+          ...token,
+          eligible: false,
+          ineligibleReason: error instanceof Error ? error.message : "Token cannot represent the Orbs fee safely",
+          prizeQuote: null,
+        };
+      }
+    });
     return NextResponse.json({ ok: true, wallet, tokens, source: "classic-spl+jupiter-v3+signed-prize-quote", updatedAt: Date.now() }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });

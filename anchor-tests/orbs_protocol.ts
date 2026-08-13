@@ -63,13 +63,13 @@ function pdas(host: PublicKey, orbId: number[], mint: PublicKey) {
   return { config, orb, hostPolicy, hostTokenAccount, prizeVault, treasuryTokenAccount };
 }
 
-function createArgs(orbId: number[], startOffset = 2, windowSeconds = LOCAL_WINDOW_SECONDS, prizeUsdMicros = 5_000_000) {
+function createArgs(orbId: number[], startOffset = 2, windowSeconds = LOCAL_WINDOW_SECONDS, prizeUsdMicros = 5_000_000, feeAmount = FEE) {
   const startsAt = nowSeconds() + startOffset;
   return {
     orbId,
     prizeAmount: new anchor.BN(PRIZE),
     prizeUsdMicros: new anchor.BN(prizeUsdMicros),
-    feeAmount: new anchor.BN(FEE),
+    feeAmount: new anchor.BN(feeAmount),
     startsAt: new anchor.BN(startsAt),
     refundAfter: new anchor.BN(startsAt + windowSeconds),
     quoteExpiresAt: new anchor.BN(nowSeconds() + 300),
@@ -77,10 +77,10 @@ function createArgs(orbId: number[], startOffset = 2, windowSeconds = LOCAL_WIND
   };
 }
 
-async function createFundedOrb(host: Keypair, mint: PublicKey, orbByte: number, overrides?: { startOffset?: number; window?: number; prizeUsdMicros?: number; payer?: Keypair; treasuryAccount?: PublicKey; treasuryOwner?: PublicKey }) {
+async function createFundedOrb(host: Keypair, mint: PublicKey, orbByte: number, overrides?: { startOffset?: number; window?: number; prizeUsdMicros?: number; feeAmount?: number; payer?: Keypair; treasuryAccount?: PublicKey; treasuryOwner?: PublicKey }) {
   const orbId = Array.from(new Uint8Array(16).fill(orbByte));
   const a = pdas(host.publicKey, orbId, mint);
-  const args = createArgs(orbId, overrides?.startOffset ?? 2, overrides?.window ?? LOCAL_WINDOW_SECONDS, overrides?.prizeUsdMicros ?? 5_000_000);
+  const args = createArgs(orbId, overrides?.startOffset ?? 2, overrides?.window ?? LOCAL_WINDOW_SECONDS, overrides?.prizeUsdMicros ?? 5_000_000, overrides?.feeAmount ?? FEE);
   const payer = overrides?.payer ?? relayer;
   const treasuryOwner = overrides?.treasuryOwner ?? treasury.publicKey;
   const treasuryTokenAccount = overrides?.treasuryAccount ?? a.treasuryTokenAccount;
@@ -104,8 +104,8 @@ async function createFundedOrb(host: Keypair, mint: PublicKey, orbByte: number, 
   return { ...a, args, signature, orbId };
 }
 
-async function createMintAndFundHost(host: Keypair, raw = 50_000_000) {
-  const mint = await createMint(connection, relayer, relayer.publicKey, null, DECIMALS);
+async function createMintAndFundHost(host: Keypair, raw = 50_000_000, freezeAuthority: PublicKey | null = null) {
+  const mint = await createMint(connection, relayer, relayer.publicKey, freezeAuthority, DECIMALS);
   const hostAta = await getOrCreateAssociatedTokenAccount(connection, relayer, mint, host.publicKey);
   await mintTo(connection, relayer, mint, hostAta.address, relayer, raw);
   return { mint, hostAta: hostAta.address };
@@ -164,6 +164,20 @@ describe("orbs_protocol adversarial security", () => {
     const badWindowHost = key(15);
     const badWindow = await createMintAndFundHost(badWindowHost);
     await expectFail(createFundedOrb(badWindowHost, badWindow.mint, 15, { window: LOCAL_WINDOW_SECONDS + 1 }), "wrong settlement window");
+  });
+
+
+  it("rejects a grossly excessive fee even when the quote authority signs it", async () => {
+    const host = key(26);
+    const { mint } = await createMintAndFundHost(host);
+    await expectFail(createFundedOrb(host, mint, 26, { feeAmount: 1_300_001 }), "excessive protocol fee");
+  });
+
+  it("rejects classic SPL mints that retain a freeze authority", async () => {
+    const host = key(27);
+    const freezeAuthority = key(28);
+    const { mint } = await createMintAndFundHost(host, 50_000_000, freezeAuthority.publicKey);
+    await expectFail(createFundedOrb(host, mint, 27), "freezable mint");
   });
 
   it("enforces one active Orb per normal host but permits reuse after expiry without refunding the old Orb", async () => {

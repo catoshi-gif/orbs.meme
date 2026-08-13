@@ -24,6 +24,8 @@ const CONFIG_SEED = Buffer.from("config");
 const ORB_SEED = Buffer.from("orb");
 const HOST_POLICY_SEED = Buffer.from("host-policy");
 const CREATE_DISCRIMINATOR = createHash("sha256").update("global:create_and_fund_orb").digest().subarray(0, 8);
+const CONFIG_ACCOUNT_DISCRIMINATOR = createHash("sha256").update("account:ProtocolConfig").digest().subarray(0, 8);
+const ORB_ACCOUNT_DISCRIMINATOR = createHash("sha256").update("account:Orb").digest().subarray(0, 8);
 
 export function orbsProgramId() {
   const raw = (process.env.ORBS_PROGRAM_ID || process.env.NEXT_PUBLIC_ORBS_PROGRAM_ID || "").trim();
@@ -64,6 +66,10 @@ function u64(value: bigint) {
   const out = Buffer.alloc(8);
   out.writeBigUInt64LE(value);
   return out;
+}
+
+function absBigInt(value: bigint) {
+  return value < BigInt(0) ? -value : value;
 }
 
 function i64(value: bigint) {
@@ -107,8 +113,10 @@ function createArgs(record: OrbRecord) {
 }
 
 function decodeConfigFeeQuoteAuthority(data: Buffer) {
-  // discriminator(8), version(1), bump(1), claim authority(32), fee quote authority(32)
-  if (data.length < 74) throw new Error("Orbs protocol config account is malformed");
+  // discriminator(8), version(1), bump(1), claim authority(32), fee quote authority(32), initialized_at(8)
+  if (data.length < 82 || !data.subarray(0, 8).equals(CONFIG_ACCOUNT_DISCRIMINATOR) || data.readUInt8(8) !== 1) {
+    throw new Error("Orbs protocol config account is malformed or has an unsupported version");
+  }
   return new PublicKey(data.subarray(42, 74));
 }
 
@@ -181,11 +189,12 @@ type DecodedOrb = {
   startsAt: bigint;
   refundAfter: bigint;
   gameCommitmentHex: string;
+  createdAt: bigint;
 };
 
 function decodeOrbAccount(data: Buffer): DecodedOrb {
-  // Anchor discriminator occupies the first 8 bytes.
-  if (data.length < 162) throw new Error("On-chain Orb account is malformed");
+  // Reject wrong account types, truncated state, and future schema versions.
+  if (data.length < 170 || !data.subarray(0, 8).equals(ORB_ACCOUNT_DISCRIMINATOR)) throw new Error("On-chain Orb account is malformed");
   let offset = 8;
   const version = data.readUInt8(offset); offset += 1;
   offset += 1; // bump
@@ -197,8 +206,9 @@ function decodeOrbAccount(data: Buffer): DecodedOrb {
   const prizeUsdMicros = data.readBigUInt64LE(offset); offset += 8;
   const startsAt = data.readBigInt64LE(offset); offset += 8;
   const refundAfter = data.readBigInt64LE(offset); offset += 8;
-  const gameCommitmentHex = data.subarray(offset, offset + 32).toString("hex");
-  return { version, orbIdHex, host, mint, prizeAmount, feeAmount, prizeUsdMicros, startsAt, refundAfter, gameCommitmentHex };
+  const gameCommitmentHex = data.subarray(offset, offset + 32).toString("hex"); offset += 32;
+  const createdAt = data.readBigInt64LE(offset);
+  return { version, orbIdHex, host, mint, prizeAmount, feeAmount, prizeUsdMicros, startsAt, refundAfter, gameCommitmentHex, createdAt };
 }
 
 export async function verifyFundedOrbOnChain(record: OrbRecord, suppliedSignature = "") {
@@ -235,9 +245,17 @@ export async function verifyFundedOrbOnChain(record: OrbRecord, suppliedSignatur
 
   let signature = suppliedSignature.trim();
   if (signature && !/^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(signature)) throw new Error("Invalid Solana transaction signature");
-  if (!signature) {
-    const signatures = await connection.getSignaturesForAddress(accounts.orb, { limit: 5 }, "confirmed");
-    signature = signatures.find((entry) => !entry.err)?.signature || "";
+  const signatures = await connection.getSignaturesForAddress(accounts.orb, { limit: 20 }, "confirmed");
+  const successful = signatures.filter((entry) => !entry.err);
+  if (signature) {
+    const matching = successful.find((entry) => entry.signature === signature);
+    if (!matching) throw new Error("Supplied funding signature does not reference this Orb PDA");
+    if (matching.blockTime !== null && absBigInt(BigInt(matching.blockTime) - decoded.createdAt) > BigInt(120)) {
+      throw new Error("Supplied signature is not temporally consistent with Orb creation");
+    }
+  } else {
+    const creationLike = successful.find((entry) => entry.blockTime === null || absBigInt(BigInt(entry.blockTime) - decoded.createdAt) <= BigInt(120));
+    signature = creationLike?.signature || "";
   }
   if (!signature) throw new Error("Could not recover the Orb funding transaction signature");
   const status = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
