@@ -4,8 +4,9 @@ import "./globals.css";
 import AppProviders from "@/components/AppProviders";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
+import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 
-const site = (process.env.NEXT_PUBLIC_SITE_URL || "https://orbs.meme").replace(/\/+$/, "");
+const site = canonicalPublicSiteUrl();
 
 export const metadata: Metadata = {
   metadataBase: new URL(site),

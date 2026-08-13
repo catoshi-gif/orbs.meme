@@ -4,10 +4,11 @@ import { cache } from "react";
 import OrbQualification from "@/components/OrbQualification";
 import OrbLobbyHero from "@/components/OrbLobbyHero";
 import { getPublicOrb } from "@/lib/orbStore";
+import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 
 export const dynamic = "force-dynamic";
 const loadOrb = cache(getPublicOrb);
-const site = (process.env.NEXT_PUBLIC_SITE_URL || "https://orbs.meme").replace(/\/+$/, "");
+const site = canonicalPublicSiteUrl();
 
 function amount(value: number) { return value.toLocaleString("en-US", { maximumFractionDigits: 6 }); }
 function money(value: number) { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }

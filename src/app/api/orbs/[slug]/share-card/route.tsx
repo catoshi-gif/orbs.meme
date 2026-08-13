@@ -73,10 +73,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       width: "100%", height: "100%", display: "flex", position: "relative", overflow: "hidden",
       color: "#F8FAFF", background: "#030617", fontFamily: "sans-serif",
     }}>
-      <img src={background} alt="" width={1200} height={630} style={{ position: "absolute", left: 112, top: 0, width: 1200, height: 630, objectFit: "cover" }} />
-      <div style={{ position: "absolute", inset: 0, display: "flex", background: "linear-gradient(90deg,rgba(2,5,20,.98) 0%,rgba(3,7,25,.94) 39%,rgba(4,7,24,.62) 61%,rgba(3,5,19,.20) 100%)" }} />
+      <img src={background} alt="" width={1200} height={630} style={{ position: "absolute", left: 0, top: 0, width: 1200, height: 630, objectFit: "cover" }} />
+      <div style={{ position: "absolute", inset: 0, display: "flex", background: "linear-gradient(90deg,rgba(2,5,20,.92) 0%,rgba(3,7,25,.88) 39%,rgba(4,7,24,.58) 61%,rgba(3,5,19,.18) 100%)" }} />
       <div style={{ position: "absolute", inset: 0, display: "flex", background: "linear-gradient(0deg,rgba(2,5,18,.88) 0%,transparent 34%,rgba(3,5,18,.28) 100%)" }} />
-      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 8, display: "flex", background: "linear-gradient(180deg,#6C5CFF,#9B5CFF 46%,#20E3D2)" }} />
 
       <div style={{ position: "relative", width: "100%", display: "flex", flexDirection: "column", padding: "40px 52px 38px 60px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -98,7 +97,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
               <div style={{ display: "flex", marginTop: 10, color: "#C4CCE3", fontSize: 25, fontWeight: 700 }}>{money(orb.prizeUsd)} winner prize</div>
             </div>
           </div>
-          <div style={{ display: "flex", marginTop: 24, fontSize: 31, fontWeight: 900, letterSpacing: -0.8 }}>FIRST VERIFIED FINISH WINS.</div>
+          <div style={{ display: "flex", marginTop: 24, color: "#7FF9EE", fontSize: 31, fontWeight: 900, letterSpacing: -0.8, textShadow: "0 4px 24px #020512" }}>FIRST VERIFIED FINISH WINS.</div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto", borderTop: "1px solid #FFFFFF2B", paddingTop: 22 }}>
@@ -129,6 +128,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     headers: {
       "Content-Type": "image/jpeg",
       "Content-Disposition": `inline; filename="orbs-${slug}.jpg"`,
+      "Content-Length": String(jpeg.byteLength),
       "Cache-Control": "public, max-age=86400, s-maxage=31536000, stale-while-revalidate=604800",
       "X-Content-Type-Options": "nosniff",
     },

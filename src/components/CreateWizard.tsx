@@ -1,17 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
 import XConnect, { type XUser } from "@/components/XConnect";
 import TokenPicker, { type WalletSplToken } from "@/components/TokenPicker";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
 import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmountForPrice, maxPrizeInputFromQuote, tokenInputToRaw } from "@/lib/prizeEconomics";
+import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import type { DifficultyKey, GameStyle } from "@/game/types";
 
 const names = ["Identity", "Prize", "Game", "Launch", "Review", "Share"];
-const publicSiteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://orbs.meme").replace(/\/+$/, "");
+const publicSiteUrl = canonicalPublicSiteUrl();
 const profiles: { key: DifficultyKey; name: string; label: string; time: string }[] = [
   { key: "quick", name: "Quick", label: "Easy", time: "~5 min" },
   { key: "classic", name: "Classic", label: "Medium", time: "~10 min" },
@@ -51,6 +52,8 @@ export default function CreateWizard() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [createdOrb, setCreatedOrb] = useState<CreatedOrb | null>(null);
   const [copied, setCopied] = useState(false);
+  const [shareCardReady, setShareCardReady] = useState(false);
+  const [shareCardFailed, setShareCardFailed] = useState(false);
   const { connected, publicKey } = useWallet();
 
   const prizeAmount = Number(prizeInput || 0);
@@ -152,6 +155,11 @@ export default function CreateWizard() {
   const hostShareText = `I just sealed an Orb for ${amount(prizeAmount)} ${token?.symbol || "SPL"} (≈${money(prizeUsd)}). First verified finish wins.\n\nJoin the waiting room and bring your fastest run.`;
   const hostShareParams = new URLSearchParams({ text: hostShareText, url: shareUrl });
 
+  useEffect(() => {
+    setShareCardReady(false);
+    setShareCardFailed(false);
+  }, [createdOrb?.slug]);
+
   return (
     <div className="wizard-layout">
       <aside className="wizard-nav">{names.map((name, i) => <button key={name} className={step === i ? "active" : ""} disabled={i === 5 && !createdOrb} onClick={() => { if (i === 4 && token && publicKey) { void refreshFundingForReview(); return; } if (i !== 5 || createdOrb) setStep(i); }}>{i + 1}. {name}</button>)}</aside>
@@ -190,9 +198,9 @@ export default function CreateWizard() {
 
         {step === 5 && createdOrb ? <>
           <span className="eyebrow">Step 6 of 6</span><h2>Your Orb is sealed.</h2><p>Your share card is ready. Post it on X, then take the same waiting-room link to Discord, Telegram and every community you want at the starting line.</p>
-          <div className="share-card-preview"><img src={shareCardUrl} alt={`${amount(prizeAmount)} ${token?.symbol || "SPL"} Orb share card`} /><div><strong>Built to stop the scroll.</strong><span>X unfurls this card from the waiting-room URL. Composer previews can be delayed; if X does not show it before posting, use Download card and attach the image manually.</span></div></div>
+          <div className="share-card-preview"><img src={shareCardUrl} alt={`${amount(prizeAmount)} ${token?.symbol || "SPL"} Orb share card`} onLoad={() => { setShareCardReady(true); setShareCardFailed(false); }} onError={() => { setShareCardReady(false); setShareCardFailed(true); }} /><div><strong>{shareCardReady ? "X card ready." : shareCardFailed ? "The X card could not be prepared." : "Preparing the X card…"}</strong><span>{shareCardReady ? "The exact canonical image is now warmed and ready for X to crawl." : shareCardFailed ? "Retry this page before sharing so X does not receive an incomplete link preview." : "The share button unlocks only after the image has loaded successfully."}</span></div></div>
           <div className="sealed-orb"><span>GAME COMMITMENT</span><code>{createdOrb.commitment}</code><small>SHA-256 commitment · seed remains encrypted server-side until launch</small></div>
-          <div className="fields"><div className="field full"><label>Waiting-room URL</label><input value={shareUrl} readOnly /></div><div className="share-actions field full"><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button><a className="btn-secondary" href={`https://x.com/intent/post?${hostShareParams.toString()}`} target="_blank" rel="noreferrer">Post with card on X ↗</a><a className="btn-secondary" href={shareCardUrl} download={`orbs-${createdOrb.slug}.jpg`} target="_blank" rel="noreferrer">Download card</a></div></div>
+          <div className="fields"><div className="field full"><label>Waiting-room URL</label><input value={shareUrl} readOnly /></div><div className="share-actions field full"><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button>{shareCardReady ? <a className="btn-secondary" href={`https://x.com/intent/post?${hostShareParams.toString()}`} target="_blank" rel="noreferrer">Post with card on X ↗</a> : <button className="btn-secondary" disabled>{shareCardFailed ? "Card unavailable" : "Preparing X card…"}</button>}<a className="btn-secondary" href={shareCardUrl} download={`orbs-${createdOrb.slug}.jpg`} target="_blank" rel="noreferrer">Download card</a></div></div>
           <p className="share-wide-note">Share it far and wide—the bigger the waiting room, the bigger the live moment.</p>
         </> : null}
 
