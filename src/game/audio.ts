@@ -26,6 +26,7 @@ export class GameAudioEngine {
   private musicNextAt = 0;
   private muted = false;
   private lastThumpAt = 0;
+  private musicIntensity = 0;
 
   async unlock() {
     if (typeof window === "undefined") return;
@@ -108,6 +109,22 @@ export class GameAudioEngine {
     gain.connect(this.master);
     osc.start(now);
     osc.stop(now + 0.1);
+  }
+
+
+  checkpoint(index: number, total: number) {
+    if (!this.context || !this.master || this.muted) return;
+    const progress = clamp(total > 0 ? index / total : 0, 0, 1);
+    this.musicIntensity = progress;
+    const now = this.context.currentTime;
+    const root = 84 + Math.round(progress * 5);
+    this.tone(midiToHz(root), now, 0.10, 0.040, "sine", this.master);
+    this.tone(midiToHz(root + 7), now + 0.045, 0.14, 0.032, "triangle", this.master);
+    if (progress >= 0.75) this.tone(midiToHz(root + 12), now + 0.09, 0.16, 0.025, "sine", this.master);
+  }
+
+  setRaceProgress(progress: number) {
+    this.musicIntensity = clamp(progress, 0, 1);
   }
 
   victory() {
@@ -225,7 +242,7 @@ export class GameAudioEngine {
 
   startMusic() {
     if (!this.context || this.musicTimer !== null) return;
-    const secondsPerStep = (60 / 132) / 2;
+    this.musicIntensity = 0;
     this.musicStep = 0;
     this.musicNextAt = this.context.currentTime + 0.05;
 
@@ -235,7 +252,8 @@ export class GameAudioEngine {
       while (this.musicNextAt < horizon) {
         this.scheduleMusicStep(this.musicStep, this.musicNextAt);
         this.musicStep = (this.musicStep + 1) % (64 * 8);
-        this.musicNextAt += secondsPerStep;
+        const bpm = 132 + this.musicIntensity * 20;
+        this.musicNextAt += (60 / bpm) / 2;
       }
     };
     schedule();

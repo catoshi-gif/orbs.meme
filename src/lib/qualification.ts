@@ -63,6 +63,8 @@ export async function verifyWalletChallenge(slug: string, xUserId: string, walle
 
 export type ShareProof = { postId: string; postCreatedAt: number; confirmedAt: number };
 
+const orbEntrantsKey = (slug: string) => `orbs:v1:entrants:${slug}`;
+
 export async function indexEnteredOrb(slug: string, wallet: string, enteredAt = Date.now(), ttlSeconds = ORB_HISTORY_TTL_SECONDS) {
   const normalized = new PublicKey(wallet).toBase58();
   const key = enteredOrbsKey(normalized);
@@ -93,20 +95,25 @@ export async function storeShareProof(slug: string, xUserId: string, wallet: str
     `
       redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
       redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
+      redis.call('SADD', KEYS[3], ARGV[6])
       local count = redis.call('ZCARD', KEYS[2])
       if count > 100 then redis.call('ZREMRANGEBYRANK', KEYS[2], 0, count - 101) end
       local ttl = redis.call('TTL', KEYS[2])
       if ttl < tonumber(ARGV[5]) then redis.call('EXPIRE', KEYS[2], ARGV[5]) end
+      local entrant_ttl = redis.call('TTL', KEYS[3])
+      if entrant_ttl < tonumber(ARGV[5]) then redis.call('EXPIRE', KEYS[3], ARGV[5]) end
       return 1
     `,
-    "2",
+    "3",
     shareProofKey(slug, xUserId, normalized),
     enteredOrbsKey(normalized),
+    orbEntrantsKey(slug),
     JSON.stringify(proof),
     String(proofTtl),
     String(proof.confirmedAt),
     slug,
     String(Math.max(ORB_HISTORY_TTL_SECONDS, activityTtlSeconds)),
+    `${xUserId}:${normalized}`,
   ]);
   if (stored !== 1) throw new Error("Could not persist this verified Orb entry");
 }
@@ -125,4 +132,13 @@ export async function hasWalletProof(slug: string, xUserId: string, wallet: stri
   let normalized: string;
   try { normalized = new PublicKey(wallet).toBase58(); } catch { return false; }
   return Boolean(await redisGetJson<{ verifiedAt: number }>(walletProofKey(slug, xUserId, normalized)));
+}
+
+export async function getOrbEntrantCounts(slugs: string[]): Promise<Map<string, number>> {
+  const unique = [...new Set(slugs.filter(Boolean))];
+  const result = new Map<string, number>();
+  if (!unique.length) return result;
+  const counts = await Promise.all(unique.map(async (slug) => Number(await redisCommand<number>(["SCARD", orbEntrantsKey(slug)]) || 0)));
+  unique.forEach((slug, index) => result.set(slug, counts[index] || 0));
+  return result;
 }

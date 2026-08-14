@@ -7,8 +7,9 @@ import Logo from "@/components/Logo";
 import ThemeToggle from "@/components/ThemeToggle";
 import ConnectWallet from "@/components/ConnectWallet";
 
-const links: [[string, string], [string, string], [string, string]] = [
+const links: Array<[string, string]> = [
   ["/", "Live Orbs"],
+  ["/leaderboard", "Leaderboard"],
   ["/how-it-works", "How it works"],
   ["/create", "Create"],
 ];

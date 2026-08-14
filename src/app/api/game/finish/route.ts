@@ -20,7 +20,7 @@ export const maxDuration = 30;
 
 function publicWinner(winner: WinnerRecord | null) {
   if (!winner) return null;
-  const { xUserId: _privateXId, ...safe } = winner;
+  const { xUserId: _privateXId, wallet: _privateWallet, ...safe } = winner;
   return safe;
 }
 

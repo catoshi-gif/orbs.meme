@@ -104,6 +104,7 @@ function makeMarbleMaterial(THREE: typeof import("three"), primary: string, seco
       uPrimary: { value: new THREE.Color(primary) },
       uSecondary: { value: new THREE.Color(secondary) },
       uAccent: { value: new THREE.Color(accent) },
+      uProgress: { value: 0 },
     },
     vertexShader: `
       varying vec3 vObj;
@@ -123,6 +124,7 @@ function makeMarbleMaterial(THREE: typeof import("three"), primary: string, seco
       uniform vec3 uPrimary;
       uniform vec3 uSecondary;
       uniform vec3 uAccent;
+      uniform float uProgress;
       varying vec3 vObj;
       varying vec3 vNormalW;
       varying vec3 vWorld;
@@ -144,6 +146,7 @@ function makeMarbleMaterial(THREE: typeof import("three"), primary: string, seco
         vec3 rim = mix(uSecondary, uAccent, 0.42) * fresnel * 1.35;
         vec3 color = glass + rim + vec3(1.0) * broadHighlight * 0.68;
         color += uSecondary * pow(fresnel, 4.0) * 0.38;
+        color += mix(uSecondary, uAccent, 0.58) * uProgress * (0.22 + fresnel * 0.72);
 
         float alpha = 0.94 + fresnel * 0.05;
         gl_FragColor = vec4(color, alpha);
@@ -300,7 +303,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
         firstWinner?: boolean;
         winnerStore?: "upstash" | "verification-only";
         error?: string;
-        winner?: { wallet?: string; xUsername?: string };
+        winner?: { xUsername?: string };
         verification?: { replayHash?: string; manifestHash?: string; elapsedMs?: number };
       };
       if (payload.firstWinner === false && payload.winner) {
@@ -329,9 +332,9 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
     let cancelled = false;
     const checkWinner = async () => {
       try {
-        const response = await fetch(`/api/game/status?slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
-        const payload = await response.json() as { closed?: boolean; phase?: string; winner?: { wallet?: string; xUsername?: string } | null };
-        if (cancelled || !payload.closed || payload.winner?.wallet === wallet) return;
+        const response = await fetch(`/api/game/status?slug=${encodeURIComponent(slug)}&wallet=${encodeURIComponent(wallet)}`, { cache: "no-store" });
+        const payload = await response.json() as { closed?: boolean; phase?: string; winnerIsRequester?: boolean; winner?: { xUsername?: string } | null };
+        if (cancelled || !payload.closed || payload.winnerIsRequester) return;
         setVerificationMessage(payload.winner?.xUsername ? `@${payload.winner.xUsername} secured the first verified finish. Your exact run is paused where it is.` : payload.winner ? "Another player secured the first verified finish. Your exact run is paused where it is." : "The Orb's race window expired. Your run is paused where it is.");
         audioRef.current?.setRollingSpeed(0);
         audioRef.current?.stopMusic();
@@ -631,13 +634,21 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
 
       const checkpointGroups = manifest.checkpoints.map((cp, idx) => {
         const g = new THREE.Group();
-        g.position.set(cp.x, 0.024, cp.z);
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(0.48, 0.57, 40),
-          new THREE.MeshBasicMaterial({ color: idx === 0 ? marbleSecondaryHex : accentHex, transparent: true, opacity: 0.34, side: THREE.DoubleSide }),
-        );
+        g.position.set(cp.x, 0.026, cp.z);
+        const ringMaterial = new THREE.MeshBasicMaterial({ color: idx === 0 ? marbleSecondaryHex : accentHex, transparent: true, opacity: 0.42, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.44, 0.61, 48), ringMaterial);
         ring.rotation.x = -Math.PI / 2;
-        g.add(ring);
+        const halo = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.54, 0.54, 0.62, 40, 1, true),
+          new THREE.MeshBasicMaterial({ color: idx === 0 ? marbleSecondaryHex : accentHex, transparent: true, opacity: 0.07, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        halo.position.y = 0.30;
+        const beacon = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.06, 0.32, 1.7, 24, 1, true),
+          new THREE.MeshBasicMaterial({ color: accentHex, transparent: true, opacity: 0.045, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        beacon.position.y = 0.84;
+        g.add(ring, halo, beacon);
         boardGroup.add(g);
         return g;
       });
@@ -686,7 +697,9 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
       );
       marbleCore.scale.set(0.92, 1.04, 0.92);
       marbleCore.renderOrder = 5;
-      marbleGroup.add(marbleMesh, marbleCore);
+      const marbleGlowLight = new THREE.PointLight(accentHex, 0.0, 4.2, 2.0);
+      marbleGlowLight.position.set(0, 0.22, 0);
+      marbleGroup.add(marbleMesh, marbleCore, marbleGlowLight);
       boardGroup.add(marbleGroup);
       const shadowMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(PHYSICS.ballRadius * 2.35, PHYSICS.ballRadius * 2.35),
@@ -1035,6 +1048,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
                 lastSafe = { x: cp.x, z: cp.z };
                 nextCheckpoint += 1;
                 setCheckpoint(nextCheckpoint);
+                audioRef.current?.checkpoint(nextCheckpoint, manifest.checkpoints.length);
               }
             }
 
@@ -1081,6 +1095,13 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
         });
 
         if (marbleMaterial.uniforms?.uTime) marbleMaterial.uniforms.uTime.value = now;
+        const checkpointProgress = manifest.checkpoints.length ? nextCheckpoint / manifest.checkpoints.length : 1;
+        if (marbleMaterial.uniforms?.uProgress) marbleMaterial.uniforms.uProgress.value = checkpointProgress;
+        const marbleCoreMaterial = marbleCore.material as import("three").MeshBasicMaterial;
+        marbleCoreMaterial.opacity = 0.16 + checkpointProgress * 0.30;
+        marbleCore.scale.set(0.92 + checkpointProgress * 0.09, 1.04 + checkpointProgress * 0.09, 0.92 + checkpointProgress * 0.09);
+        marbleGlowLight.intensity = checkpointProgress * 1.8;
+        audioRef.current?.setRaceProgress(checkpointProgress);
         if (floorMaterial.uniforms?.uTime) floorMaterial.uniforms.uTime.value = now;
         const crystalBreath = 0.5 + 0.5 * Math.sin(now * 0.58);
         wallMaterial.emissiveIntensity = 0.62 + crystalBreath * 0.16;
@@ -1092,9 +1113,15 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
         goalBeam.scale.y = 0.92 + Math.sin(now * 1.35) * 0.08;
         checkpointGroups.forEach((g, i) => {
           const active = i === nextCheckpoint;
-          g.scale.setScalar(active ? 1 + Math.sin(now * 3) * 0.08 : 1);
-          const mat = (g.children[0] as import("three").Mesh).material as import("three").MeshBasicMaterial;
-          mat.opacity = i < nextCheckpoint ? 0.08 : active ? 0.7 : 0.28;
+          const collected = i < nextCheckpoint;
+          g.scale.setScalar(active ? 1.08 + Math.sin(now * 4.4) * 0.10 : 1);
+          g.rotation.y = active ? Math.sin(now * 0.9) * 0.08 : 0;
+          const ringMat = (g.children[0] as import("three").Mesh).material as import("three").MeshBasicMaterial;
+          const haloMat = (g.children[1] as import("three").Mesh).material as import("three").MeshBasicMaterial;
+          const beaconMat = (g.children[2] as import("three").Mesh).material as import("three").MeshBasicMaterial;
+          ringMat.opacity = collected ? 0.06 : active ? 0.92 : 0.24;
+          haloMat.opacity = collected ? 0.01 : active ? 0.18 + Math.sin(now * 4.4) * 0.05 : 0.035;
+          beaconMat.opacity = collected ? 0 : active ? 0.11 + Math.sin(now * 3.2) * 0.035 : 0.018;
         });
 
         localBall.set(p.x, p.y, p.z);
@@ -1235,7 +1262,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
       {phase === "fun" ? <div className="game-fun-badge">FUN MODE · PRIZE RACE CLOSED</div> : null}
 
       <div className="game-hud game-hud-bottom">
-        <div className="game-hud-chip"><span>CHECKPOINTS</span><strong>{checkpoint}/{manifest.checkpoints.length}</strong></div>
+        <div className="game-hud-chip game-ring-progress"><span>RINGS</span><strong>{checkpoint}/{manifest.checkpoints.length}</strong><small>{checkpoint < manifest.checkpoints.length ? "cross glowing rings in order" : "finish is open"}</small></div>
         <div className="game-hud-chip"><span>SPEED</span><strong>{speed.toFixed(1)} m/s</strong></div>
         <button className="game-icon-button" onClick={reset} title="Reset to the latest checkpoint">↻</button>
         <button className="game-audio-button" onClick={toggleAudio} title={audioMuted ? "Turn game audio on" : "Mute game audio"}>
@@ -1257,7 +1284,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
           <span className="game-kicker">{manifest.profile.subtitle}</span>
           <h1>Enter the Orb.</h1>
           <p>
-            Roll a luminous glass marble through a unique deterministic maze. Desktop gets precision steering; mobile maps physical device tilt into the same responsive steering model while the crystal board moves with you.
+            Roll a luminous glass marble through a unique deterministic maze. Cross every glowing ring in order before the finish opens. Desktop gets precision steering; mobile maps physical device tilt into the same responsive steering model while the crystal board moves with you.
           </p>
           <div className="game-ready-stats">
             <div><span>PATH</span><strong>{manifest.path.length} cells</strong></div>

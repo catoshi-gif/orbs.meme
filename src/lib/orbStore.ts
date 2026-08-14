@@ -49,6 +49,8 @@ export type PublicOrbRecord = Omit<OrbRecord, "encryptedSecretSeed" | "endsAt"> 
 
 const orbKey = (slug: string) => `orbs:v1:orb:${slug}`;
 const hostedOrbsKey = (wallet: string) => `orbs:v1:hosted:${wallet}`;
+const publicOrbsKey = "orbs:v1:public:funded";
+const publicOrbsMigrationKey = "orbs:v1:public:funded:migrated-v1";
 
 function gameSecret() {
   const value = (process.env.ORBS_GAME_SECRET_KEY || "").trim();
@@ -274,11 +276,14 @@ export async function finalizeFundedOrb(slug: string, fundingTxSignature: string
   const script = `
     redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
     if ARGV[3] == '1' then redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[5]) end
+    redis.call('ZADD', KEYS[3], ARGV[6], ARGV[4])
+    redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[7])
     return 'OK'
   `;
   const result = await redisCommand<string>([
-    "EVAL", script, "2", orbKey(slug), activeHostedOrbKey(funded.hostWallet),
+    "EVAL", script, "3", orbKey(slug), activeHostedOrbKey(funded.hostWallet), publicOrbsKey,
     JSON.stringify(funded), String(ttl), isAdminWallet(funded.hostWallet) ? "0" : "1", slug, String(activeTtl),
+    String(funded.startsAt), String(Date.now() - ORB_COMPETITION_WINDOW_MS - 60_000),
   ]);
   if (result !== "OK") throw new Error("Could not finalize funded Orb");
   return publicRecord(funded);
@@ -292,6 +297,64 @@ export async function getOrbRecord(slug: string) {
 export async function getPublicOrb(slug: string): Promise<PublicOrbRecord | null> {
   const record = await getOrbRecord(slug);
   return record && record.status !== "funding-pending" ? publicRecord(record) : null;
+}
+
+
+async function ensurePublicOrbIndex() {
+  if (!upstashConfigured()) return;
+  const migrated = await redisCommand<string>(["GET", publicOrbsMigrationKey]);
+  if (migrated === "1") return;
+  let cursor = "0";
+  let passes = 0;
+  do {
+    const scan = await redisCommand<[string, string[]]>(["SCAN", cursor, "MATCH", "orbs:v1:orb:*", "COUNT", "200"]);
+    if (!scan) break;
+    cursor = String(scan[0] || "0");
+    const keys = scan[1] || [];
+    if (keys.length) {
+      const raw = await redisCommand<Array<string | null>>(["MGET", ...keys]);
+      for (let i = 0; i < keys.length; i += 1) {
+        const value = raw?.[i];
+        if (!value) continue;
+        try {
+          const record = JSON.parse(value) as OrbRecord;
+          if (record.status !== "funding-pending" && Date.now() < orbEndsAt(record)) {
+            await redisCommand<number>(["ZADD", publicOrbsKey, String(record.startsAt), record.slug]);
+          }
+        } catch {}
+      }
+    }
+    passes += 1;
+  } while (cursor !== "0" && passes < 20);
+  if (cursor === "0") await redisCommand<string>(["SET", publicOrbsMigrationKey, "1"]);
+}
+
+export async function listDiscoverableOrbs(limit = 9): Promise<PublicOrbRecord[]> {
+  if (!upstashConfigured()) return [];
+  await ensurePublicOrbIndex();
+  const now = Date.now();
+  const max = Math.max(1, Math.min(30, Math.trunc(limit)));
+  const slugs = await redisCommand<string[]>([
+    "ZRANGEBYSCORE", publicOrbsKey, String(now - ORB_COMPETITION_WINDOW_MS), String(now + 1000 * 60 * 60 * 24 * 30),
+    "LIMIT", "0", String(max * 3),
+  ]);
+  if (!slugs?.length) return [];
+  const raw = await redisCommand<Array<string | null>>(["MGET", ...slugs.map(orbKey)]);
+  const records = (raw || []).flatMap((value) => {
+    if (!value) return [];
+    try {
+      const record = JSON.parse(value) as OrbRecord;
+      if (record.status === "funding-pending") return [];
+      const publicOrb = publicRecord(record);
+      if (now >= publicOrb.endsAt) return [];
+      return [publicOrb];
+    } catch { return []; }
+  });
+  return records.sort((a, b) => {
+    const aLive = a.startsAt <= now ? 0 : 1;
+    const bLive = b.startsAt <= now ? 0 : 1;
+    return aLive - bLive || a.startsAt - b.startsAt;
+  }).slice(0, max);
 }
 
 export async function listHostedOrbs(wallet: string, limit = 50): Promise<PublicOrbRecord[]> {
