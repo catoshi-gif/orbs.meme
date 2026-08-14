@@ -172,14 +172,19 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   const readyForHuman = Boolean(xUser && followed && connected && walletVerified && eligibilityConfirmed && wallet);
   const readyForShare = readyForHuman && humanVerified;
   const qualified = readyForShare && shareVerified;
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("orbs:qualification-state", {
+      detail: { slug, qualified, wallet: qualified ? wallet : "" },
+    }));
+  }, [slug, qualified, wallet]);
   const live = now >= startsAt;
   const closed = now >= endsAt;
 
   if (closed) return <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>This Orb has expired.</h3><p className="muted">The six-hour race window ended. New qualification and entry are closed.</p><a className="btn-primary" href={`/orb/${slug}/results`}>View result →</a></aside>;
 
   return <aside id="qualify" className="card qualify">
-    <span className="eyebrow">Before you play</span><h3>Qualify for this Orb.</h3>
-    <p className="muted">One X identity, one verified wallet, one 18+ eligibility receipt, one human check, one real entry post. Nothing here moves funds.</p>
+    <span className="eyebrow">Before you play</span><h3>Register for this Orb.</h3>
+    <p className="muted">Registration is required to race for the prize. Complete one X identity, one verified wallet, one 18+ eligibility receipt, one human check, and one real entry post. Nothing here moves funds.</p>
     <div className="q-list">
       <div className={`q-row ${xUser ? "ready" : ""}`}><span className="q-num">{xUser ? "✓" : "1"}</span><div style={{flex:1}}><strong>Connect X</strong><small>{xUser ? `@${xUser.username} connected` : "Your social identity for this competition"}</small></div>{!xUser ? <XConnect compact returnTo={`/orb/${slug}`} onChange={onXChange} /> : null}</div>
       <div className={`q-row ${followed ? "ready" : ""}`}><span className="q-num">{followed ? "✓" : "2"}</span><div style={{flex:1}}><strong>Follow @{hostUsername}</strong><small>{followed ? "Follow confirmed directly by X" : "One tap asks X to follow the Orb host from your connected account"}</small>{followError ? <small className="q-error">{followError}</small> : null}</div>{xUser && !followed ? <button className="mini-action" onClick={() => void followHost()} disabled={following}>{following ? "Following…" : "Follow on X"}</button> : null}</div>
@@ -188,6 +193,6 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
       <div className={`q-row q-row-stacked q-human ${humanVerified ? "ready" : ""}`}><span className="q-num">{humanVerified ? "✓" : "5"}</span><div className="q-stack"><div className="q-copy"><strong>Human check</strong><small>{humanVerified ? "Cloudflare challenge verified" : readyForHuman ? "Complete the quick anti-bot check below." : "Finish the steps above to unlock the human check."}</small></div><TurnstileGate key={`${slug}:${xUser?.id || "none"}:${wallet}`} slug={slug} wallet={wallet} enabled={readyForHuman} onVerified={setHumanVerified} /></div></div>
       <div className={`q-row q-share ${shareVerified ? "ready" : ""}`}><span className="q-num">{shareVerified ? "✓" : "6"}</span><div className="q-copy"><strong>Share your entry</strong><small>{shareVerified ? "Orb post verified directly from your X account" : readyForShare ? shareCardReady ? "Add your own line, post the waiting-room card, then verify it here" : "Preparing the X card before posting…" : "Complete the human check first"}</small>{shareError ? <small className="q-error">{shareError}</small> : null}{shareVerified && verifiedPostUrl ? <a className="q-post-link" href={verifiedPostUrl} target="_blank" rel="noreferrer">View verified post ↗</a> : null}</div>{readyForShare && !shareVerified ? <div className="q-share-actions"><input value={shareLine} onChange={(event) => setShareLine(event.target.value.slice(0, 70))} maxLength={70} placeholder="Why are you going to win?" aria-label="Your original line for the X post" />{shareStarted ? <><button className="mini-action" onClick={() => void verifyShare()} disabled={verifyingShare}>{verifyingShare ? "Checking…" : "Verify post"}</button><button className="q-compose-again" onClick={openShareComposer} disabled={!shareCardReady}>Open composer again</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card if X delays preview</a></> : <><button className="mini-action" onClick={openShareComposer} disabled={!shareCardReady}>{shareCardReady ? "Post on X" : "Preparing card…"}</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card</a></>}</div> : null}</div>
     </div>
-    <a className={`btn-primary qualify-play ${qualified && live ? "" : "disabled"}`} href={qualified && live ? `/orb/${slug}/play?wallet=${encodeURIComponent(wallet)}` : undefined} aria-disabled={!qualified || !live}>{live ? qualified ? "Enter live Orb →" : "Finish qualification" : "Game opens at launch"}</a>
+    <a className={`btn-primary qualify-play ${qualified && live ? "" : "disabled"}`} href={qualified && live ? `/orb/${slug}/play?wallet=${encodeURIComponent(wallet)}` : undefined} aria-disabled={!qualified || !live}>{live ? qualified ? "Enter live Orb →" : "Finish registration" : "Game opens at launch"}</a>
   </aside>;
 }

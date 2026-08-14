@@ -60,7 +60,7 @@ V1 economics: the winner prize must be at least `$5` equivalent. The creator ent
 A token may be displayed in the picker but cannot fund an Orb if there is no reliable USD price quote, because the V1 minimum and fee are USD-derived.
 
 ## Orb lobby + qualification
-Show host, prize, USD estimate, game format, countdown, funded badge, qualification card, safe game preview, qualified-player count, rules.
+Show host, prize, USD estimate, game format, countdown, funded badge, registration/qualification card, live waiting-room presence (total / registered / watching), qualified-player count, rules. Registration is required before a competitive game session is issued.
 
 Qualification:
 1. Connect X via OAuth.
