@@ -12,6 +12,8 @@ export type WinnerRecord = {
   wallet?: string;
   xUserId?: string;
   xUsername?: string;
+  claimTxSignature?: string;
+  claimedAt?: string;
 };
 
 export type WinnerLockResult =
@@ -56,4 +58,16 @@ export async function getWinner(lockId: string): Promise<WinnerRecord | null> {
 
 export function winnerStoreConfigured() {
   return Boolean(getUpstashConfig());
+}
+
+export async function markWinnerClaimed(lockId: string, wallet: string, signature: string) {
+  const current = await getWinner(lockId);
+  if (!current || current.wallet !== wallet) throw new Error("Winner record does not match this wallet");
+  if (current.claimTxSignature) {
+    if (current.claimTxSignature !== signature) throw new Error("Winner record is already bound to another claim transaction");
+    return current;
+  }
+  const updated: WinnerRecord = { ...current, claimTxSignature: signature, claimedAt: new Date().toISOString() };
+  await redisCommand<string>(["SET", winnerKey(lockId), JSON.stringify(updated), "EX", ORB_HISTORY_TTL_SECONDS]);
+  return updated;
 }

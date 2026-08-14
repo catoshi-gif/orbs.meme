@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildCreateAndFundTransaction, verifyFundedOrbOnChain } from "@/lib/orbsProgram";
+import { buildFundingTransaction, verifyFundedOrbOnChain } from "@/lib/orbsProgram";
 import { finalizeFundedOrb, getOrbRecord } from "@/lib/orbStore";
 import { getCurrentXSession } from "@/lib/xAuth";
 
@@ -25,7 +25,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ sl
     } catch (recoveryError) {
       if (!(recoveryError instanceof Error) || recoveryError.message !== "ORB_NOT_FUNDED") throw recoveryError;
     }
-    const funding = await buildCreateAndFundTransaction(record);
+    const funding = await buildFundingTransaction(record);
     return NextResponse.json({ ok: true, funding }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not build funding transaction" }, { status: 400 });

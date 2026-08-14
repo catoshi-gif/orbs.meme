@@ -1300,7 +1300,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
           <p>{resets === 0 ? "A clean run." : `${resets} recovery ${resets === 1 ? "reset" : "resets"}.`} {verificationMessage}</p>
           {verifiedHash ? <div className="game-verified-hash"><span>REPLAY PROOF</span><strong>{verifiedHash}</strong></div> : null}
           <div className="game-ready-actions">
-            <Link className="btn-primary" href={`/orb/${slug}/results`}>Preview winner state</Link>
+            <Link className="btn-primary" href={`/orb/${slug}/results`}>Claim your prize</Link>
             <button className="btn-secondary" onClick={() => window.location.reload()}>Run it again</button>
           </div>
         </div>

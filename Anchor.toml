@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-orbs_protocol = "HbBoHU9bT4eFSvGW7zjZFy7nEMN2dPKGt5wCd7ePKbPv"
+orbs_protocol = "464cqCX4vMoQFjeuVinz3R6ccrFz68WqEkSvFSGg7Fns"
 
 [programs.mainnet]
-orbs_protocol = "HbBoHU9bT4eFSvGW7zjZFy7nEMN2dPKGt5wCd7ePKbPv"
+orbs_protocol = "464cqCX4vMoQFjeuVinz3R6ccrFz68WqEkSvFSGg7Fns"
 
 [provider]
 cluster = "Localnet"

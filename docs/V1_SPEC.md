@@ -92,13 +92,13 @@ Hosted, Upcoming, Winnings, Completed. Show status, prize, launch, players, resu
 ## Solana program
 Standard SPL Token Program only. Reject Token-2022.
 
-Core accounts: GlobalConfig PDA, Orb PDA, program-controlled vault token account, treasury token account.
+Core accounts: ProtocolConfig PDA, isolated Orb PDA, and the Orb PDA's canonical classic-SPL prize ATA.
 
-Core instructions: `create_and_fund_orb`, optional `activate_orb`, `settle_winner`, `refund_expired`, governance `set_config/pause`.
+Core instructions: `fund_orb`, `claim_prize`, `refund_expired`, plus upgrade-authority-only `initialize_protocol` / `rotate_claim_authority`.
 
-On-chain invariants: prize equals vault amount; settlement exactly once; funded host cannot withdraw outside expiry/refund; game authority cannot redirect prize to treasury; fee is separate; transitions are replay-safe.
+On-chain invariants: the host signs funding into the isolated Orb vault; before expiry, the configured Turnkey claim authority and a distinct winner both sign and payout is fixed to the winner's canonical ATA; after expiry, anyone may trigger a refund but the destination is fixed to the original host's canonical ATA; successful settlement drains and closes both temporary custody accounts to the fixed rent receiver.
 
-For the `$1` same-token fee across arbitrary quoteable SPL mints, use a short-lived backend-signed price/fee quote. The program verifies the authorization before funding. This avoids needing an on-chain oracle for every mint.
+USD minimums, the same-token Orbs fee, quote freshness, one-active-Orb policy, X qualification, replay verification, and winner selection are server/application policy. Funding is one atomic transaction: idempotent treasury ATA creation, exact same-token `transfer_checked` fee to the fixed treasury ATA, then `fund_orb`. The browser transaction firewall independently checks all three instructions before the host signs.
 
 ## Backend boundaries
 - Web app: responsive UI, SEO/OG, wallet/X flows, create/lobby/dashboard/results.
