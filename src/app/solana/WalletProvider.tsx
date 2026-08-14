@@ -13,6 +13,7 @@ import {
 } from "@solana-mobile/wallet-adapter-mobile";
 import { WalletAdapterNetwork, type Adapter } from "@solana/wallet-adapter-base";
 import { clusterApiUrl } from "@solana/web3.js";
+import { IosSafariDeepLinkWalletAdapter } from "@/lib/iosDeepLinkWalletAdapter";
 
 const RPC = process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim() || clusterApiUrl("mainnet-beta");
 const WALLETCONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim() || "";
@@ -57,7 +58,9 @@ export default function SolanaWalletProvider({ children }: { children: React.Rea
 
   const wallets = useMemo<Adapter[]>(() => {
     // Preserve the already-working desktop and wallet-in-app-browser behavior.
-    const adapters: Adapter[] = iosBrowser && WALLETCONNECT_PROJECT_ID
+    // Ordinary iOS browsers get dedicated Safari-returning universal-link adapters
+    // below; every other platform keeps the existing adapters exactly as before.
+    const adapters: Adapter[] = iosBrowser
       ? []
       : [
           new PhantomWalletAdapter(),
@@ -78,25 +81,46 @@ export default function SolanaWalletProvider({ children }: { children: React.Rea
       );
     }
 
-    // iOS Safari/Chrome cannot use Solana MWA. WalletConnect keeps Orbs in the
-    // normal browser (so X OAuth remains reliable) while handing signing to a
-    // compatible wallet app and returning the user to Orbs afterward.
-    if (origin && iosBrowser && WALLETCONNECT_PROJECT_ID) {
+    // iOS Safari/Chrome cannot use Solana MWA. Use the wallets' official encrypted
+    // universal-link provider methods so Safari remains the Orbs/X home and the
+    // wallet app opens only for approval/signing. WalletConnect remains a fallback
+    // for additional compatible wallets.
+    if (origin && iosBrowser) {
+      const phantomVisual = new PhantomWalletAdapter();
+      const solflareVisual = new SolflareWalletAdapter({ network: WalletAdapterNetwork.Mainnet });
+
       adapters.push(
-        new WalletConnectWalletAdapter({
-          network: WalletAdapterNetwork.Mainnet,
-          options: {
-            relayUrl: "wss://relay.walletconnect.com",
-            projectId: WALLETCONNECT_PROJECT_ID,
-            metadata: {
-              name: "Orbs.meme",
-              description: "Create, play, and claim Orbs on Solana",
-              url: origin,
-              icons: [`${origin}/orbs-logo-128.png`],
-            },
-          },
+        new IosSafariDeepLinkWalletAdapter({
+          kind: "phantom",
+          name: "Phantom",
+          url: phantomVisual.url,
+          icon: phantomVisual.icon,
+        }),
+        new IosSafariDeepLinkWalletAdapter({
+          kind: "solflare",
+          name: "Solflare",
+          url: solflareVisual.url,
+          icon: solflareVisual.icon,
         }),
       );
+
+      if (WALLETCONNECT_PROJECT_ID) {
+        adapters.push(
+          new WalletConnectWalletAdapter({
+            network: WalletAdapterNetwork.Mainnet,
+            options: {
+              relayUrl: "wss://relay.walletconnect.com",
+              projectId: WALLETCONNECT_PROJECT_ID,
+              metadata: {
+                name: "Orbs.meme",
+                description: "Create, play, and claim Orbs on Solana",
+                url: origin,
+                icons: [`${origin}/orbs-logo-128.png`],
+              },
+            },
+          }),
+        );
+      }
     }
 
     return adapters;
