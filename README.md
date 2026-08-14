@@ -56,6 +56,27 @@ Custom deterministic demo example:
 
 The Create wizard's Game step also generates these preview URLs for you.
 
+
+## Operator / eligibility configuration
+
+Production creation and entry require a wallet-bound 18+ eligibility receipt. The date of birth is evaluated server-side and is not stored; the retained receipt contains only the wallet, confirmation time, and current legal-document versions.
+
+The private operator dashboard is available at:
+
+```text
+/app/admin
+```
+
+Set this server-only Vercel variable to the single Solana wallet allowed to unlock it:
+
+```text
+ADMIN_WALLET=<your-admin-solana-public-address>
+```
+
+The admin page requires a wallet message signature and then issues a short-lived HttpOnly admin session. Do not prefix `ADMIN_WALLET` with `NEXT_PUBLIC_`.
+
+The dashboard intentionally does not poll X impression metrics automatically. Verified entry-post counts are already stored; automatic impression polling would add X API reads/credits and the current host-share flow does not persist one canonical creator-post ID for every Orb.
+
 ## Production security boundary
 
 The local V0.2 play route derives a deterministic development seed from the Orb slug. **Do not use that seed model for funded games.** Production games will use a server-generated hidden seed committed before launch, release one canonical manifest only after the immutable on-chain start time, and verify a compressed deterministic replay before acquiring the first-winner lock.

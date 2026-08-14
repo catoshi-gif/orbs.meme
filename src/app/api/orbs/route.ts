@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasEligibilityReceipt } from "@/lib/eligibility";
 import { PublicKey } from "@solana/web3.js";
 import { createTestOrb, getActiveHostedOrb } from "@/lib/orbStore";
 import { getWalletSplTokens } from "@/lib/walletTokens";
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
 
   let hostWallet = typeof body.hostWallet === "string" ? body.hostWallet.trim() : "";
   try { hostWallet = new PublicKey(hostWallet).toBase58(); } catch { return NextResponse.json({ ok: false, error: "Invalid host wallet" }, { status: 400 }); }
+  if (!await hasEligibilityReceipt(hostWallet)) return NextResponse.json({ ok: false, error: "Confirm 18+ eligibility for this wallet before creating an Orb" }, { status: 403 });
   const hostAuthorizationSignature = typeof body.hostAuthorizationSignature === "string" ? body.hostAuthorizationSignature.trim() : "";
   if (!hostAuthorizationSignature) return NextResponse.json({ ok: false, error: "Approve the host-wallet authorization before creating this Orb" }, { status: 401 });
 

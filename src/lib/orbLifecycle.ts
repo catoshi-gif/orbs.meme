@@ -7,8 +7,7 @@ export const ORB_HISTORY_TTL_SECONDS = 90 * 24 * 60 * 60;
 const TEST_ADMIN_WALLET = "EDxq8pn8assS3Zoco5UBm3suPNu6oum3fzEwCsZixWC4";
 
 function configuredAdminWallets() {
-  return (process.env.ORBS_ADMIN_WALLETS || "")
-    .split(",")
+  return [process.env.ADMIN_WALLET || "", ...(process.env.ORBS_ADMIN_WALLETS || "").split(",")]
     .map((value) => value.trim())
     .filter(Boolean);
 }

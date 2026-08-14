@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasEligibilityReceipt } from "@/lib/eligibility";
 import { PublicKey } from "@solana/web3.js";
 import { getCanonicalOrbManifest, getPublicOrb } from "@/lib/orbStore";
 import { issueCompetitiveSession, competitiveSessionsConfigured } from "@/lib/competitiveSession";
@@ -31,6 +32,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const body = await request.json().catch(() => ({})) as { wallet?: unknown };
   const wallet = normalizeWallet(body.wallet);
   if (!wallet) return NextResponse.json({ ok: false, error: "Invalid wallet" }, { status: 400 });
+
+  if (!await hasEligibilityReceipt(wallet)) return NextResponse.json({ ok: false, error: "Confirm 18+ eligibility for this wallet before entering an Orb" }, { status: 403 });
 
   const [followed, walletVerified, humanVerified, shared] = await Promise.all([
     hasFollowProof(x.user.id, orb.hostX.id),

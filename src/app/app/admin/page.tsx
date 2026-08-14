@@ -1,0 +1,1 @@
+import AdminDashboard from "@/components/AdminDashboard"; export const dynamic="force-dynamic"; export const metadata={title:"Admin"}; export default function Page(){return <div className="page"><div className="container"><AdminDashboard/></div></div>}
