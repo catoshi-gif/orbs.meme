@@ -52,7 +52,7 @@ export type PublicOrbRecord = Omit<OrbRecord, "encryptedSecretSeed" | "endsAt"> 
 const orbKey = (slug: string) => `orbs:v1:orb:${slug}`;
 const hostedOrbsKey = (wallet: string) => `orbs:v1:hosted:${wallet}`;
 const publicOrbsKey = "orbs:v1:public:funded";
-const publicOrbsMigrationKey = "orbs:v1:public:funded:migrated-v1";
+const publicOrbsMigrationKey = "orbs:v1:public:funded:migrated-v2-onchain-only";
 
 function gameSecret() {
   const value = (process.env.ORBS_GAME_SECRET_KEY || "").trim();
@@ -86,6 +86,23 @@ function cleanStyle(style: GameStyle): GameStyle {
 function publicRecord(record: OrbRecord): PublicOrbRecord {
   const { encryptedSecretSeed: _secret, endsAt: _storedEndsAt, ...safe } = record;
   return { ...safe, endsAt: orbEndsAt(record) };
+}
+
+/**
+ * Public discovery must contain only Orbs whose funding was actually verified
+ * against the deployed Anchor program. Legacy test statuses from before mainnet
+ * intentionally fail this predicate even if their timestamps are still current.
+ */
+function hasVerifiedOnChainFunding(record: OrbRecord) {
+  return (
+    record.status === "scheduled" &&
+    typeof record.fundingTxSignature === "string" &&
+    record.fundingTxSignature.trim().length > 0 &&
+    typeof record.orbPda === "string" &&
+    record.orbPda.trim().length > 0 &&
+    typeof record.prizeVault === "string" &&
+    record.prizeVault.trim().length > 0
+  );
 }
 
 async function releaseActiveLock(wallet: string, slug: string) {
@@ -312,7 +329,7 @@ export async function recordHostSharePost(slug: string, hostXId: string, postId:
 
 export async function getPublicOrb(slug: string): Promise<PublicOrbRecord | null> {
   const record = await getOrbRecord(slug);
-  return record && record.status !== "funding-pending" ? publicRecord(record) : null;
+  return record && hasVerifiedOnChainFunding(record) ? publicRecord(record) : null;
 }
 
 
@@ -320,6 +337,11 @@ async function ensurePublicOrbIndex() {
   if (!upstashConfigured()) return;
   const migrated = await redisCommand<string>(["GET", publicOrbsMigrationKey]);
   if (migrated === "1") return;
+
+  // V2 deliberately rebuilds the discoverable index. The previous migration
+  // admitted legacy scheduled-test/live-test records from before Anchor mainnet.
+  await redisCommand<number>(["DEL", publicOrbsKey]);
+
   let cursor = "0";
   let passes = 0;
   do {
@@ -334,7 +356,7 @@ async function ensurePublicOrbIndex() {
         if (!value) continue;
         try {
           const record = JSON.parse(value) as OrbRecord;
-          if (record.status !== "funding-pending" && Date.now() < orbEndsAt(record)) {
+          if (hasVerifiedOnChainFunding(record) && Date.now() < orbEndsAt(record)) {
             await redisCommand<number>(["ZADD", publicOrbsKey, String(record.startsAt), record.slug]);
           }
         } catch {}
@@ -356,16 +378,33 @@ export async function listDiscoverableOrbs(limit = 9): Promise<PublicOrbRecord[]
   ]);
   if (!slugs?.length) return [];
   const raw = await redisCommand<Array<string | null>>(["MGET", ...slugs.map(orbKey)]);
-  const records = (raw || []).flatMap((value) => {
-    if (!value) return [];
+  const staleIndexMembers: string[] = [];
+  const records = (raw || []).flatMap((value, index) => {
+    const slug = slugs[index] || "";
+    if (!value) {
+      if (slug) staleIndexMembers.push(slug);
+      return [];
+    }
     try {
       const record = JSON.parse(value) as OrbRecord;
-      if (record.status === "funding-pending") return [];
+      if (!hasVerifiedOnChainFunding(record)) {
+        if (slug) staleIndexMembers.push(slug);
+        return [];
+      }
       const publicOrb = publicRecord(record);
-      if (now >= publicOrb.endsAt) return [];
+      if (now >= publicOrb.endsAt) {
+        if (slug) staleIndexMembers.push(slug);
+        return [];
+      }
       return [publicOrb];
-    } catch { return []; }
+    } catch {
+      if (slug) staleIndexMembers.push(slug);
+      return [];
+    }
   });
+  if (staleIndexMembers.length) {
+    await redisCommand<number>(["ZREM", publicOrbsKey, ...staleIndexMembers]);
+  }
   return records.sort((a, b) => {
     const aLive = a.startsAt <= now ? 0 : 1;
     const bLive = b.startsAt <= now ? 0 : 1;
@@ -409,7 +448,7 @@ export async function listEnteredOrbs(wallet: string, limit = 50): Promise<Publi
 
 export async function getCanonicalOrbManifest(slug: string): Promise<{ record: OrbRecord; manifest: GameManifest; manifestHash: string }> {
   const record = await getOrbRecord(slug);
-  if (!record || record.status === "funding-pending") throw new Error("ORB_NOT_FOUND");
+  if (!record || !hasVerifiedOnChainFunding(record)) throw new Error("ORB_NOT_FOUND");
   if (Date.now() < record.startsAt) throw new Error("ORB_NOT_LIVE");
   if (record.generatorVersion !== GAME_GENERATOR_VERSION || record.physicsVersion !== GAME_PHYSICS_VERSION || record.rapierVersion !== RAPIER_VERSION) {
     throw new Error("ORB_VERSION_UNSUPPORTED");
