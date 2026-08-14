@@ -11,7 +11,7 @@ export const DIFFICULTY_PROFILES: Record<DifficultyKey, DifficultyProfile> = {
   quick: {
     key: "quick",
     label: "Quick",
-    subtitle: "Easy · ~5 min",
+    subtitle: "Easy · ~2 min",
     targetMinutes: 5,
     grid: 17,
     targetPathCells: 128,
@@ -25,7 +25,7 @@ export const DIFFICULTY_PROFILES: Record<DifficultyKey, DifficultyProfile> = {
   classic: {
     key: "classic",
     label: "Classic",
-    subtitle: "Medium · ~10 min",
+    subtitle: "Medium · ~4 min",
     targetMinutes: 10,
     grid: 23,
     targetPathCells: 252,
@@ -39,7 +39,7 @@ export const DIFFICULTY_PROFILES: Record<DifficultyKey, DifficultyProfile> = {
   brutal: {
     key: "brutal",
     label: "Brutal",
-    subtitle: "Hard · ~15 min",
+    subtitle: "Hard · ~6 min",
     targetMinutes: 15,
     grid: 29,
     targetPathCells: 378,

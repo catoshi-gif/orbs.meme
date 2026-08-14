@@ -18,9 +18,9 @@ import { assertReviewedFundingTransaction } from "@/lib/orbsFundingFirewall";
 const names = ["Identity", "Prize", "Game", "Launch", "Review", "Share"];
 const publicSiteUrl = canonicalPublicSiteUrl();
 const profiles: { key: DifficultyKey; name: string; label: string; time: string }[] = [
-  { key: "quick", name: "Quick", label: "Easy", time: "~5 min" },
-  { key: "classic", name: "Classic", label: "Medium", time: "~10 min" },
-  { key: "brutal", name: "Brutal", label: "Hard", time: "~15 min" },
+  { key: "quick", name: "Quick", label: "Easy", time: "~2 min" },
+  { key: "classic", name: "Classic", label: "Medium", time: "~4 min" },
+  { key: "brutal", name: "Brutal", label: "Hard", time: "~6 min" },
 ];
 
 function localInputParts(date: Date) {
@@ -112,11 +112,6 @@ export default function CreateWizard() {
       .catch((cause) => { if (!(cause instanceof Error && cause.name === "AbortError")) setCreateError(cause instanceof Error ? cause.message : "Could not check this wallet's Orb status"); });
     return () => controller.abort();
   }, [publicKey]);
-
-  const previewHref = useMemo(() => {
-    const q = new URLSearchParams({ difficulty, marble: style.marble, marble2: style.marbleSecondary, walls: style.walls, floor: style.floor, accent: style.accent });
-    return `/orb/demo/play?${q.toString()}`;
-  }, [difficulty, style]);
 
   const colorField = (key: keyof GameStyle, label: string) => (
     <div className="field game-color-field"><label>{label}</label><div className="color-input-wrap"><input type="color" value={style[key]} onChange={(event) => setStyle((current) => ({ ...current, [key]: event.target.value }))} /><span>{style[key].toUpperCase()}</span></div></div>
@@ -319,7 +314,6 @@ export default function CreateWizard() {
           <span className="eyebrow">Step 3 of 6</span><h2>Design the game.</h2><p>Choose the target solve-time band and your community palette. These settings are frozen into every participant&apos;s canonical game.</p>
           <div className="difficulty">{profiles.map((profile) => <button key={profile.key} className={difficulty === profile.key ? "active" : ""} onClick={() => setDifficulty(profile.key)}><span className="difficulty-tag">{profile.label}</span><strong>{profile.name}</strong><small>{profile.time} target solve</small></button>)}</div>
           <div className="game-style-builder"><div className="game-style-preview" style={{ background: `radial-gradient(circle at 35% 30%, ${style.marbleSecondary}, ${style.marble} 30%, ${style.accent} 66%, ${style.floor})`, borderColor: style.walls }}><div className="style-preview-orb" style={{ background: `radial-gradient(circle at 35% 28%, #fff, ${style.marbleSecondary} 14%, ${style.marble} 44%, ${style.accent} 72%, ${style.floor})` }} /><div className="style-preview-rail" style={{ background: style.walls, boxShadow: `0 0 28px ${style.walls}` }} /><span>LIVE PALETTE</span></div><div><div className="game-presets">{GAME_STYLE_PRESETS.map((preset) => <button key={preset.name} onClick={() => setStyle(preset.style)}>{preset.name}</button>)}</div><div className="fields game-color-grid">{colorField("marble", "Marble core")}{colorField("marbleSecondary", "Marble glow")}{colorField("walls", "Glass rails")}{colorField("floor", "World / floor")}{colorField("accent", "Goal / accent")}</div></div></div>
-          <div className="game-preview-row"><Link className="btn-primary" href={previewHref}>Play this style →</Link><span>Deterministic preview · no prize</span></div>
         </> : null}
 
         {step === 3 ? <>

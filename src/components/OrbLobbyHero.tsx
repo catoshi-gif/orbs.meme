@@ -16,7 +16,7 @@ export default function OrbLobbyHero({ orb, winner = false }: { orb: PublicOrbRe
     const total = Math.ceil(remaining / 1000);
     return { hours: Math.floor(total / 3600), minutes: Math.floor((total % 3600) / 60), seconds: total % 60 };
   }, [remaining]);
-  const difficulty = orb.difficulty === "quick" ? "Easy · ~5 minute target" : orb.difficulty === "classic" ? "Medium · ~10 minute target" : "Hard · ~15 minute target";
+  const difficulty = orb.difficulty === "quick" ? "Easy · ~2 minute target" : orb.difficulty === "classic" ? "Medium · ~4 minute target" : "Hard · ~6 minute target";
 
   return <section className="card prize-hero real-orb-hero">
     <div className="orb-top"><div className="hostline">{orb.hostX.profileImageUrl ? <img className="host-avatar" src={orb.hostX.profileImageUrl} alt="" referrerPolicy="no-referrer" /> : <span className="avatar" />}Hosted by @{orb.hostX.username}</div><span className={`pill ${live && !closed ? "live" : ""}`}>{closed ? (winner ? "CLEARED" : "EXPIRED") : live ? "LIVE" : "SEALED TEST"}</span></div>

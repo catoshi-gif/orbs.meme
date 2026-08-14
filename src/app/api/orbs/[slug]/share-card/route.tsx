@@ -41,9 +41,9 @@ async function loadRemoteImage(value: string | null) {
 }
 
 function difficultyLabel(value: string) {
-  if (value === "quick") return "EASY / ~5 MIN";
-  if (value === "brutal") return "HARD / ~15 MIN";
-  return "MEDIUM / ~10 MIN";
+  if (value === "quick") return "EASY / ~2 MIN";
+  if (value === "brutal") return "HARD / ~6 MIN";
+  return "MEDIUM / ~4 MIN";
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {

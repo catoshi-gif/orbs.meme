@@ -28,9 +28,9 @@ This repository now contains the first real deterministic Glass Roller vertical 
 
 | Mode | Product label | Grid | Target main path | Skill modules | Checkpoints | Intended median |
 |---|---|---:|---:|---:|---:|---:|
-| Quick | Easy | 11×11 | ~58 cells | 2 gates + 2 bumpers | 3 | ~5 min |
-| Classic | Medium | 15×15 | ~112 cells | 4 gates + 4 bumpers | 4 | ~10 min |
-| Brutal | Hard | 19×19 | ~178 cells | 6 gates + 6 bumpers | 5 | ~15 min |
+| Quick | Easy | 11×11 | ~58 cells | 2 gates + 2 bumpers | 3 | ~2 min |
+| Classic | Medium | 15×15 | ~112 cells | 4 gates + 4 bumpers | 4 | ~4 min |
+| Brutal | Hard | 19×19 | ~178 cells | 6 gates + 6 bumpers | 5 | ~6 min |
 
 The 5 / 10 / 15 minute values are calibration targets, not mathematical guarantees. Human telemetry must tune future generator versions. Never silently change a generator version for an already funded Orb.
 

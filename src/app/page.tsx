@@ -20,7 +20,7 @@ function formatLaunch(startsAt: number, now: number) {
   return `${hours}h`;
 }
 function difficultyLabel(value: string) {
-  return value === "quick" ? "Easy · ~5 min" : value === "classic" ? "Medium · ~10 min" : "Hard · ~15 min";
+  return value === "quick" ? "Easy · ~2 min" : value === "classic" ? "Medium · ~4 min" : "Hard · ~6 min";
 }
 
 export default async function Home() {
