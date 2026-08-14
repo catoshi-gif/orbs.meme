@@ -158,7 +158,7 @@ export async function createTestOrb(input: {
   if (prizeUsdMicros < BigInt(Math.round(MIN_PRIZE_USD * 1_000_000))) throw new Error(`Prize must be at least $${MIN_PRIZE_USD.toFixed(2)}`);
   const feeTokenAmount = rawToTokenNumber(input.feeRawAmount, input.token.decimals);
   const requiredRaw = BigInt(input.prizeRawAmount) + BigInt(input.feeRawAmount);
-  if (requiredRaw > BigInt(input.token.rawAmount)) throw new Error(`Wallet balance does not cover the prize plus the $${ORBS_FEE_USD.toFixed(2)} Orbs fee`);
+  if (requiredRaw > BigInt(input.token.rawAmount)) throw new Error(`Wallet balance does not cover the reviewed total commitment`);
   if (!Number.isFinite(input.startsAt) || input.startsAt < Date.now() + ORB_CREATION_MIN_LEAD_MS) throw new Error("Launch must be at least 60 seconds in the future");
   if (input.startsAt > Date.now() + 1000 * 60 * 60 * 24 * 30) throw new Error("Launch must be within 30 days");
 

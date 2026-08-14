@@ -120,7 +120,7 @@ export async function POST(request: Request) {
     const prizeUsdMicros = usdMicrosForRawAmount(prizeRaw, token.decimals, quote.usdPrice);
     const minimumPrizeUsdMicros = BigInt(Math.round(MIN_PRIZE_USD * 1_000_000));
     if (prizeUsdMicros < minimumPrizeUsdMicros) {
-      throw new Error(`Winner prize must be at least $${MIN_PRIZE_USD.toFixed(2)}; the $${ORBS_FEE_USD.toFixed(2)} Orbs fee is added separately`);
+      throw new Error(`Total commitment must leave at least $${MIN_PRIZE_USD.toFixed(2)} for the winner after the $${ORBS_FEE_USD.toFixed(2)} Orbs fee`);
     }
 
     const orb = await createTestOrb({

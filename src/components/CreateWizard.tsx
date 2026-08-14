@@ -8,7 +8,7 @@ import ConnectWallet from "@/components/ConnectWallet";
 import XConnect, { type XUser } from "@/components/XConnect";
 import TokenPicker, { type WalletSplToken } from "@/components/TokenPicker";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
-import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmountForPrice, maxPrizeInputFromQuote, tokenInputToRaw } from "@/lib/prizeEconomics";
+import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmountForPrice, rawToTokenInput, tokenInputToRaw } from "@/lib/prizeEconomics";
 import { ORB_CREATION_MIN_LEAD_MS } from "@/lib/orbLifecycle";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import type { DifficultyKey, GameStyle } from "@/game/types";
@@ -68,22 +68,27 @@ export default function CreateWizard() {
   const [creationPolicy, setCreationPolicy] = useState<CreationPolicy | null>(null);
   const { connected, publicKey, signMessage, signTransaction } = useWallet();
 
-  const prizeAmount = Number(prizeInput || 0);
+  // Creator input is the TOTAL wallet commitment. The Orbs fee is included
+  // inside that amount and the remainder is the winner prize.
+  const totalTokenAmount = Number(prizeInput || 0);
   const quote = token?.prizeQuote || null;
   const quotedUsdPrice = quote?.usdPrice || token?.usdPrice || 0;
-  const prizeUsd = quotedUsdPrice ? prizeAmount * quotedUsdPrice : 0;
   const feeTokenAmount = quote?.feeTokenAmount ?? feeTokenAmountForPrice(quotedUsdPrice);
-  const totalTokenAmount = prizeAmount + feeTokenAmount;
-  const totalUsd = prizeAmount > 0 ? prizeUsd + ORBS_FEE_USD : MIN_WALLET_REQUIREMENT_USD;
-  const maxPrizeInput = token && quote ? maxPrizeInputFromQuote(token.rawAmount, quote.feeRawAmount, token.decimals) : "";
-  const maxPrizeAmount = Number(maxPrizeInput || 0);
-  const maxPrizeUsd = quotedUsdPrice ? maxPrizeAmount * quotedUsdPrice : 0;
-  const prizeRaw = token ? tokenInputToRaw(prizeInput || "0", token.decimals) : null;
-  const rawCoverageReady = Boolean(token && quote && prizeRaw !== null && /^\d+$/.test(quote.feeRawAmount) && prizeRaw + BigInt(quote.feeRawAmount) <= BigInt(token.rawAmount));
+  const totalRaw = token ? tokenInputToRaw(prizeInput || "0", token.decimals) : null;
+  const feeRaw = quote && /^\d+$/.test(quote.feeRawAmount) ? BigInt(quote.feeRawAmount) : null;
+  const prizeRaw = totalRaw !== null && feeRaw !== null && totalRaw > feeRaw ? totalRaw - feeRaw : null;
+  const winnerPrizeInput = token && prizeRaw !== null ? rawToTokenInput(prizeRaw, token.decimals) : "";
+  const prizeAmount = Number(winnerPrizeInput || 0);
+  const prizeUsd = quotedUsdPrice ? prizeAmount * quotedUsdPrice : 0;
+  const totalUsd = quotedUsdPrice && totalTokenAmount > 0 ? totalTokenAmount * quotedUsdPrice : 0;
+  const maxPrizeInput = token ? rawToTokenInput(token.rawAmount, token.decimals) : "";
+  const maxTotalAmount = Number(maxPrizeInput || 0);
+  const maxWinnerPrizeUsd = quotedUsdPrice ? Math.max(0, maxTotalAmount - feeTokenAmount) * quotedUsdPrice : 0;
+  const rawCoverageReady = Boolean(token && totalRaw !== null && totalRaw > BigInt(0) && totalRaw <= BigInt(token.rawAmount));
   const launchMs = new Date(`${launchDate}T${launchTime}:00`).getTime();
   const creationBlocked = Boolean(creationPolicy?.activeOrb && !creationPolicy.adminExempt);
   const identityReady = connected && Boolean(publicKey) && Boolean(signMessage) && Boolean(signTransaction) && Boolean(xUser && !xUser.protected) && !creationBlocked;
-  const prizeReady = Boolean(token?.eligible && quote && prizeAmount > 0 && prizeUsd >= MIN_PRIZE_USD && rawCoverageReady);
+  const prizeReady = Boolean(token?.eligible && quote && prizeRaw !== null && prizeRaw > BigInt(0) && prizeUsd >= MIN_PRIZE_USD && rawCoverageReady);
   const launchReady = Number.isFinite(launchMs) && launchMs > Date.now() + ORB_CREATION_MIN_LEAD_MS;
 
   useEffect(() => {
@@ -122,7 +127,7 @@ export default function CreateWizard() {
       return;
     }
     if (maxSelected && next?.prizeQuote) {
-      setPrizeInput(maxPrizeInputFromQuote(next.rawAmount, next.prizeQuote.feeRawAmount, next.decimals));
+      setPrizeInput(rawToTokenInput(next.rawAmount, next.decimals));
     }
     setFundingAcknowledged(false);
   };
@@ -152,7 +157,7 @@ export default function CreateWizard() {
       const fresh = (payload.tokens || []).find((candidate) => candidate.mint === token.mint) || null;
       if (!fresh?.eligible || !fresh.prizeQuote) throw new Error(`${token.symbol} is no longer available as a priced prize token in this wallet`);
       setToken(fresh);
-      if (maxSelected) setPrizeInput(maxPrizeInputFromQuote(fresh.rawAmount, fresh.prizeQuote.feeRawAmount, fresh.decimals));
+      if (maxSelected) setPrizeInput(rawToTokenInput(fresh.rawAmount, fresh.decimals));
       setFundingAcknowledged(false);
       setStep(4);
     } catch (error) {
@@ -178,7 +183,8 @@ export default function CreateWizard() {
     if (!fundingPayload.funding) throw new Error("Could not prepare the funding transaction");
     const bytes = Uint8Array.from(atob(fundingPayload.funding.transactionBase64), (char) => char.charCodeAt(0));
     const transaction = Transaction.from(bytes);
-    const reviewedPrizeRaw = token ? tokenInputToRaw(prizeInput || "0", token.decimals) : null;
+    const reviewedTotalRaw = token ? tokenInputToRaw(prizeInput || "0", token.decimals) : null;
+    const reviewedPrizeRaw = reviewedTotalRaw !== null && quote && /^\d+$/.test(quote.feeRawAmount) && reviewedTotalRaw > BigInt(quote.feeRawAmount) ? reviewedTotalRaw - BigInt(quote.feeRawAmount) : null;
     if (!publicKey || !token || !quote || reviewedPrizeRaw === null || reviewedPrizeRaw <= BigInt(0)) {
       throw new Error("The reviewed funding intent is no longer available. Return to Review and authorize it again.");
     }
@@ -223,7 +229,7 @@ export default function CreateWizard() {
         body: JSON.stringify({
           wallet: publicKey.toBase58(),
           mint: token.mint,
-          prizeTokenAmount: prizeInput,
+          prizeTokenAmount: winnerPrizeInput,
           prizeQuoteToken: quote?.token,
           startsAt: launchMs,
         }),
@@ -235,7 +241,7 @@ export default function CreateWizard() {
       const response = await fetch("/api/orbs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostWallet: publicKey.toBase58(), hostAuthorizationSignature, mint: token.mint, prizeTokenAmount: prizeInput, prizeQuoteToken: quote?.token, difficulty, style, startsAt: launchMs }),
+        body: JSON.stringify({ hostWallet: publicKey.toBase58(), hostAuthorizationSignature, mint: token.mint, prizeTokenAmount: winnerPrizeInput, prizeQuoteToken: quote?.token, difficulty, style, startsAt: launchMs }),
       });
       const payload = await jsonPayload<{ ok?: boolean; orb?: CreatedOrb; error?: string }>(response);
       if (!response.ok || !payload.ok || !payload.orb) throw new Error(payload.error || "Could not seal Orb funding parameters");
@@ -270,8 +276,8 @@ export default function CreateWizard() {
 
         {step === 1 ? <>
           <span className="eyebrow">Step 2 of 6</span><h2>Choose the prize.</h2>
-          <p>Pick SOL or a supported SPL token already in your connected wallet. The winner must receive at least {money(MIN_PRIZE_USD)}. The {money(ORBS_FEE_USD)} Orbs fee is added separately in the same asset, so the minimum launch commitment is {money(MIN_WALLET_REQUIREMENT_USD)} total: {money(MIN_PRIZE_USD)} to the winner + {money(ORBS_FEE_USD)} fee.</p>
-          <div className="fields"><div className="field full"><label>Prize token</label><TokenPicker value={token} onChange={handleTokenChange} /></div>{token ? <><div className="field"><div className="field-label-row"><label>Prize amount · {token.symbol}</label><button type="button" className="input-max" disabled={maxPrizeUsd < MIN_PRIZE_USD} onClick={useMaxPrize}>Max</button></div><input type="number" min="0" step="any" value={prizeInput} onChange={(event) => setPrize(event.target.value)} placeholder={`You have ${amount(token.balance)} ${token.symbol}`} />{maxPrizeUsd >= MIN_PRIZE_USD ? <small className="field-help">Max uses the live wallet balance, reserves the live {money(ORBS_FEE_USD)} fee quote, and puts the rest into the winner prize.{maxSelected ? " Max selected." : ""}</small> : null}</div><div className="field"><label>Prize value</label><input value={prizeAmount > 0 ? money(prizeUsd) : `${money(MIN_PRIZE_USD)} minimum prize`} readOnly /></div><div className="field full"><div className={`prize-math ${prizeReady ? "ready" : ""}`}><div><span>Winner gets</span><strong>{prizeAmount > 0 ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{prizeAmount > 0 ? money(prizeUsd) : `${money(MIN_PRIZE_USD)} minimum prize`}</small></div><b>+</b><div><span>Orbs fee</span><strong>{amount(feeTokenAmount)} {token.symbol}</strong><small>{money(ORBS_FEE_USD)}</small></div><b>=</b><div><span>Wallet requirement</span><strong>{prizeAmount > 0 ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>{prizeAmount > 0 ? `${money(totalUsd)} total · balance ${money(token.usdValue || 0)}` : `${money(MIN_WALLET_REQUIREMENT_USD)} minimum total · balance ${money(token.usdValue || 0)}`}</small></div></div>{prizeAmount > 0 && prizeUsd < MIN_PRIZE_USD ? <small className="field-warning">Increase the winner prize to at least {money(MIN_PRIZE_USD)}.</small> : null}{prizeAmount > 0 && prizeRaw === null ? <small className="field-warning">Enter a valid {token.symbol} prize amount.</small> : prizeAmount > 0 && !rawCoverageReady ? <small className="field-warning">This prize plus the {money(ORBS_FEE_USD)} fee exceeds the exact token balance at the locked quote. Use Max to fit the wallet exactly.</small> : null}</div></> : null}</div>
+          <p>Choose how much you want to commit in total. The {money(ORBS_FEE_USD)} Orbs fee comes out of that amount and the rest becomes the winner prize. The winner must receive at least {money(MIN_PRIZE_USD)}, so the minimum commitment is about {money(MIN_WALLET_REQUIREMENT_USD)}.</p>
+          <div className="fields"><div className="field full"><label>Prize token</label><TokenPicker value={token} onChange={handleTokenChange} /></div>{token ? <><div className="field"><div className="field-label-row"><label>Total commitment · {token.symbol}</label><button type="button" className="input-max" disabled={maxWinnerPrizeUsd < MIN_PRIZE_USD} onClick={useMaxPrize}>Max</button></div><input type="number" min="0" step="any" value={prizeInput} onChange={(event) => setPrize(event.target.value)} placeholder={`You have ${amount(token.balance)} ${token.symbol}`} /><small className="field-help">This is the full amount your wallet will spend. The Orbs fee is included, not added on top.{maxSelected ? " Max selected." : ""}</small></div><div className="field"><label>Total value</label><input value={totalTokenAmount > 0 ? money(totalUsd) : `${money(MIN_WALLET_REQUIREMENT_USD)} minimum total`} readOnly /></div><div className="field full"><div className={`prize-math ${prizeReady ? "ready" : ""}`}><div><span>Total commitment</span><strong>{totalTokenAmount > 0 ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>{totalTokenAmount > 0 ? money(totalUsd) : `${money(MIN_WALLET_REQUIREMENT_USD)} minimum total`}</small></div><b>−</b><div><span>Orbs fee</span><strong>{amount(feeTokenAmount)} {token.symbol}</strong><small>{money(ORBS_FEE_USD)}</small></div><b>=</b><div><span>Winner gets</span><strong>{prizeAmount > 0 ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{prizeAmount > 0 ? money(prizeUsd) : `${money(MIN_PRIZE_USD)} minimum prize`}</small></div></div>{totalTokenAmount > 0 && prizeRaw !== null && prizeUsd < MIN_PRIZE_USD ? <small className="field-warning">Increase the total commitment so the winner receives at least {money(MIN_PRIZE_USD)} after the Orbs fee.</small> : null}{totalTokenAmount > 0 && (totalRaw === null || prizeRaw === null) ? <small className="field-warning">Enter a valid total commitment greater than the {money(ORBS_FEE_USD)} fee.</small> : totalTokenAmount > 0 && !rawCoverageReady ? <small className="field-warning">This total commitment exceeds the exact token balance at the locked quote. Use Max to fit the wallet exactly.</small> : null}</div></> : null}</div>
         </> : null}
 
         {step === 2 ? <>
@@ -288,9 +294,9 @@ export default function CreateWizard() {
 
         {step === 4 ? <>
           <span className="eyebrow">Step 5 of 6</span><h2>Review the Orb.</h2><p>Review the exact prize before sealing the competition. The funding transaction below uses these exact reviewed prize and fee parameters.</p>
-          <div className="orb-review-grid"><div><span>Host</span><strong>@{xUser?.username || "—"}</strong></div><div><span>Winner prize</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{money(prizeUsd)}</small></div><div><span>Orbs fee</span><strong>{token ? `${amount(feeTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(ORBS_FEE_USD)}</small></div><div><span>Total wallet debit</span><strong>{token && prizeAmount ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(totalUsd)}</small></div><div><span>Game</span><strong>{profiles.find((p) => p.key === difficulty)?.label}</strong><small>{profiles.find((p) => p.key === difficulty)?.time}</small></div><div><span>Launch</span><strong>{launchReady ? new Date(launchMs).toLocaleString() : "—"}</strong></div></div>
-          <div className="funding-review"><span className="funding-review-kicker">Funding commitment</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol} (${money(prizeUsd)}) winner prize + ${money(ORBS_FEE_USD)} Orbs fee = ${money(totalUsd)} total wallet debit.` : "Review your prize amount."}</strong><p>Once a funded Orb is launched, you cannot cancel it or withdraw the prize early. The prize remains locked for the competition. If the contract reaches its expiry without a valid winner claim, the protocol refund path returns the refundable prize funds to the host wallet.</p>{maxSelected ? <small className="field-help">Max is locked to the refreshed wallet snapshot shown above, so prize + fee fits the available token balance exactly.</small> : null}<label className="funding-ack"><input type="checkbox" checked={fundingAcknowledged} onChange={(event) => setFundingAcknowledged(event.target.checked)} /><span>I reviewed the prize and total wallet debit and understand a funded Orb cannot be canceled or withdrawn early.</span></label></div>
-          <div className="test-orb-note"><strong>On-chain escrow funding</strong><span>Your wallet signs the exact prize debit while the Orbs relayer sponsors SOL/rent. The full advertised prize moves into this Orb&apos;s isolated Anchor vault and the separate protocol fee goes to the fixed treasury ATA.</span></div>
+          <div className="orb-review-grid"><div><span>Host</span><strong>@{xUser?.username || "—"}</strong></div><div><span>Total wallet debit</span><strong>{token && totalTokenAmount ? `${amount(totalTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(totalUsd)}</small></div><div><span>Orbs fee</span><strong>{token ? `${amount(feeTokenAmount)} ${token.symbol}` : "—"}</strong><small>{money(ORBS_FEE_USD)}</small></div><div><span>Winner prize</span><strong>{token && prizeAmount ? `${amount(prizeAmount)} ${token.symbol}` : "—"}</strong><small>{money(prizeUsd)}</small></div><div><span>Game</span><strong>{profiles.find((p) => p.key === difficulty)?.label}</strong><small>{profiles.find((p) => p.key === difficulty)?.time}</small></div><div><span>Launch</span><strong>{launchReady ? new Date(launchMs).toLocaleString() : "—"}</strong></div></div>
+          <div className="funding-review"><span className="funding-review-kicker">Funding commitment</span><strong>{token && prizeAmount ? `${amount(totalTokenAmount)} ${token.symbol} (${money(totalUsd)}) total debit, including the ${money(ORBS_FEE_USD)} Orbs fee. Winner receives ${amount(prizeAmount)} ${token.symbol} (${money(prizeUsd)}).` : "Review your total commitment."}</strong><p>Once a funded Orb is launched, you cannot cancel it or withdraw the prize early. The prize remains locked for the competition. If the contract reaches its expiry without a valid winner claim, the protocol refund path returns the refundable prize funds to the host wallet.</p>{maxSelected ? <small className="field-help">Max is locked to the refreshed wallet snapshot shown above, so the total debit fits the available token balance exactly.</small> : null}<label className="funding-ack"><input type="checkbox" checked={fundingAcknowledged} onChange={(event) => setFundingAcknowledged(event.target.checked)} /><span>I reviewed the total wallet debit, fee, and winner prize and understand a funded Orb cannot be canceled or withdrawn early.</span></label></div>
+          <div className="test-orb-note"><strong>On-chain escrow funding</strong><span>Your wallet signs the exact total commitment while the Orbs relayer sponsors SOL/rent. The Orbs fee goes to the fixed treasury ATA and the remainder moves into this Orb&apos;s isolated Anchor prize vault.</span></div>
           {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}{createError ? <div className="form-error">{createError}</div> : null}<button className="btn-primary" disabled={!identityReady || !prizeReady || !launchReady || !fundingAcknowledged || creating} onClick={() => void createOrb()}>{creating ? "Funding & sealing Orb…" : pendingOrb ? "Retry funding →" : "Fund & seal Orb →"}</button>
         </> : null}
 

@@ -256,7 +256,7 @@ export async function buildFundingTransaction(record: OrbRecord) {
     const wrapLamports = BigInt(record.prizeRawAmount) + BigInt(record.feeRawAmount);
     if (wrapLamports > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Native SOL funding amount is too large");
     const nativeBalance = await connection.getBalance(host, "confirmed");
-    if (BigInt(nativeBalance) < wrapLamports) throw new Error("Native SOL balance no longer covers the prize plus Orbs fee");
+    if (BigInt(nativeBalance) < wrapLamports) throw new Error("Native SOL balance no longer covers the reviewed total commitment");
     transaction.add(
       createIdempotentAtaInstruction(payer.publicKey, accounts.hostTokenAccount, host, mint),
       SystemProgram.transfer({ fromPubkey: host, toPubkey: accounts.hostTokenAccount, lamports: Number(wrapLamports) }),

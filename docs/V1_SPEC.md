@@ -49,13 +49,13 @@ Discovery tabs: Live, Starting Soon, Trending, Big Orbs. Cards show host, token 
 
 ## Create wizard
 1. Identity: connect X + wallet.
-2. Prize: standard SPL token picker, prize amount, USD quote, same-token $1 protocol fee, balance check.
+2. Prize: SOL/standard SPL picker, total creator commitment, USD quote, included same-token $1.15 protocol fee, derived winner prize, balance check.
 3. Game: Quick ~5m / Classic ~10m / Brutal ~15m, marble color, board color.
 4. Launch: date/time/timezone and share-card preview.
-5. Review + Fund: prize and fee separate; wallet transaction creates/funds Orb.
+5. Review + Fund: creator reviews one total wallet debit; the $1.15 fee is carved out and the remainder funds the winner prize; wallet transaction creates/funds Orb.
 6. Share: unique URL, copy, X intent, deterministic Open Graph card.
 
-Recommended V1 economics: advertised prize minimum `$6` equivalent; `$1` fee is added separately and converted into the same token at funding time so the winner receives the full advertised prize.
+V1 economics: the winner prize must be at least `$5` equivalent. The creator enters the total amount they are willing to debit; the `$1.15` Orbs fee is included in that total and converted into the same asset at funding time. The remainder is the advertised winner prize. The practical minimum total is approximately `$6.15`, subject to the locked asset price and atomic-unit rounding.
 
 A token may be displayed in the picker but cannot fund an Orb if there is no reliable USD price quote, because the V1 minimum and fee are USD-derived.
 
@@ -125,7 +125,7 @@ Use `ERROR_LOCKED` for explicit operator recovery without silently changing cust
 - Mobile host creation and mobile play both fully supported.
 - Players never pay to enter.
 - Token-2022 rejected pre-funding.
-- Displayed prize equals settleable vault prize; fee separate.
+- Displayed total commitment equals the intended wallet debit; the disclosed fee is included in that total; displayed winner prize equals the settleable vault prize.
 - Host cannot withdraw a public funded prize.
 - Maze seed unavailable before T0.
 - Server, not browser, determines finish.
@@ -134,7 +134,7 @@ Use `ERROR_LOCKED` for explicit operator recovery without silently changing cust
 - Settlement idempotent.
 - Deterministic outage/reschedule policy.
 - OG/share cards for every public Orb/result.
-- Legal/rules/privacy/jurisdiction review before public prize launch.
+- Maintain counsel-reviewed rules, terms, privacy disclosures, supported jurisdictions, and promotion-specific compliance before broad public prize launch.
 
 ## Official implementation references
 - X OAuth 2.0 Authorization Code + PKCE: https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code
