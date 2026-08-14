@@ -40,7 +40,15 @@ function equalBytes(a: Uint8Array, b: Uint8Array) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 function assertMeta(meta: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }, pubkey: PublicKey, signer: boolean, writable: boolean, label: string) {
-  if (!meta.pubkey.equals(pubkey) || meta.isSigner !== signer || meta.isWritable !== writable) {
+  // After a legacy Solana transaction is compiled and deserialized, signer/writable
+  // privileges are promoted transaction-wide for an account. Require every privilege
+  // this instruction needs, but do not reject a legitimate globally-promoted privilege.
+  // Exact signer identity/count is enforced separately below.
+  if (
+    !meta.pubkey.equals(pubkey) ||
+    (signer && !meta.isSigner) ||
+    (writable && !meta.isWritable)
+  ) {
     throw new Error(`Funding transaction failed client security check: invalid ${label}`);
   }
 }

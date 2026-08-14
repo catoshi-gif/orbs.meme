@@ -19,7 +19,16 @@ function programId() {
 }
 function equalBytes(a: Uint8Array, b: Uint8Array) { return a.length === b.length && a.every((v, i) => v === b[i]); }
 function assertMeta(meta: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }, pubkey: PublicKey, signer: boolean, writable: boolean, label: string) {
-  if (!meta.pubkey.equals(pubkey) || meta.isSigner !== signer || meta.isWritable !== writable) throw new Error(`Claim transaction failed client security check: invalid ${label}`);
+  // Solana promotes signer/writable privileges transaction-wide when a compiled
+  // transaction is deserialized. Require privileges that must exist, while allowing
+  // harmless promotion caused by the same account's use elsewhere in the transaction.
+  if (
+    !meta.pubkey.equals(pubkey) ||
+    (signer && !meta.isSigner) ||
+    (writable && !meta.isWritable)
+  ) {
+    throw new Error(`Claim transaction failed client security check: invalid ${label}`);
+  }
 }
 
 export type ReviewedClaimIntent = { host: PublicKey; winner: PublicKey; mint: PublicKey; orbIdHex: string; claimAuthority: PublicKey };

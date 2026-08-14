@@ -16,7 +16,16 @@ export function assertReviewedSolUnwrapTransaction(transaction: Transaction, win
   for (let i = 0; i < expected.length; i += 1) {
     const meta = ix.keys[i]!;
     const item = expected[i]!;
-    if (!meta.pubkey.equals(item.key) || meta.isSigner !== item.signer || meta.isWritable !== item.writable) throw new Error("SOL unwrap failed client security review");
+    // A compiled/deserialized Solana transaction exposes transaction-wide promoted
+    // privileges. Require the privileges needed by this account position, but allow
+    // promotion; the exact signer set is checked immediately below.
+    if (
+      !meta.pubkey.equals(item.key) ||
+      (item.signer && !meta.isSigner) ||
+      (item.writable && !meta.isWritable)
+    ) {
+      throw new Error("SOL unwrap failed client security review");
+    }
   }
   const requiredSigners = [ORBS_RENT_RECEIVER_WALLET, winner];
   if (transaction.signatures.length !== requiredSigners.length) throw new Error("SOL unwrap has an unexpected signer set");
