@@ -14,6 +14,7 @@ import { ORB_CREATION_MIN_LEAD_MS } from "@/lib/orbLifecycle";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import type { DifficultyKey, GameStyle } from "@/game/types";
 import { assertReviewedFundingTransaction } from "@/lib/orbsFundingFirewall";
+import { xCashtag } from "@/lib/xShareText";
 
 const names = ["Identity", "Prize", "Game", "Launch", "Review", "Share"];
 const publicSiteUrl = canonicalPublicSiteUrl();
@@ -258,7 +259,7 @@ export default function CreateWizard() {
 
   const shareUrl = createdOrb ? `${publicSiteUrl}/orb/${encodeURIComponent(createdOrb.slug)}?v=${createdOrb.createdAt}` : "";
   const shareCardUrl = createdOrb ? `${publicSiteUrl}/api/orbs/${encodeURIComponent(createdOrb.slug)}/share-card?v=${createdOrb.createdAt}` : "";
-  const hostShareText = `I just sealed an Orb for ${amount(prizeAmount)} ${token?.symbol || "SPL"} (≈${money(prizeUsd)}). First verified finish wins.\n\nJoin the waiting room and bring your fastest run.`;
+  const hostShareText = `I just sealed an Orb for ${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")} (≈${money(prizeUsd)}). First verified finish wins.\n\nJoin the waiting room and bring your fastest run.`;
   const hostShareParams = new URLSearchParams({ text: hostShareText, url: shareUrl });
 
   useEffect(() => {

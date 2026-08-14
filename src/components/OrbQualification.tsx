@@ -7,6 +7,7 @@ import EligibilityGate from "@/components/EligibilityGate";
 import TurnstileGate from "@/components/TurnstileGate";
 import XConnect, { type XUser } from "@/components/XConnect";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
+import { xCashtag } from "@/lib/xShareText";
 
 type Props = {
   slug: string;
@@ -145,7 +146,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
     if (line.length < 12) { setShareError("Add one original line first so entry posts do not become repetitive spam."); return; }
     if (!shareCardReady) { setShareError("The X card is still preparing. Wait a moment, then post."); return; }
     setShareError(null);
-    const text = `${line}\n\nI’m racing @${hostUsername} for ${amount(prizeTokenAmount)} ${tokenSymbol.slice(0, 16)} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
+    const text = `${line}\n\nI’m racing @${hostUsername} for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
     const params = new URLSearchParams({ text, url: orbShareUrl });
     window.open(`https://x.com/intent/post?${params.toString()}`, "_blank", "noopener,noreferrer");
     setShareStarted(true);
