@@ -10,7 +10,7 @@ import type { XProfile } from "@/lib/xAuth";
 import { redisCommand, redisGetJson, upstashConfigured } from "@/lib/upstash";
 import { activeHostedOrbKey, enteredOrbsKey, isAdminWallet, ORB_COMPETITION_WINDOW_MS, ORB_CREATION_MIN_LEAD_MS, ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
 
-export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice">;
+export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice" | "isNativeSol">;
 
 export type OrbRecord = {
   schemaVersion: 1;
@@ -207,6 +207,7 @@ export async function createTestOrb(input: {
       decimals: input.token.decimals,
       logoURI: input.token.logoURI,
       usdPrice: input.quotedUsdPrice,
+      isNativeSol: input.token.isNativeSol === true,
     },
     prizeTokenAmount: input.prizeTokenAmount,
     prizeRawAmount: input.prizeRawAmount,

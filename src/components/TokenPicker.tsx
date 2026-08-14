@@ -82,33 +82,33 @@ export default function TokenPicker({ value, onChange }: Props) {
   };
 
   if (!connected || !wallet) {
-    return <div className="token-picker-empty"><strong>Connect your wallet first.</strong><small>Orbs only lists standard SPL tokens you actually hold.</small></div>;
+    return <div className="token-picker-empty"><strong>Connect your wallet first.</strong><small>Orbs lists native SOL and supported standard SPL tokens you actually hold.</small></div>;
   }
 
   return (
     <div className="token-picker">
       <button type="button" className={`token-picker-trigger ${value ? "selected" : ""}`} onClick={toggle}>
-        {value ? <><TokenLogo token={value} /><div><strong>{value.symbol}</strong><small>{value.name}</small></div><div className="token-trigger-balance"><strong>{tokenAmount(value.balance)}</strong><small>{usd(value.usdValue)}</small></div></> : <><span className="token-picker-plus">+</span><div><strong>Select prize token</strong><small>SPL tokens currently in your wallet</small></div></>}
+        {value ? <><TokenLogo token={value} /><div><strong>{value.symbol}</strong><small>{value.name}</small></div><div className="token-trigger-balance"><strong>{tokenAmount(value.balance)}</strong><small>{usd(value.usdValue)}</small></div></> : <><span className="token-picker-plus">+</span><div><strong>Select prize token</strong><small>SOL + supported SPL tokens currently in your wallet</small></div></>}
         <span className="token-chevron">⌄</span>
       </button>
 
       {open ? <div className="token-picker-popover">
         <div className="token-picker-head">
-          <div><span className="eyebrow">YOUR WALLET</span><strong>SPL tokens currently in your connected wallet</strong><small>{loading ? "Refreshing your live wallet balances…" : "Need another token? Swap into it, then reopen this list."}</small></div>
+          <div><span className="eyebrow">YOUR WALLET</span><strong>SOL + supported SPL tokens in your connected wallet</strong><small>{loading ? "Refreshing your live wallet balances…" : "Need another token? Swap into it, then reopen this list."}</small></div>
           <button type="button" className="token-refresh" onClick={() => void load(true)} disabled={loading} aria-label="Refresh wallet tokens">{loading ? "…" : "↻"}</button>
         </div>
         <input className="token-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter your wallet by token or mint" />
         {error ? <div className="token-picker-error">{error}</div> : null}
         <div className="token-list">
-          {loading && !tokens.length ? <div className="token-list-state">Reading standard SPL balances…</div> : null}
-          {!loading && !filtered.length ? <div className="token-list-state">No priced standard SPL holdings found.</div> : null}
+          {loading && !tokens.length ? <div className="token-list-state">Reading SOL + standard SPL balances…</div> : null}
+          {!loading && !filtered.length ? <div className="token-list-state">No priced SOL or standard SPL holdings found.</div> : null}
           {filtered.map((token) => <button key={token.mint} type="button" className={`token-row ${token.eligible ? "" : "disabled"}`} disabled={!token.eligible} onClick={() => { onChange(token); setOpen(false); }}>
             <TokenLogo token={token} />
             <div className="token-row-main"><div><strong>{token.symbol}</strong>{token.verified ? <span className="token-verified">✓</span> : null}</div><small>{token.name}</small><code>{token.mint.slice(0, 6)}…{token.mint.slice(-5)}</code></div>
             <div className="token-row-value"><strong>{tokenAmount(token.balance)}</strong><small>{!token.eligible ? (token.ineligibleReason || "This token is not currently eligible") : token.usdValue === null ? "No reliable USD value" : usd(token.usdValue)}</small>{token.usdPrice !== null ? <em>{usd(token.usdPrice)} / token</em> : null}</div>
           </button>)}
         </div>
-        <div className="token-picker-foot"><span>Classic SPL only · $0.00 / unknown-value holdings hidden</span>{updatedAt ? <span>Live wallet refresh {new Date(updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</span> : null}</div>
+        <div className="token-picker-foot"><span>SOL + classic SPL · $0.00 / unknown-value holdings hidden</span>{updatedAt ? <span>Live wallet refresh {new Date(updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</span> : null}</div>
       </div> : null}
     </div>
   );

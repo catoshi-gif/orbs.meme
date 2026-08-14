@@ -42,7 +42,7 @@ export async function GET(request: Request) {
         };
       }
     });
-    return NextResponse.json({ ok: true, wallet, tokens, source: "classic-spl+jupiter-v3+signed-prize-quote", updatedAt: Date.now() }, {
+    return NextResponse.json({ ok: true, wallet, tokens, source: "native-sol+classic-spl+jupiter-v3+signed-prize-quote", updatedAt: Date.now() }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   } catch (error) {

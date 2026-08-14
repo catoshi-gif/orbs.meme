@@ -17,6 +17,7 @@ import {
   ORBS_RENT_RECEIVER_WALLET,
   ORBS_TREASURY_WALLET,
   ORBS_TURNKEY_CLAIM_AUTHORITY_WALLET,
+  WRAPPED_SOL_MINT,
   deriveClassicAta,
 } from "@/lib/solanaAddresses";
 import type { OrbRecord } from "@/lib/orbStore";
@@ -152,6 +153,26 @@ function createTransferCheckedInstruction(source: PublicKey, mint: PublicKey, de
   });
 }
 
+function createSyncNativeInstruction(account: PublicKey) {
+  return new TransactionInstruction({
+    programId: CLASSIC_SPL_TOKEN_PROGRAM_ID,
+    keys: [{ pubkey: account, isSigner: false, isWritable: true }],
+    data: Buffer.from([17]),
+  });
+}
+
+function createCloseTokenAccountInstruction(account: PublicKey, destination: PublicKey, authority: PublicKey) {
+  return new TransactionInstruction({
+    programId: CLASSIC_SPL_TOKEN_PROGRAM_ID,
+    keys: [
+      { pubkey: account, isSigner: false, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.from([9]),
+  });
+}
+
 function fundArgs(record: OrbRecord) {
   const startsAt = BigInt(Math.floor(record.startsAt / 1000));
   const refundAfter = BigInt(Math.floor((record.endsAt ?? (record.startsAt + ORB_COMPETITION_WINDOW_MS)) / 1000));
@@ -202,7 +223,20 @@ export async function buildFundingTransaction(record: OrbRecord) {
   });
 
   const latest = await connection.getLatestBlockhash("confirmed");
-  const transaction = new Transaction({ feePayer: payer.publicKey, recentBlockhash: latest.blockhash }).add(
+  const transaction = new Transaction({ feePayer: payer.publicKey, recentBlockhash: latest.blockhash });
+  if (record.token.isNativeSol === true) {
+    if (!mint.equals(WRAPPED_SOL_MINT) || record.token.decimals !== 9) throw new Error("Native SOL funding record is malformed");
+    const wrapLamports = BigInt(record.prizeRawAmount) + BigInt(record.feeRawAmount);
+    if (wrapLamports > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Native SOL funding amount is too large");
+    const nativeBalance = await connection.getBalance(host, "confirmed");
+    if (BigInt(nativeBalance) < wrapLamports) throw new Error("Native SOL balance no longer covers the prize plus Orbs fee");
+    transaction.add(
+      createIdempotentAtaInstruction(payer.publicKey, accounts.hostTokenAccount, host, mint),
+      SystemProgram.transfer({ fromPubkey: host, toPubkey: accounts.hostTokenAccount, lamports: Number(wrapLamports) }),
+      createSyncNativeInstruction(accounts.hostTokenAccount),
+    );
+  }
+  transaction.add(
     createIdempotentAtaInstruction(payer.publicKey, accounts.treasuryTokenAccount, ORBS_TREASURY_WALLET, mint),
     feeInstruction,
     fundInstruction,
@@ -353,6 +387,31 @@ export async function buildRefundTransaction(record: OrbRecord) {
   );
   tx.partialSign(payer);
   return { connection, tx, latest, accounts };
+}
+
+
+export async function buildNativeSolUnwrapTransaction(record: OrbRecord, winner: PublicKey) {
+  if (record.token.isNativeSol !== true || !new PublicKey(record.token.mint).equals(WRAPPED_SOL_MINT)) {
+    throw new Error("This Orb prize is not native SOL");
+  }
+  const payer = serverRelayerKeypair();
+  const connection = new Connection(solanaRpcUrl(), "confirmed");
+  const winnerAta = deriveClassicAta(winner, WRAPPED_SOL_MINT);
+  const info = await connection.getAccountInfo(winnerAta, "confirmed");
+  if (!info) return { alreadyUnwrapped: true as const };
+
+  const latest = await connection.getLatestBlockhash("confirmed");
+  const tx = new Transaction({ feePayer: payer.publicKey, recentBlockhash: latest.blockhash }).add(
+    createCloseTokenAccountInstruction(winnerAta, winner, winner),
+  );
+  tx.partialSign(payer);
+  return {
+    alreadyUnwrapped: false as const,
+    transactionBase64: tx.serialize({ requireAllSignatures: false, verifySignatures: true }).toString("base64"),
+    blockhash: latest.blockhash,
+    lastValidBlockHeight: latest.lastValidBlockHeight,
+    winnerAta: winnerAta.toBase58(),
+  };
 }
 
 

@@ -1,6 +1,6 @@
 import { PublicKey } from "@solana/web3.js";
 import type { PrizeQuoteSnapshot } from "@/lib/prizeEconomics";
-import { CLASSIC_SPL_TOKEN_PROGRAM_ID, deriveClassicAta } from "@/lib/solanaAddresses";
+import { CLASSIC_SPL_TOKEN_PROGRAM_ID, WRAPPED_SOL_MINT, deriveClassicAta } from "@/lib/solanaAddresses";
 
 const CLASSIC_SPL_TOKEN_PROGRAM = CLASSIC_SPL_TOKEN_PROGRAM_ID.toBase58();
 
@@ -19,6 +19,8 @@ export type WalletSplToken = {
   eligible: boolean;
   ineligibleReason?: string;
   prizeQuote?: PrizeQuoteSnapshot | null;
+  /** Native SOL presented to users; custody uses the classic-SPL WSOL mint. */
+  isNativeSol?: boolean;
 };
 
 function rpcUrl() {
@@ -61,6 +63,8 @@ async function rpcRequest<T>(method: string, params: unknown[]): Promise<T> {
   if (!response.ok || payload.error || payload.result === undefined) throw new Error(payload.error?.message || `Solana RPC failed (${response.status})`);
   return payload.result;
 }
+
+type RpcBalance = { value: number };
 
 type RpcTokenAccounts = {
   value: Array<{
@@ -143,10 +147,13 @@ async function fetchPrices(mints: string[]) {
 
 export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken[]> {
   const owner = new PublicKey(wallet).toBase58();
-  const accounts = await rpcRequest<RpcTokenAccounts>("getTokenAccountsByOwner", [
-    owner,
-    { programId: CLASSIC_SPL_TOKEN_PROGRAM },
-    { encoding: "jsonParsed", commitment: "confirmed" },
+  const [accounts, nativeBalance] = await Promise.all([
+    rpcRequest<RpcTokenAccounts>("getTokenAccountsByOwner", [
+      owner,
+      { programId: CLASSIC_SPL_TOKEN_PROGRAM },
+      { encoding: "jsonParsed", commitment: "confirmed" },
+    ]),
+    rpcRequest<RpcBalance>("getBalance", [owner, { commitment: "confirmed" }]),
   ]);
 
   const aggregated = new Map<string, { raw: bigint; decimals: number; balance: number }>();
@@ -156,6 +163,9 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
     const token = info?.tokenAmount;
     const rawText = String(token?.amount || "0");
     if (!mint || !/^\d+$/.test(rawText) || rawText === "0") continue;
+    // Native SOL is exposed as a first-class synthetic holding below. Hide a
+    // pre-existing WSOL ATA from the picker so users never see duplicate SOL/WSOL rows.
+    if (mint === WRAPPED_SOL_MINT.toBase58()) continue;
 
     // Production Anchor funding intentionally debits only the wallet's canonical
     // classic-SPL ATA. Do not aggregate auxiliary token accounts into a balance
@@ -173,8 +183,9 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
   }
 
   const mints = Array.from(aggregated.keys());
-  if (!mints.length) return [];
-  const [metaMap, priceMap] = await Promise.all([fetchMetadata(mints), fetchPrices(mints)]);
+  const nativeMint = WRAPPED_SOL_MINT.toBase58();
+  const lookupMints = Array.from(new Set([...mints, nativeMint]));
+  const [metaMap, priceMap] = await Promise.all([fetchMetadata(lookupMints), fetchPrices(lookupMints)]);
 
   const tokens = mints.map((mint): WalletSplToken => {
     const balance = aggregated.get(mint)!;
@@ -208,6 +219,32 @@ export async function getWalletSplTokens(wallet: string): Promise<WalletSplToken
             : undefined,
     };
   });
+
+  const nativeLamports = BigInt(Math.max(0, Math.trunc(Number(nativeBalance.value || 0))));
+  if (nativeLamports > BigInt(0)) {
+    const meta = metaMap.get(nativeMint);
+    const price = Number(priceMap.get(nativeMint)?.usdPrice ?? meta?.usdPrice);
+    const usdPrice = Number.isFinite(price) && price > 0 ? price : null;
+    const balance = Number(nativeLamports) / 1_000_000_000;
+    const usdValue = usdPrice === null ? null : balance * usdPrice;
+    const logo = [meta?.icon, meta?.logoURI, meta?.logoUri].find((value) => typeof value === "string" && /^https:\/\//i.test(value)) as string | undefined;
+    tokens.unshift({
+      mint: nativeMint,
+      symbol: "SOL",
+      name: "Solana",
+      decimals: 9,
+      balance,
+      rawAmount: nativeLamports.toString(),
+      usdPrice,
+      usdValue,
+      logoURI: logo || null,
+      verified: true,
+      suspicious: false,
+      eligible: usdPrice !== null,
+      ineligibleReason: usdPrice === null ? "No reliable SOL/USD price available" : undefined,
+      isNativeSol: true,
+    });
+  }
 
   // Holdings that would render as $0.00 are noise for a prize picker and are
   // overwhelmingly dust/spam. Keep small but genuinely valued holdings, while

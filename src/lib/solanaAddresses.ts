@@ -1,6 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 
 export const CLASSIC_SPL_TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+export const WRAPPED_SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
 export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 export const ORBS_TREASURY_WALLET = new PublicKey("5mEqxr6McBRL5DGE9dJ2Td3viwhAmRpe4V7pqGTPMtvr");
 export const ORBS_RENT_RECEIVER_WALLET = new PublicKey("GMpmAw9JDKhJHo6umea4BsfLHVSqBYXPvv8hTU4t84vN");

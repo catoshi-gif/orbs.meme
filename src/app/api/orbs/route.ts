@@ -103,7 +103,7 @@ export async function POST(request: Request) {
     // intentionally freezes the exact token fee the host reviewed.
     const walletTokens = await getWalletSplTokens(hostWallet);
     const token = walletTokens.find((candidate) => candidate.mint === mint);
-    if (!token) return NextResponse.json({ ok: false, error: "Selected SPL token is not currently in this wallet" }, { status: 400 });
+    if (!token) return NextResponse.json({ ok: false, error: "Selected SOL/SPL asset is not currently in this wallet" }, { status: 400 });
     if (token.decimals !== quote.decimals) throw new Error("Token decimals changed unexpectedly");
 
     const prizeRaw = tokenInputToRaw(prizeText, token.decimals);
