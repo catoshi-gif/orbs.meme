@@ -204,10 +204,12 @@ pub mod orbs_protocol {
             args.prize_usd_micros >= MIN_PRIZE_USD_MICROS,
             OrbsError::PrizeBelowUsdMinimum
         );
-        // A classic SPL mint with a freeze authority can freeze the Orb vault
-        // after funding and prevent both winner payout and the permissionless
-        // expiry refund. V1 therefore accepts only non-freezable classic SPL mints.
-        require!(ctx.accounts.mint.freeze_authority.is_none(), OrbsError::FreezeAuthorityNotAllowed);
+        // V1 accepts any mint owned by the original SPL Token Program, including
+        // legitimate issuer-managed assets that retain a freeze authority (for
+        // example regulated stablecoins). Program<Token> plus the typed Mint/ATA
+        // constraints below still exclude Token-2022 and destination substitution.
+        // A third-party mint authority can create token-liveness risk, but it never
+        // gains authority to redirect this program's isolated Orb vault.
         let min_start = now
             .checked_add(MIN_START_LEAD_SECONDS)
             .ok_or(OrbsError::MathOverflow)?;
@@ -979,8 +981,6 @@ pub enum OrbsError {
     InvalidFeeAmount,
     #[msg("Protocol fee is too large relative to the advertised prize")]
     ExcessiveFeeAmount,
-    #[msg("Classic SPL mints with a freeze authority are not supported in Orbs V1")]
-    FreezeAuthorityNotAllowed,
     #[msg("Quoted prize is below the $5.00 V1 minimum")]
     PrizeBelowUsdMinimum,
     #[msg("Start time must be in the future")]

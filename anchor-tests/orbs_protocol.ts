@@ -173,11 +173,13 @@ describe("orbs_protocol adversarial security", () => {
     await expectFail(createFundedOrb(host, mint, 26, { feeAmount: 1_300_001 }), "excessive protocol fee");
   });
 
-  it("rejects classic SPL mints that retain a freeze authority", async () => {
+  it("accepts classic SPL mints that retain a freeze authority", async () => {
     const host = key(27);
     const freezeAuthority = key(28);
     const { mint } = await createMintAndFundHost(host, 50_000_000, freezeAuthority.publicKey);
-    await expectFail(createFundedOrb(host, mint, 27), "freezable mint");
+    const created = await createFundedOrb(host, mint, 27);
+    const vault = await getAccount(connection, created.prizeVault);
+    assert.equal(vault.amount, BigInt(PRIZE), "freeze-authority mint should fund the isolated Orb vault normally");
   });
 
   it("enforces one active Orb per normal host but permits reuse after expiry without refunding the old Orb", async () => {

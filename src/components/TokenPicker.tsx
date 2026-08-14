@@ -105,7 +105,7 @@ export default function TokenPicker({ value, onChange }: Props) {
           {filtered.map((token) => <button key={token.mint} type="button" className={`token-row ${token.eligible ? "" : "disabled"}`} disabled={!token.eligible} onClick={() => { onChange(token); setOpen(false); }}>
             <TokenLogo token={token} />
             <div className="token-row-main"><div><strong>{token.symbol}</strong>{token.verified ? <span className="token-verified">✓</span> : null}</div><small>{token.name}</small><code>{token.mint.slice(0, 6)}…{token.mint.slice(-5)}</code></div>
-            <div className="token-row-value"><strong>{tokenAmount(token.balance)}</strong><small>{token.usdValue === null ? token.ineligibleReason : usd(token.usdValue)}</small>{token.usdPrice !== null ? <em>{usd(token.usdPrice)} / token</em> : null}</div>
+            <div className="token-row-value"><strong>{tokenAmount(token.balance)}</strong><small>{!token.eligible ? (token.ineligibleReason || "This token is not currently eligible") : token.usdValue === null ? "No reliable USD value" : usd(token.usdValue)}</small>{token.usdPrice !== null ? <em>{usd(token.usdPrice)} / token</em> : null}</div>
           </button>)}
         </div>
         <div className="token-picker-foot"><span>Classic SPL only · $0.00 / unknown-value holdings hidden</span>{updatedAt ? <span>Live wallet refresh {new Date(updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</span> : null}</div>
