@@ -8,6 +8,7 @@ import type { GameStyle } from "@/game/types";
 type Props = {
   style?: GameStyle;
   compact?: boolean;
+  background?: boolean;
   className?: string;
 };
 
@@ -214,7 +215,7 @@ function makeRoundedWallGeometry(THREE: typeof import("three"), thickness: numbe
   return geometry;
 }
 
-export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = false, className = "" }: Props) {
+export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = false, background = false, className = "" }: Props) {
   const shellRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
 
@@ -258,7 +259,7 @@ export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = fals
         const mobileish = window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 760;
         const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
         const constrainedDevice = Boolean((nav.deviceMemory && nav.deviceMemory <= 2) || nav.connection?.saveData);
-        const camera = new THREE.PerspectiveCamera(compact ? 50 : 47, 1, 0.08, 240);
+        const camera = new THREE.PerspectiveCamera(background ? (compact ? 54 : 50) : compact ? 50 : 47, 1, 0.08, 240);
 
         const renderer = new THREE.WebGLRenderer({
           antialias: !mobileish,
@@ -268,7 +269,10 @@ export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = fals
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.02;
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, constrainedDevice ? 0.6 : mobileish ? 0.75 : 1));
+        renderer.setPixelRatio(Math.min(
+          window.devicePixelRatio || 1,
+          constrainedDevice ? 0.5 : background ? (mobileish ? 0.58 : 0.78) : mobileish ? 0.75 : 1,
+        ));
         renderer.domElement.className = "orb-showcase-canvas";
         renderer.domElement.setAttribute("aria-hidden", "true");
         mount.replaceChildren(renderer.domElement);
@@ -472,19 +476,31 @@ export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = fals
 
         let raf = 0;
         let lastRender = 0;
+        let lastCameraFrame = 0;
+        let previousCycle = 0;
+        let cameraRigReady = false;
         const startedAt = performance.now();
-        const frameInterval = 1000 / (constrainedDevice ? 15 : mobileish ? 20 : 28);
+        const frameInterval = 1000 / (constrainedDevice ? 12 : background ? (mobileish ? 18 : 24) : mobileish ? 20 : 28);
         const duration = compact ? 12_500 : 11_000;
         const cameraPosition = new THREE.Vector3();
         const cameraTarget = new THREE.Vector3();
+        const smoothedTarget = new THREE.Vector3();
+        const smoothedDirection = new THREE.Vector3();
+        const desiredDirection = new THREE.Vector3();
+        const aheadPoint = new THREE.Vector3();
+        const aheadTangent = new THREE.Vector3();
         const tangent = new THREE.Vector3();
         const point = new THREE.Vector3();
+        const lookMatrix = new THREE.Matrix4();
+        const desiredQuaternion = new THREE.Quaternion();
 
         const renderFrame = (now: number) => {
           if (disposed) return;
           raf = window.requestAnimationFrame(renderFrame);
           if (!visible || document.hidden || now - lastRender < frameInterval) return;
+          const dt = lastCameraFrame ? Math.min(0.08, Math.max(0.001, (now - lastCameraFrame) / 1000)) : 1 / 24;
           lastRender = now;
+          lastCameraFrame = now;
 
           const cycle = ((now - startedAt) % duration) / duration;
           // Reserve the end of the cycle for a soft reset rather than a visible teleport.
@@ -499,13 +515,46 @@ export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = fals
           marbleMaterial.uniforms.uProgress.value = eased;
           floorMaterial.uniforms.uTime.value = now / 1000;
 
-          const cameraDistance = compact ? 6.1 : 6.8;
-          const cameraHeight = compact ? 4.6 : 5.2;
-          cameraTarget.copy(point).addScaledVector(tangent, 1.45);
-          cameraPosition.copy(point).addScaledVector(tangent, -cameraDistance);
+          // The marble still follows the exact production-solver corridor path. The
+          // camera, however, looks well ahead on that path and damps its heading,
+          // position and rotation independently. This removes the old 90-degree
+          // lookAt snaps at corridor corners without altering marble motion at all.
+          const cameraDistance = compact ? 6.35 : 7.05;
+          const cameraHeight = compact ? 4.75 : 5.35;
+          const lookAheadProgress = Math.min(1, eased + (compact ? 0.075 : 0.065));
+          samplePath(lookAheadProgress, aheadPoint, aheadTangent);
+          desiredDirection.copy(aheadPoint).sub(point);
+          if (desiredDirection.lengthSq() < 0.0001) desiredDirection.copy(tangent);
+          desiredDirection.normalize();
+
+          // Reset the invisible camera rig at the loop seam while the canvas is faded.
+          if (cycle < previousCycle) cameraRigReady = false;
+          previousCycle = cycle;
+
+          const directionAlpha = 1 - Math.exp(-dt * 2.65);
+          if (!cameraRigReady) smoothedDirection.copy(desiredDirection);
+          else smoothedDirection.lerp(desiredDirection, directionAlpha).normalize();
+
+          cameraPosition.copy(point).addScaledVector(smoothedDirection, -cameraDistance);
           cameraPosition.y = cameraHeight;
-          camera.position.lerp(cameraPosition, 0.075);
-          camera.lookAt(cameraTarget.x, 0.18, cameraTarget.z);
+          cameraTarget.copy(point).addScaledVector(smoothedDirection, compact ? 2.15 : 2.55);
+          cameraTarget.y = 0.18;
+
+          const positionAlpha = 1 - Math.exp(-dt * 3.45);
+          const targetAlpha = 1 - Math.exp(-dt * 3.0);
+          const rotationAlpha = 1 - Math.exp(-dt * 4.2);
+          if (!cameraRigReady) {
+            camera.position.copy(cameraPosition);
+            smoothedTarget.copy(cameraTarget);
+            camera.lookAt(smoothedTarget);
+            cameraRigReady = true;
+          } else {
+            camera.position.lerp(cameraPosition, positionAlpha);
+            smoothedTarget.lerp(cameraTarget, targetAlpha);
+            lookMatrix.lookAt(camera.position, smoothedTarget, camera.up);
+            desiredQuaternion.setFromRotationMatrix(lookMatrix);
+            camera.quaternion.slerp(desiredQuaternion, rotationAlpha);
+          }
 
           checkpointGroups.forEach((group, index) => {
             const pulse = 1 + Math.sin(now * 0.004 + index * 1.1) * 0.07;
@@ -522,10 +571,16 @@ export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = fals
 
         if (reduceMotion) {
           samplePath(0.38, point, tangent);
+          samplePath(0.46, aheadPoint, aheadTangent);
+          desiredDirection.copy(aheadPoint).sub(point);
+          if (desiredDirection.lengthSq() < 0.0001) desiredDirection.copy(tangent);
+          desiredDirection.normalize();
           marble.position.copy(point);
-          camera.position.copy(point).addScaledVector(tangent, -6.5);
-          camera.position.y = 5.1;
-          camera.lookAt(point.x + tangent.x, 0.18, point.z + tangent.z);
+          camera.position.copy(point).addScaledVector(desiredDirection, compact ? -6.2 : -6.8);
+          camera.position.y = compact ? 4.7 : 5.2;
+          cameraTarget.copy(point).addScaledVector(desiredDirection, 2.2);
+          cameraTarget.y = 0.18;
+          camera.lookAt(cameraTarget);
           renderer.render(scene, camera);
         } else {
           raf = window.requestAnimationFrame(renderFrame);
@@ -573,17 +628,16 @@ export default function OrbShowcase({ style = DEFAULT_GAME_STYLE, compact = fals
       if (idleId !== null && typeof idleWindow.cancelIdleCallback === "function") idleWindow.cancelIdleCallback(idleId);
       cleanupScene?.();
     };
-  }, [compact, style]);
+  }, [background, compact, style]);
 
   return (
-    <div ref={shellRef} className={`orb-showcase ${compact ? "compact" : ""} ${className}`.trim()}>
-      <div ref={mountRef} className="orb-showcase-mount" aria-hidden="true" />
-      <div className="orb-showcase-vignette" aria-hidden="true" />
-      <div className="orb-showcase-caption">
-        <span className="orb-showcase-live-dot" />
-        <strong>Actual Orbs Game World</strong>
-        <span>Representative maze · no live seed revealed</span>
-      </div>
+    <div
+      ref={shellRef}
+      className={`orb-showcase ${compact ? "compact" : ""} ${background ? "background" : ""} ${className}`.trim()}
+      aria-hidden="true"
+    >
+      <div ref={mountRef} className="orb-showcase-mount" />
+      <div className="orb-showcase-vignette" />
     </div>
   );
 }

@@ -143,45 +143,39 @@ body:has(.game-page) main{min-height:100dvh}
 .waiting-presence{display:grid;gap:7px;width:min(420px,100%);margin-top:18px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--border) 72%,#20E3D2);border-radius:15px;background:color-mix(in srgb,var(--surface) 78%,transparent);backdrop-filter:blur(12px);box-shadow:0 12px 34px rgba(5,13,31,.08)}.waiting-presence-live{display:flex;align-items:baseline;gap:7px}.waiting-presence-live strong{font:800 20px Lato;letter-spacing:-.03em}.waiting-presence-live>span:last-child{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.waiting-presence-dot{align-self:center;width:7px;height:7px;border-radius:50%;background:#20E3D2;box-shadow:0 0 0 4px rgba(32,227,210,.11),0 0 14px rgba(32,227,210,.55);animation:waitingPulse 2.2s ease-in-out infinite}.waiting-presence-split{display:flex;gap:8px;flex-wrap:wrap}.waiting-presence-split span{padding:5px 8px;border-radius:9px;background:color-mix(in srgb,var(--surface2) 90%,transparent);font-size:9px;color:var(--muted)}.waiting-presence-split b{color:var(--text);font-size:10px}.waiting-presence small{font-size:8.5px;color:var(--muted)}@keyframes waitingPulse{50%{opacity:.48;transform:scale(.78)}}@media(max-width:640px){.waiting-presence{margin-top:14px;padding:10px 11px}.waiting-presence-live strong{font-size:18px}.waiting-presence-live>span:last-child{font-size:8px}.waiting-presence small{font-size:8px}}@media(prefers-reduced-motion:reduce){.waiting-presence-dot{animation:none}}
 
 /* -------------------------------------------------------------------------- */
-/* Real-renderer product showcase                                              */
+/* Real-renderer ambient showcase                                             */
 /* -------------------------------------------------------------------------- */
-.game-world-section{padding:18px 0 82px}
-.game-world-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.72fr);gap:48px;align-items:end;margin:0 0 24px}
-.game-world-head h2{font-family:Lato,sans-serif;font-size:clamp(34px,4.2vw,54px);line-height:1.02;letter-spacing:-.045em;margin:9px 0 0}
-.game-world-head p{margin:0;color:var(--muted);line-height:1.7;font-size:14px}
+.orb-showcase{position:relative;overflow:hidden;background:#050817;isolation:isolate;pointer-events:none}
+.orb-showcase-mount{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(25,37,92,.46),#050817 78%)}
+.orb-showcase-canvas{display:block;width:100%;height:100%;transition:opacity .4s ease;will-change:opacity}
+.orb-showcase-vignette{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(4,7,20,.06),rgba(4,7,20,0) 48%,rgba(4,7,20,.28)),radial-gradient(ellipse at center,transparent 48%,rgba(2,4,14,.24) 100%)}
+.orb-showcase.background{position:absolute;inset:0;width:auto;height:auto;min-height:0;aspect-ratio:auto;border:0;border-radius:inherit;box-shadow:none}
 
-.orb-showcase{position:relative;width:100%;aspect-ratio:16/8.4;min-height:340px;overflow:hidden;border-radius:30px;background:#050817;border:1px solid rgba(126,245,255,.16);box-shadow:0 38px 110px rgba(21,28,80,.22),inset 0 1px 0 rgba(255,255,255,.08);isolation:isolate}
-.orb-showcase:before{content:'';position:absolute;inset:-28%;z-index:-1;background:radial-gradient(circle at 28% 30%,rgba(91,92,246,.23),transparent 35%),radial-gradient(circle at 76% 62%,rgba(32,227,210,.16),transparent 38%),#050817}
-.orb-showcase-mount{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(25,37,92,.5),#050817 76%)}
-.orb-showcase-canvas{display:block;width:100%;height:100%;transition:opacity .35s ease;will-change:opacity}
-.orb-showcase-vignette{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(4,7,20,.04),rgba(4,7,20,0) 52%,rgba(4,7,20,.46)),radial-gradient(ellipse at center,transparent 48%,rgba(2,4,14,.35) 100%);box-shadow:inset 0 0 80px rgba(3,7,24,.38)}
-.orb-showcase-caption{position:absolute;left:22px;right:22px;bottom:18px;display:flex;align-items:center;gap:9px;min-height:36px;width:max-content;max-width:calc(100% - 44px);padding:0 13px;border:1px solid rgba(255,255,255,.13);border-radius:999px;background:rgba(5,8,24,.58);backdrop-filter:blur(14px);color:#fff;box-shadow:0 10px 34px rgba(0,0,0,.18)}
-.orb-showcase-caption strong{font-family:Lato,sans-serif;font-size:11px;letter-spacing:.04em}
-.orb-showcase-caption span:last-child{font-size:10px;color:rgba(232,240,255,.65)}
-.orb-showcase-live-dot{width:7px;height:7px;border-radius:50%;background:#20E3D2;box-shadow:0 0 0 4px rgba(32,227,210,.08),0 0 18px rgba(32,227,210,.8);flex:0 0 auto}
+/* Homepage: preserve the original logo/hero composition and let the real game
+   world breathe behind it as atmosphere, not as a separate demo box. */
+.hero-game-backdrop{position:relative;overflow:hidden;isolation:isolate}
+.hero-game-backdrop>.hero-grid{position:relative;z-index:3}
+.home-orb-showcase{z-index:0;opacity:.24;inset:-10% -7% -8% 25%!important;-webkit-mask-image:radial-gradient(ellipse at 68% 48%,#000 0 34%,rgba(0,0,0,.86) 52%,transparent 82%);mask-image:radial-gradient(ellipse at 68% 48%,#000 0 34%,rgba(0,0,0,.86) 52%,transparent 82%)}
+.dark .home-orb-showcase{opacity:.4}
+.hero-game-backdrop:after{content:'';position:absolute;z-index:1;inset:0;pointer-events:none;background:linear-gradient(90deg,var(--bg) 0%,color-mix(in srgb,var(--bg) 94%,transparent) 38%,color-mix(in srgb,var(--bg) 67%,transparent) 63%,color-mix(in srgb,var(--bg) 20%,transparent) 100%)}
+.hero-game-backdrop .visual:before{z-index:1}
+.hero-game-backdrop .visual img,.hero-game-backdrop .visual-card{z-index:2}
 
-.waiting-game-window{margin:18px 0 4px;padding:10px;border:1px solid var(--border);border-radius:22px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 94%,transparent),color-mix(in srgb,var(--surface2) 82%,transparent));box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
-.waiting-game-window-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:4px 7px 10px}
-.waiting-game-window-head span{font-size:10px;letter-spacing:.14em;font-weight:800;color:#5B5CF6}
-.waiting-game-window-head small{font-size:10px;color:var(--muted);text-align:right}
-.orb-showcase.compact{aspect-ratio:16/7.5;min-height:230px;border-radius:15px;border-color:rgba(126,245,255,.13);box-shadow:0 20px 60px rgba(7,11,24,.24)}
-.orb-showcase.compact .orb-showcase-caption{left:14px;right:14px;bottom:12px;min-height:31px;max-width:calc(100% - 28px);padding:0 10px}
-.orb-showcase.compact .orb-showcase-caption strong{font-size:10px}
-.orb-showcase.compact .orb-showcase-caption span:last-child{display:none}
+/* Waiting room: the same real renderer becomes a subtle card background. The
+   sealed live maze is still never used; foreground controls remain normal DOM. */
+.real-orb-hero{position:relative;overflow:hidden;isolation:isolate}
+.real-orb-hero>.waiting-orb-showcase{z-index:0;opacity:.22;inset:-9% -14% -8% 30%!important;border-radius:inherit}
+.dark .real-orb-hero>.waiting-orb-showcase{opacity:.31}
+.real-orb-hero:before{content:'';position:absolute;z-index:1;inset:0;pointer-events:none;background:linear-gradient(105deg,color-mix(in srgb,var(--surface) 96%,transparent) 0%,color-mix(in srgb,var(--surface) 87%,transparent) 48%,color-mix(in srgb,var(--surface) 58%,transparent) 100%)}
+.real-orb-hero:after{z-index:1}
+.real-orb-hero>:not(.waiting-orb-showcase){position:relative;z-index:2}
 
 @media(max-width:760px){
-  .game-world-section{padding:4px 0 58px}
-  .game-world-head{grid-template-columns:1fr;gap:12px;margin-bottom:16px}
-  .game-world-head h2{font-size:36px}
-  .game-world-head p{font-size:13px}
-  .orb-showcase{aspect-ratio:4/3;min-height:0;border-radius:22px}
-  .orb-showcase-caption{left:12px;right:12px;bottom:10px;max-width:calc(100% - 24px);width:auto;justify-content:center}
-  .orb-showcase-caption span:last-child{display:none}
-  .waiting-game-window{margin-top:14px;padding:8px;border-radius:18px}
-  .waiting-game-window-head{align-items:flex-start;flex-direction:column;gap:3px;padding:4px 6px 8px}
-  .waiting-game-window-head small{text-align:left;line-height:1.4}
-  .orb-showcase.compact{aspect-ratio:4/3;min-height:0;border-radius:13px}
+  .home-orb-showcase{inset:-3% -42% -5% 12%!important;opacity:.17;-webkit-mask-image:radial-gradient(ellipse at 62% 54%,#000 0 32%,rgba(0,0,0,.72) 55%,transparent 82%);mask-image:radial-gradient(ellipse at 62% 54%,#000 0 32%,rgba(0,0,0,.72) 55%,transparent 82%)}
+  .dark .home-orb-showcase{opacity:.25}
+  .hero-game-backdrop:after{background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 72%,transparent),color-mix(in srgb,var(--bg) 90%,transparent) 48%,var(--bg) 100%)}
+  .real-orb-hero>.waiting-orb-showcase{inset:2% -42% 0 26%!important;opacity:.16}
+  .dark .real-orb-hero>.waiting-orb-showcase{opacity:.23}
+  .real-orb-hero:before{background:linear-gradient(100deg,color-mix(in srgb,var(--surface) 97%,transparent),color-mix(in srgb,var(--surface) 75%,transparent))}
 }
-@media(prefers-reduced-motion:reduce){
-  .orb-showcase-canvas{transition:none}
-}
+@media(prefers-reduced-motion:reduce){.orb-showcase-canvas{transition:none}}

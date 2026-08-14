@@ -33,17 +33,8 @@ export default async function Home() {
   const next = orbs.find((orb) => orb.startsAt > now);
 
   return <>
-    <section className="hero"><div className="hero-grid"><div><div className="eyebrow">The gamified viral marketing protocol</div><h1>Put up a reward. <span className="gradient-text">Drop an Orb.</span> Grow your community.</h1><p>Create a live glass-marble challenge for your followers. Fund the prize with a Solana token. First valid finish wins.</p><div className="hero-actions"><Link className="btn-primary" href="/create">Create an Orb</Link><a className="btn-secondary" href="#live">Find a live Orb</a></div><div className="trust"><span>Free to play</span><span>Skill decides</span><span>Prize escrowed before launch</span></div></div><div className="visual"><Image src="/orbs-logo-512.png" width={512} height={512} alt="" priority/><div className="visual-card"><span className="eyebrow">{next ? "Starting soon" : orbs.some((orb) => orb.startsAt <= now) ? "Race live" : "Next Orb"}</span><strong>{next ? formatLaunch(next.startsAt, now) : orbs.some((orb) => orb.startsAt <= now) ? "LIVE" : "—"}</strong><small>{orbs.length ? "One link. One maze. First valid finish wins." : "No funded public Orbs are waiting right now."}</small></div></div></div></section>
+    <section className="hero hero-game-backdrop"><OrbShowcase background className="home-orb-showcase"/><div className="hero-grid"><div><div className="eyebrow">The gamified viral marketing protocol</div><h1>Put up a reward. <span className="gradient-text">Drop an Orb.</span> Grow your community.</h1><p>Create a live glass-marble challenge for your followers. Fund the prize with a Solana token. First valid finish wins.</p><div className="hero-actions"><Link className="btn-primary" href="/create">Create an Orb</Link><a className="btn-secondary" href="#live">Find a live Orb</a></div><div className="trust"><span>Free to play</span><span>Skill decides</span><span>Prize escrowed before launch</span></div></div><div className="visual"><Image src="/orbs-logo-512.png" width={512} height={512} alt="" priority/><div className="visual-card"><span className="eyebrow">{next ? "Starting soon" : orbs.some((orb) => orb.startsAt <= now) ? "Race live" : "Next Orb"}</span><strong>{next ? formatLaunch(next.startsAt, now) : orbs.some((orb) => orb.startsAt <= now) ? "LIVE" : "—"}</strong><small>{orbs.length ? "One link. One maze. First valid finish wins." : "No funded public Orbs are waiting right now."}</small></div></div></div></section>
 
-    <section className="game-world-section" aria-label="Actual Orbs gameplay preview">
-      <div className="container">
-        <div className="game-world-head">
-          <div><span className="eyebrow">Inside an Orb</span><h2>The game is the event.</h2></div>
-          <p>This is the real Orbs visual world running a representative maze from the production generator. No physics, wallet logic or live race state is loaded here.</p>
-        </div>
-        <OrbShowcase />
-      </div>
-    </section>
 
     <section className="section section-soft" id="live"><div className="container"><div className="section-head"><div><span className="eyebrow">Live network</span><h2>Funded Orbs happening for real.</h2></div><p>This feed is generated from funded Orbs in the live store. No demo hosts, fake prizes, or placeholder races.</p></div>
       {orbs.length ? <div className="cards3 live-orb-grid">{orbs.map((orb) => {
