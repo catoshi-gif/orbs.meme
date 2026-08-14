@@ -12,9 +12,10 @@ function short(w:string|null){return w?`${w.slice(0,6)}…${w.slice(-4)}`:"—"}
 type Metrics = {
   generatedAt:string;
   totals: Record<string, number|null>;
-  xMetrics:{impressionsCollected:boolean;reason:string};
+  xMetrics:{enabled:boolean;trackedPosts:number;estimatedRefreshUsd:number;totalImpressions:number;reason:string};
   games:Array<{
-    slug:string;id:string;createdAt:number;startsAt:number;endsAt:number;phase:string;hostWallet:string;hostXUsername:string;
+    slug:string;id:string;createdAt:number;startsAt:number;endsAt:number;phase:string;hostWallet:string;hostXUsername:string;hostSharePostId:string|null;
+    xImpressions:number|null;xLikes:number|null;xReposts:number|null;xReplies:number|null;xQuotes:number|null;xMetricsRefreshedAt:number|null;
     participants:number;verifiedEntryPosts:number;prizeUsd:number;prizeTokenAmount:number;tokenSymbol:string;feeUsd:number;
     winnerXUsername:string|null;winnerWallet:string|null;verifiedElapsedMs:number|null;claimed:boolean;fundingTxSignature:string|null;claimTxSignature:string|null;
   }>;
@@ -29,6 +30,8 @@ export default function AdminDashboard(){
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState<string|null>(null);
   const [metrics,setMetrics]=useState<Metrics|null>(null);
+  const [xBusy,setXBusy]=useState(false);
+  const [attachValues,setAttachValues]=useState<Record<string,string>>({});
 
   const loadStatus=async()=>{
     const r=await fetch("/api/admin/auth/status",{cache:"no-store"});
@@ -41,6 +44,27 @@ export default function AdminDashboard(){
     const p=await r.json() as {ok?:boolean;metrics?:Metrics;error?:string};
     if(!r.ok||!p.ok||!p.metrics) throw new Error(p.error||"Could not load admin metrics");
     setMetrics(p.metrics);
+  };
+  const refreshX=async()=>{
+    setXBusy(true);setError(null);
+    try{
+      const r=await fetch("/api/admin/x-metrics/refresh",{method:"POST",headers:{Accept:"application/json"}});
+      const p=await r.json() as {ok?:boolean;result?:{postsRead:number;estimatedCostUsd:number;totalImpressions:number};error?:string};
+      if(!r.ok||!p.ok) throw new Error(p.error||"Could not refresh X reach");
+      await loadMetrics();
+    }catch(e){setError(e instanceof Error?e.message:"Could not refresh X reach")}finally{setXBusy(false)}
+  };
+  const attachPost=async(slug:string)=>{
+    const postUrl=(attachValues[slug]||"").trim();
+    if(!postUrl){setError("Paste the host X post URL first.");return}
+    setXBusy(true);setError(null);
+    try{
+      const r=await fetch("/api/admin/x-metrics/attach",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slug,postUrl})});
+      const p=await r.json() as {ok?:boolean;error?:string};
+      if(!r.ok||!p.ok) throw new Error(p.error||"Could not attach X post");
+      setAttachValues(v=>({...v,[slug]:""}));
+      await loadMetrics();
+    }catch(e){setError(e instanceof Error?e.message:"Could not attach X post")}finally{setXBusy(false)}
   };
   useEffect(()=>{void loadStatus()},[]);
   useEffect(()=>{if(authenticated && wallet && wallet===sessionWallet) void loadMetrics().catch(e=>setError(e instanceof Error?e.message:"Could not load metrics"))},[authenticated,wallet,sessionWallet]);
@@ -70,13 +94,13 @@ export default function AdminDashboard(){
     ["Funded Orbs",T.fundedOrbs],["Qualified entries",T.totalQualifiedEntries],["Unique entrant bindings",T.uniqueEntrantBindings],
     ["Verified winners",T.completedWithWinner],["Claimed prizes",T.claimedPrizes],["Prize volume",money(Number(T.totalWinnerPrizeUsdAtFunding||0))],
     ["Protocol fees",money(Number(T.totalProtocolFeesUsdAtFunding||0))],["Unique hosts",T.uniqueHostWallets],
-    ["Avg entries / Orb",Number(T.averageEntriesPerFundedOrb||0).toFixed(2)],["Fastest win",duration(T.fastestVerifiedWinMs as number|null)]
+    ["Avg entries / Orb",Number(T.averageEntriesPerFundedOrb||0).toFixed(2)],["X host impressions",metrics.xMetrics.totalImpressions.toLocaleString()],["Fastest win",duration(T.fastestVerifiedWinMs as number|null)]
   ];
   return <div className="admin-dashboard">
-    <div className="admin-toolbar"><div><span className="eyebrow">Private operator console</span><h1>Orbs network metrics</h1><p>Generated {new Date(metrics.generatedAt).toLocaleString()}</p></div><button className="btn-secondary" onClick={()=>void loadMetrics().catch(e=>setError(e instanceof Error?e.message:"Refresh failed"))}>Refresh</button></div>
+    <div className="admin-toolbar"><div><span className="eyebrow">Private operator console</span><h1>Orbs network metrics</h1><p>Generated {new Date(metrics.generatedAt).toLocaleString()}</p></div><div className="admin-toolbar-actions"><button className="btn-secondary" onClick={()=>void loadMetrics().catch(e=>setError(e instanceof Error?e.message:"Refresh failed"))}>Refresh DB</button><button className="btn-primary" onClick={()=>void refreshX()} disabled={xBusy||!metrics.xMetrics.enabled||metrics.xMetrics.trackedPosts===0}>{xBusy?"Refreshing X…":`Refresh X reach · ~${money(metrics.xMetrics.estimatedRefreshUsd)}`}</button></div></div>
     <div className="admin-stats">{cards.map(([k,v])=><div className="card admin-stat" key={String(k)}><span>{k}</span><strong>{String(v??"—")}</strong></div>)}</div>
-    <div className="card admin-x-note"><strong>X impressions intentionally not collected</strong><p>{metrics.xMetrics.reason} Verified entry-post counts are tracked without extra X reads.</p></div>
-    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Orb</th><th>Host</th><th>Phase</th><th>Prize</th><th>Entries</th><th>Winner</th><th>Claimed</th><th>Launch</th></tr></thead><tbody>{metrics.games.map(g=><tr key={g.id}><td><a href={`/orb/${g.slug}`}>{g.slug}</a><small>{short(g.hostWallet)}</small></td><td><a href={`https://x.com/${encodeURIComponent(g.hostXUsername)}`} target="_blank" rel="noreferrer">@{g.hostXUsername}</a></td><td>{g.phase}</td><td>{g.prizeTokenAmount.toLocaleString(undefined,{maximumFractionDigits:6})} {g.tokenSymbol}<small>{money(g.prizeUsd)}</small></td><td>{g.participants}<small>{g.verifiedEntryPosts} verified posts</small></td><td>{g.winnerXUsername?<><a href={`https://x.com/${encodeURIComponent(g.winnerXUsername)}`} target="_blank" rel="noreferrer">@{g.winnerXUsername}</a><small>{short(g.winnerWallet)}</small></>:"—"}</td><td>{g.claimed?"yes":"no"}</td><td>{new Date(g.startsAt).toLocaleString()}</td></tr>)}</tbody></table></div>
+    <div className="card admin-x-note"><strong>Manual X reach analytics</strong><p>{metrics.xMetrics.reason} Tracked host posts: {metrics.xMetrics.trackedPosts}. Cached total impressions: {metrics.xMetrics.totalImpressions.toLocaleString()}. X currently charges about $0.005 per Post read, so the button estimates the cost before you refresh.</p></div>
+    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Orb</th><th>Host</th><th>Phase</th><th>Prize</th><th>Entries</th><th>X reach</th><th>Winner</th><th>Claimed</th><th>Launch</th></tr></thead><tbody>{metrics.games.map(g=><tr key={g.id}><td><a href={`/orb/${g.slug}`}>{g.slug}</a><small>{short(g.hostWallet)}</small></td><td><a href={`https://x.com/${encodeURIComponent(g.hostXUsername)}`} target="_blank" rel="noreferrer">@{g.hostXUsername}</a>{g.hostSharePostId?<small><a href={`https://x.com/${encodeURIComponent(g.hostXUsername)}/status/${g.hostSharePostId}`} target="_blank" rel="noreferrer">host post ↗</a></small>:<div className="admin-x-attach"><input value={attachValues[g.slug]||""} onChange={e=>setAttachValues(v=>({...v,[g.slug]:e.target.value}))} placeholder="paste host post URL" /><button className="mini-action" onClick={()=>void attachPost(g.slug)} disabled={xBusy}>attach</button></div>}</td><td>{g.phase}</td><td>{g.prizeTokenAmount.toLocaleString(undefined,{maximumFractionDigits:6})} {g.tokenSymbol}<small>{money(g.prizeUsd)}</small></td><td>{g.participants}<small>{g.verifiedEntryPosts} verified posts</small></td><td>{g.xImpressions===null?"—":g.xImpressions.toLocaleString()}<small>{g.xImpressions===null?g.hostSharePostId?"not refreshed yet":"attach host post first":`${g.xReposts||0} reposts · ${g.xLikes||0} likes`}</small></td><td>{g.winnerXUsername?<><a href={`https://x.com/${encodeURIComponent(g.winnerXUsername)}`} target="_blank" rel="noreferrer">@{g.winnerXUsername}</a><small>{short(g.winnerWallet)}</small></>:"—"}</td><td>{g.claimed?"yes":"no"}</td><td>{new Date(g.startsAt).toLocaleString()}</td></tr>)}</tbody></table></div>
     {error?<div className="form-error">{error}</div>:null}
   </div>
 }

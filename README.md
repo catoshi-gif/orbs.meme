@@ -93,3 +93,18 @@ The local V0.2 play route derives a deterministic development seed from the Orb 
 8. Turnkey winner claim
 9. Analytics + share-card measurement
 10. Mainnet public beta
+
+
+### Optional private admin X reach metrics
+
+The private `/app/admin` dashboard can refresh the public reach of creator X posts only when an authenticated admin presses the X refresh button. There is no background polling.
+
+Set this server-only Vercel environment variable to the App Bearer Token from the X Developer Console:
+
+```text
+X_BEARER_TOKEN=...
+```
+
+Creator posts made after this feature ships can be linked from the creator Share step with **Verify creator post**. For older Orbs, paste the host post URL into the private admin table once. The server verifies that the post author matches the Orb host before attaching it.
+
+Never prefix `X_BEARER_TOKEN` with `NEXT_PUBLIC_`.

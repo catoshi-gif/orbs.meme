@@ -79,7 +79,7 @@ export default function TurnstileGate({ slug, wallet, enabled, onVerified }: Pro
     };
   }, [enabled, onVerified, scriptReady, siteKey, submitToken, verified]);
 
-  if (!enabled) return <small>Complete X, follow, and wallet verification first.</small>;
+  if (!enabled) return <small>Complete the steps above first.</small>;
   if (configured === false || !siteKey) return <small className="q-error">Turnstile is not configured yet. Add the Cloudflare keys to enable competitive entry.</small>;
   if (verified) return <small className="human-proof-saved">✓ Human proof saved for this Orb</small>;
 

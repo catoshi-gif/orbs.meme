@@ -99,10 +99,10 @@ export default function EligibilityGate({
   if (confirmed) return <div className={`eligibility-gate confirmed ${compact ? "compact" : ""}`}><strong>18+ eligibility confirmed ✓</strong><small>Saved for this wallet under the current Rules and Terms.</small></div>;
 
   return <div className={`eligibility-gate ${compact ? "compact" : ""}`}>
-    <div><strong>Age & eligibility</strong><small>Enter your date of birth. We use it once to determine eligibility and do not store your date of birth.</small></div>
+    <div className="eligibility-heading"><strong>Confirm your age once</strong><small>Enter your date of birth to confirm eligibility. We check your age, then discard the date itself.</small></div>
     <div className="eligibility-controls">
-      <input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} aria-label="Date of birth" />
-      <button type="button" className="mini-action" onClick={() => void verify()} disabled={checking || !birthDate}>{checking ? "Confirming…" : "Confirm 18+"}</button>
+      <label className="eligibility-date"><span>Date of birth</span><input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} aria-label="Date of birth" /></label>
+      <button type="button" className="mini-action eligibility-submit" onClick={() => void verify()} disabled={checking || !birthDate}>{checking ? "Confirming…" : "Confirm eligibility"}</button>
     </div>
     <small className="eligibility-legal">By continuing, you confirm the information is accurate and agree to the current <Link href="/rules">Official Rules</Link>, <Link href="/terms">Terms</Link>, and <Link href="/privacy">Privacy Notice</Link>.</small>
     {error ? <small className="q-error">{error}</small> : null}

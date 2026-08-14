@@ -14,6 +14,13 @@ export type AdminGameRow = {
   phase: "funding-pending" | "upcoming" | "live" | "won" | "expired";
   hostWallet: string;
   hostXUsername: string;
+  hostSharePostId: string | null;
+  xImpressions: number | null;
+  xLikes: number | null;
+  xReposts: number | null;
+  xReplies: number | null;
+  xQuotes: number | null;
+  xMetricsRefreshedAt: number | null;
   participants: number;
   verifiedEntryPosts: number;
   prizeUsd: number;
@@ -28,7 +35,7 @@ export type AdminGameRow = {
   claimTxSignature: string | null;
 };
 
-async function allOrbRecords(limit = 500) {
+export async function allOrbRecords(limit = 500) {
   let cursor = "0";
   let passes = 0;
   const records: OrbRecord[] = [];
@@ -60,8 +67,30 @@ function phaseFor(record: OrbRecord, winner: WinnerRecord | undefined, now: numb
   return "expired";
 }
 
+type CachedXMetrics = {
+  postId: string;
+  impressions: number;
+  likes: number;
+  reposts: number;
+  replies: number;
+  quotes: number;
+  refreshedAt: number;
+};
+
+const xMetricKey = (postId: string) => `orbs:v1:admin:xmetrics:${postId}`;
+
 export async function getAdminMetrics() {
   const records = await allOrbRecords();
+  const postIds = records.map((r) => r.hostSharePostId).filter((id): id is string => Boolean(id));
+  const cachedX = new Map<string, CachedXMetrics>();
+  if (postIds.length) {
+    const raw = await redisCommand<Array<string | null>>(["MGET", ...postIds.map(xMetricKey)]);
+    postIds.forEach((id, index) => {
+      const value = raw?.[index];
+      if (!value) return;
+      try { cachedX.set(id, JSON.parse(value) as CachedXMetrics); } catch {}
+    });
+  }
   const winners = await getWinners(records.map((r) => r.id));
   const entrantMembers = await Promise.all(records.map(async (record) => {
     const members = await redisCommand<string[]>(["SMEMBERS", `orbs:v1:entrants:${record.slug}`]);
@@ -72,6 +101,7 @@ export async function getAdminMetrics() {
   const rows: AdminGameRow[] = records.map((record, index) => {
     const winner = winners.get(record.id);
     const participants = entrantMembers[index]?.length || 0;
+    const x = record.hostSharePostId ? cachedX.get(record.hostSharePostId) : undefined;
     return {
       slug: record.slug,
       id: record.id,
@@ -81,6 +111,13 @@ export async function getAdminMetrics() {
       phase: phaseFor(record, winner, now),
       hostWallet: record.hostWallet,
       hostXUsername: record.hostX?.username || "unknown",
+      hostSharePostId: record.hostSharePostId || null,
+      xImpressions: x?.impressions ?? null,
+      xLikes: x?.likes ?? null,
+      xReposts: x?.reposts ?? null,
+      xReplies: x?.replies ?? null,
+      xQuotes: x?.quotes ?? null,
+      xMetricsRefreshedAt: x?.refreshedAt ?? null,
       participants,
       verifiedEntryPosts: participants,
       prizeUsd: Number(record.prizeUsd || 0),
@@ -127,8 +164,13 @@ export async function getAdminMetrics() {
       fastestVerifiedWinMs: finishTimes.length ? Math.min(...finishTimes) : null,
     },
     xMetrics: {
-      impressionsCollected: false,
-      reason: "Automatic X impression polling is intentionally disabled to avoid API spend and because creator share-post IDs are not currently stored as canonical game data.",
+      enabled: Boolean((process.env.X_BEARER_TOKEN || "").trim()),
+      trackedPosts: postIds.length,
+      estimatedRefreshUsd: postIds.length * 0.005,
+      totalImpressions: rows.reduce((sum, row) => sum + Number(row.xImpressions || 0), 0),
+      reason: postIds.length
+        ? "X reach is refreshed only when an authenticated admin explicitly requests it. No background polling."
+        : "No creator X posts have been linked yet. Future creator posts can be verified after sharing; older games can be attached manually from this dashboard.",
     },
     games: rows,
   };

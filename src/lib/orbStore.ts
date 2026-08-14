@@ -35,6 +35,8 @@ export type OrbRecord = {
   priceQuotedAt: number;
   fundingQuoteExpiresAt: number;
   fundingTxSignature?: string;
+  hostSharePostId?: string;
+  hostSharePostCreatedAt?: number;
   orbPda?: string;
   prizeVault?: string;
   generatorVersion: string;
@@ -292,6 +294,20 @@ export async function finalizeFundedOrb(slug: string, fundingTxSignature: string
 export async function getOrbRecord(slug: string) {
   if (!upstashConfigured()) return null;
   return redisGetJson<OrbRecord>(orbKey(slug));
+}
+
+export async function recordHostSharePost(slug: string, hostXId: string, postId: string, postCreatedAt: number) {
+  const record = await getOrbRecord(slug);
+  if (!record) throw new Error("Orb was not found");
+  if (record.status === "funding-pending") throw new Error("Fund the Orb before verifying its host post");
+  if (record.hostX.id !== hostXId) throw new Error("The connected X account is not this Orb's host");
+  if (!/^\d{5,25}$/.test(postId)) throw new Error("Invalid X post ID");
+  const updated: OrbRecord = { ...record, hostSharePostId: postId, hostSharePostCreatedAt: postCreatedAt };
+  const currentTtl = Number(await redisCommand<number>(["TTL", orbKey(slug)]) || -1);
+  const ttl = currentTtl > 0 ? currentTtl : ORB_HISTORY_TTL_SECONDS;
+  const stored = await redisCommand<string>(["SET", orbKey(slug), JSON.stringify(updated), "EX", String(ttl)]);
+  if (stored !== "OK") throw new Error("Could not save the host X post");
+  return publicRecord(updated);
 }
 
 export async function getPublicOrb(slug: string): Promise<PublicOrbRecord | null> {

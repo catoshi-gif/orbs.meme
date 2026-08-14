@@ -66,6 +66,11 @@ export default function CreateWizard() {
   const [copied, setCopied] = useState(false);
   const [shareCardReady, setShareCardReady] = useState(false);
   const [shareCardFailed, setShareCardFailed] = useState(false);
+  const [hostShareStarted, setHostShareStarted] = useState(false);
+  const [hostShareVerified, setHostShareVerified] = useState(false);
+  const [hostSharePostUrl, setHostSharePostUrl] = useState<string | null>(null);
+  const [hostShareBusy, setHostShareBusy] = useState(false);
+  const [hostShareError, setHostShareError] = useState<string | null>(null);
   const [creationPolicy, setCreationPolicy] = useState<CreationPolicy | null>(null);
   const [eligibilityConfirmed, setEligibilityConfirmed] = useState(false);
   const { connected, publicKey, signMessage, signTransaction } = useWallet();
@@ -264,7 +269,35 @@ export default function CreateWizard() {
   useEffect(() => {
     setShareCardReady(false);
     setShareCardFailed(false);
+    setHostShareStarted(false);
+    setHostShareVerified(false);
+    setHostSharePostUrl(null);
+    setHostShareError(null);
   }, [createdOrb?.slug]);
+
+  const openHostShare = () => {
+    if (!createdOrb || !shareCardReady) return;
+    setHostShareStarted(true);
+    setHostShareError(null);
+    window.open(`https://x.com/intent/post?${hostShareParams.toString()}`, "_blank", "noopener,noreferrer");
+  };
+
+  const verifyHostShare = async () => {
+    if (!createdOrb) return;
+    setHostShareBusy(true);
+    setHostShareError(null);
+    try {
+      const response = await fetch(`/api/orbs/${encodeURIComponent(createdOrb.slug)}/host-share`, { method: "POST", headers: { Accept: "application/json" } });
+      const payload = await jsonPayload<{ ok?: boolean; verified?: boolean; postUrl?: string | null; error?: string }>(response);
+      if (!response.ok || !payload.ok || !payload.verified) throw new Error(payload.error || "Could not verify the creator X post");
+      setHostShareVerified(true);
+      setHostSharePostUrl(payload.postUrl || null);
+    } catch (error) {
+      setHostShareError(error instanceof Error ? error.message : "Could not verify the creator X post");
+    } finally {
+      setHostShareBusy(false);
+    }
+  };
 
   return (
     <div className="wizard-layout">
@@ -306,7 +339,8 @@ export default function CreateWizard() {
           <span className="eyebrow">Step 6 of 6</span><h2>Your Orb is sealed.</h2><p>Your share card is ready. Post it on X, then take the same waiting-room link to Discord, Telegram and every community you want at the starting line.</p>
           <div className="share-card-preview"><img src={shareCardUrl} alt={`${amount(prizeAmount)} ${token?.symbol || "SPL"} Orb share card`} onLoad={() => { setShareCardReady(true); setShareCardFailed(false); }} onError={() => { setShareCardReady(false); setShareCardFailed(true); }} /><div><strong>{shareCardReady ? "X card ready." : shareCardFailed ? "The X card could not be prepared." : "Preparing the X card…"}</strong><span>{shareCardReady ? "The exact canonical image is now warmed and ready for X to crawl." : shareCardFailed ? "Retry this page before sharing so X does not receive an incomplete link preview." : "The share button unlocks only after the image has loaded successfully."}</span></div></div>
           <div className="sealed-orb"><span>GAME COMMITMENT</span><code>{createdOrb.commitment}</code><small>SHA-256 commitment · seed remains encrypted server-side until launch</small></div>
-          <div className="fields"><div className="field full"><label>Waiting-room URL</label><input value={shareUrl} readOnly /></div><div className="share-actions field full"><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button>{shareCardReady ? <a className="btn-secondary" href={`https://x.com/intent/post?${hostShareParams.toString()}`} target="_blank" rel="noreferrer">Post with card on X ↗</a> : <button className="btn-secondary" disabled>{shareCardFailed ? "Card unavailable" : "Preparing X card…"}</button>}<a className="btn-secondary" href={shareCardUrl} download={`orbs-${createdOrb.slug}.jpg`} target="_blank" rel="noreferrer">Download card</a></div></div>
+          <div className="fields"><div className="field full"><label>Waiting-room URL</label><input value={shareUrl} readOnly /></div><div className="share-actions field full"><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button>{shareCardReady ? <button className="btn-secondary" type="button" onClick={openHostShare}>Post with card on X ↗</button> : <button className="btn-secondary" disabled>{shareCardFailed ? "Card unavailable" : "Preparing X card…"}</button>}<a className="btn-secondary" href={shareCardUrl} download={`orbs-${createdOrb.slug}.jpg`} target="_blank" rel="noreferrer">Download card</a></div></div>
+          {hostShareStarted || hostShareVerified ? <div className={`host-share-proof ${hostShareVerified ? "verified" : ""}`}><div><strong>{hostShareVerified ? "Creator post verified ✓" : "Posted it?"}</strong><span>{hostShareVerified ? "This post is now linked to the Orb so private admin analytics can refresh its public X reach on demand." : "Verify once so Orbs can remember the host post ID for manual reach analytics. This does not affect the game."}</span></div>{hostShareVerified ? hostSharePostUrl ? <a href={hostSharePostUrl} target="_blank" rel="noreferrer">View post ↗</a> : null : <button className="mini-action" type="button" onClick={() => void verifyHostShare()} disabled={hostShareBusy}>{hostShareBusy ? "Checking…" : "Verify creator post"}</button>}{hostShareError ? <small className="q-error">{hostShareError}</small> : null}</div> : null}
           <p className="share-wide-note">Share it far and wide—the bigger the waiting room, the bigger the live moment.</p>
         </> : null}
 
