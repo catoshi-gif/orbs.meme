@@ -47,7 +47,10 @@ export function rawToTokenInput(rawAmount: string | bigint, decimals: number) {
 
 export function tokenInputToRaw(value: string, decimals: number): bigint | null {
   const text = value.trim();
-  if (!/^\d+(?:\.\d*)?$/.test(text)) return null;
+  // HTML number inputs commonly produce leading-decimal values such as `.12`.
+  // Treat `.12` and `0.12` identically while still rejecting bare `.` and
+  // non-decimal/scientific notation so the reviewed atomic amount is unambiguous.
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(text)) return null;
   const places = Math.max(0, Math.trunc(decimals || 0));
   const [wholeText, fractionText = ""] = text.split(".");
   if (fractionText.length > places && /[1-9]/.test(fractionText.slice(places))) return null;

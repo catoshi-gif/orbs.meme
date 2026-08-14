@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { createTestOrb, getActiveHostedOrb } from "@/lib/orbStore";
 import { getWalletSplTokens } from "@/lib/walletTokens";
-import { verifyPrizeQuote } from "@/lib/prizeQuote";
+import { usdMicrosForRawAmount, verifyPrizeQuote } from "@/lib/prizeQuote";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber, tokenInputToRaw } from "@/lib/prizeEconomics";
 import { getCurrentXSession } from "@/lib/xAuth";
 import { normalizeDifficulty } from "@/game/maze";
@@ -117,8 +117,11 @@ export async function POST(request: Request) {
     }
 
     const prizeTokenAmount = rawToTokenNumber(prizeRaw, token.decimals);
-    const prizeUsd = prizeTokenAmount * quote.usdPrice;
-    if (prizeUsd < MIN_PRIZE_USD) throw new Error(`Winner prize must be at least $${MIN_PRIZE_USD.toFixed(2)} before the $${ORBS_FEE_USD.toFixed(2)} Orbs fee`);
+    const prizeUsdMicros = usdMicrosForRawAmount(prizeRaw, token.decimals, quote.usdPrice);
+    const minimumPrizeUsdMicros = BigInt(Math.round(MIN_PRIZE_USD * 1_000_000));
+    if (prizeUsdMicros < minimumPrizeUsdMicros) {
+      throw new Error(`Winner prize must be at least $${MIN_PRIZE_USD.toFixed(2)}; the $${ORBS_FEE_USD.toFixed(2)} Orbs fee is added separately`);
+    }
 
     const orb = await createTestOrb({
       hostWallet,
