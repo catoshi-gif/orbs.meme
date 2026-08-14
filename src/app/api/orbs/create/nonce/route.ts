@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasEligibilityReceipt } from "@/lib/eligibility";
 import { PublicKey } from "@solana/web3.js";
 import { createHostAuthorizationChallenge } from "@/lib/hostAuthorization";
 import { tokenInputToRaw } from "@/lib/prizeEconomics";
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Invalid wallet or token mint" }, { status: 400 });
   }
   try {
+    if (!await hasEligibilityReceipt(wallet)) return NextResponse.json({ ok: false, error: "Confirm 18+ eligibility for this wallet before creating an Orb" }, { status: 403 });
     const quote = verifyPrizeQuote(body.prizeQuoteToken);
     if (!quote || quote.wallet !== wallet || quote.mint !== mint) throw new Error("Funding quote expired or does not match this wallet and token");
     const prizeText = typeof body.prizeTokenAmount === "string"

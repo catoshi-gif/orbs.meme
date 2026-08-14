@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import ConnectWallet from "@/components/ConnectWallet";
+import EligibilityGate from "@/components/EligibilityGate";
 import XConnect, { type XUser } from "@/components/XConnect";
 import TokenPicker, { type WalletSplToken } from "@/components/TokenPicker";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
@@ -66,6 +67,7 @@ export default function CreateWizard() {
   const [shareCardReady, setShareCardReady] = useState(false);
   const [shareCardFailed, setShareCardFailed] = useState(false);
   const [creationPolicy, setCreationPolicy] = useState<CreationPolicy | null>(null);
+  const [eligibilityConfirmed, setEligibilityConfirmed] = useState(false);
   const { connected, publicKey, signMessage, signTransaction } = useWallet();
 
   // Creator input is the TOTAL wallet commitment. The Orbs fee is included
@@ -87,7 +89,7 @@ export default function CreateWizard() {
   const rawCoverageReady = Boolean(token && totalRaw !== null && totalRaw > BigInt(0) && totalRaw <= BigInt(token.rawAmount));
   const launchMs = new Date(`${launchDate}T${launchTime}:00`).getTime();
   const creationBlocked = Boolean(creationPolicy?.activeOrb && !creationPolicy.adminExempt);
-  const identityReady = connected && Boolean(publicKey) && Boolean(signMessage) && Boolean(signTransaction) && Boolean(xUser && !xUser.protected) && !creationBlocked;
+  const identityReady = connected && Boolean(publicKey) && Boolean(signMessage) && Boolean(signTransaction) && Boolean(xUser && !xUser.protected) && eligibilityConfirmed && !creationBlocked;
   const prizeReady = Boolean(token?.eligible && quote && prizeRaw !== null && prizeRaw > BigInt(0) && prizeUsd >= MIN_PRIZE_USD && rawCoverageReady);
   const launchReady = Number.isFinite(launchMs) && launchMs > Date.now() + ORB_CREATION_MIN_LEAD_MS;
 
@@ -271,7 +273,7 @@ export default function CreateWizard() {
         {step === 0 ? <>
           <span className="eyebrow">Step 1 of 6</span><h2>Who is hosting?</h2>
           <p>Connect the Solana wallet that will fund the prize and the public X account whose community will play it.</p>
-          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>{publicKey?.toBase58().slice(0, 6)}…{publicKey?.toBase58().slice(-6)}</small></div></div> : <ConnectWallet />}{connected && (!signMessage || !signTransaction) ? <small className="field-warning">This wallet must support both message signing and Solana transaction signing to create an Orb.</small> : null}{creationBlocked && creationPolicy?.activeOrb ? <div className="active-orb-warning"><strong>One Orb is already active.</strong><span>This wallet can create its next Orb after the current race closes.</span><Link href={`/orb/${creationPolicy.activeOrb.slug}`}>Open active Orb →</Link></div> : null}{creationPolicy?.adminExempt ? <small className="field-help">Admin test wallet: concurrent Orb creation is enabled.</small> : null}</div><div className="field full"><label>X host account</label><XConnect returnTo="/create" requirePublic onChange={setXUser} />{xUser?.protected ? <small className="field-warning">Orb hosts must be public so every player can complete the Follow Host requirement immediately.</small> : null}</div></div>
+          <div className="fields"><div className="field full"><label>Solana wallet</label>{connected ? <div className="q-row ready"><span className="q-num">✓</span><div><strong>Wallet connected</strong><small>{publicKey?.toBase58().slice(0, 6)}…{publicKey?.toBase58().slice(-6)}</small></div></div> : <ConnectWallet />}{connected && (!signMessage || !signTransaction) ? <small className="field-warning">This wallet must support both message signing and Solana transaction signing to create an Orb.</small> : null}{connected ? <EligibilityGate onChange={setEligibilityConfirmed} /> : null}{creationBlocked && creationPolicy?.activeOrb ? <div className="active-orb-warning"><strong>One Orb is already active.</strong><span>This wallet can create its next Orb after the current race closes.</span><Link href={`/orb/${creationPolicy.activeOrb.slug}`}>Open active Orb →</Link></div> : null}{creationPolicy?.adminExempt ? <small className="field-help">Admin test wallet: concurrent Orb creation is enabled.</small> : null}</div><div className="field full"><label>X host account</label><XConnect returnTo="/create" requirePublic onChange={setXUser} />{xUser?.protected ? <small className="field-warning">Orb hosts must be public so every player can complete the Follow Host requirement immediately.</small> : null}</div></div>
         </> : null}
 
         {step === 1 ? <>
