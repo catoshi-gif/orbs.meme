@@ -45,6 +45,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     } catch {}
   }
   const count = await redisCommand<number>(["INCR", budgetKey]);
+  if (count === null) {
+    return NextResponse.json(
+      { ok: false, error: "Protected claim signing is temporarily unavailable. Please retry shortly." },
+      { status: 503 },
+    );
+  }
   if (count === 1) await redisCommand<number>(["EXPIRE", budgetKey, "86400"]);
   if (count > 10) return NextResponse.json({ ok: false, error: "Claim signing retry limit reached for this Orb. Contact Orbs support if the prize is still unclaimed." }, { status: 429 });
   const lockKey = `${prepKey}:lock`;
