@@ -179,3 +179,56 @@ body:has(.game-page) main{min-height:100dvh}
   .real-orb-hero:before{background:linear-gradient(100deg,color-mix(in srgb,var(--surface) 97%,transparent),color-mix(in srgb,var(--surface) 75%,transparent))}
 }
 @media(prefers-reduced-motion:reduce){.orb-showcase-canvas{transition:none}}
+
+
+/* -------------------------------------------------------------------------- */
+/* Theme-aware ambient-game contrast + local launch time                      */
+/* -------------------------------------------------------------------------- */
+/* The real-renderer backgrounds are intentionally darker/stronger in light
+   mode so pale surfaces do not wash the maze away. Dark mode keeps the exact
+   presentation that already looks right. */
+html:not(.dark) .home-orb-showcase{
+  opacity:.33;
+  filter:brightness(.82) contrast(1.14) saturate(1.08);
+}
+html:not(.dark) .real-orb-hero>.waiting-orb-showcase{
+  opacity:.30;
+  filter:brightness(.80) contrast(1.15) saturate(1.08);
+}
+.dark .home-orb-showcase,
+.dark .real-orb-hero>.waiting-orb-showcase{filter:none}
+
+.local-launch-time{
+  display:grid;
+  gap:4px;
+  margin:12px 0 0;
+  padding:11px 13px;
+  width:max-content;
+  max-width:100%;
+  border:1px solid color-mix(in srgb,var(--border) 82%,transparent);
+  border-radius:12px;
+  background:color-mix(in srgb,var(--surface) 78%,transparent);
+  backdrop-filter:blur(10px);
+}
+.local-launch-time span{
+  color:#5B5CF6;
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.13em;
+}
+.local-launch-time strong{
+  font:800 13px Lato,sans-serif;
+  color:var(--text);
+}
+.local-launch-time small{
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.45;
+}
+
+@media(max-width:760px){
+  html:not(.dark) .home-orb-showcase{opacity:.25}
+  html:not(.dark) .real-orb-hero>.waiting-orb-showcase{opacity:.24}
+  .local-launch-time{width:100%;padding:10px 11px}
+  .local-launch-time strong{font-size:12px}
+}

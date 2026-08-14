@@ -45,7 +45,7 @@ export const viewport: Viewport = {
   ],
 };
 
-const script = `(function(){try{var s=localStorage.getItem('orbs-theme');var d=s?s==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d)}catch(e){}})();`;
+const script = `(function(){try{document.documentElement.classList.add('dark')}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
