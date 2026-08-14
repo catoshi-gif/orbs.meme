@@ -76,14 +76,14 @@ function serverRelayerKeypair() {
 }
 
 function u64(value: bigint) {
-  if (value < 0n || value > 18446744073709551615n) throw new Error("u64 value out of range");
+  if (value < BigInt(0) || value > BigInt("18446744073709551615")) throw new Error("u64 value out of range");
   const out = Buffer.alloc(8);
   out.writeBigUInt64LE(value);
   return out;
 }
 
 function i64(value: bigint) {
-  if (value < -9223372036854775808n || value > 9223372036854775807n) throw new Error("i64 value out of range");
+  if (value < -BigInt("9223372036854775808") || value > BigInt("9223372036854775807")) throw new Error("i64 value out of range");
   const out = Buffer.alloc(8);
   out.writeBigInt64LE(value);
   return out;
