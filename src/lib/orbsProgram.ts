@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import bs58 from "bs58";
 import {
   Connection,
   Keypair,
@@ -57,23 +58,49 @@ export function turnkeyClaimAddress() {
   return configured;
 }
 
-function serverRelayerKeypair() {
+export function serverRelayerKeypair() {
   const raw = (process.env.ORBS_RELAYER_SECRET_KEY || "").trim();
   if (!raw) throw new Error("ORBS_RELAYER_SECRET_KEY is not configured");
+
+  let secretBytes: Uint8Array;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed) || parsed.length !== 64 || parsed.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
-      throw new Error("invalid key bytes");
+    if (raw.startsWith("[")) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        !Array.isArray(parsed) ||
+        parsed.length !== 64 ||
+        parsed.some((value) => !Number.isInteger(value) || value < 0 || value > 255)
+      ) {
+        throw new Error("invalid JSON key bytes");
+      }
+      secretBytes = Uint8Array.from(parsed as number[]);
+    } else {
+      secretBytes = bs58.decode(raw);
     }
-    const keypair = Keypair.fromSecretKey(Uint8Array.from(parsed as number[]));
-    if (!keypair.publicKey.equals(ORBS_RENT_RECEIVER_WALLET)) {
-      throw new Error("ORBS_RELAYER_SECRET_KEY does not match the hardcoded production rent receiver");
-    }
-    return keypair;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("hardcoded production rent receiver")) throw error;
-    throw new Error("ORBS_RELAYER_SECRET_KEY must be the JSON 64-byte Solana keypair array; base58 private keys are intentionally not accepted");
+  } catch {
+    throw new Error(
+      "ORBS_RELAYER_SECRET_KEY must be either a Base58 Solana private key or a JSON 64-byte keypair array",
+    );
   }
+
+  let keypair: Keypair;
+  if (secretBytes.length === 64) {
+    keypair = Keypair.fromSecretKey(secretBytes);
+  } else if (secretBytes.length === 32) {
+    keypair = Keypair.fromSeed(secretBytes);
+  } else {
+    throw new Error(
+      `ORBS_RELAYER_SECRET_KEY decoded to ${secretBytes.length} bytes; expected a 64-byte Solana secret key or 32-byte seed`,
+    );
+  }
+
+  if (!keypair.publicKey.equals(ORBS_RENT_RECEIVER_WALLET)) {
+    throw new Error(
+      "ORBS_RELAYER_SECRET_KEY does not match the hardcoded production rent receiver",
+    );
+  }
+
+  return keypair;
 }
 
 function u64(value: bigint) {

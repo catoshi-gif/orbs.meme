@@ -29,7 +29,20 @@ node <<'NODE'
 const {Keypair, PublicKey} = require('@solana/web3.js');
 const expectedRelayer = new PublicKey('GMpmAw9JDKhJHo6umea4BsfLHVSqBYXPvv8hTU4t84vN');
 const expectedClaim = new PublicKey('8aFRPMXaRwpMXErsRALq9eaa71ZvvB3fsuYpC8o5zFuk');
-const relayer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(process.env.ORBS_RELAYER_SECRET_KEY)));
+const bs58 = require('bs58').default ?? require('bs58');
+const relayerRaw = String(process.env.ORBS_RELAYER_SECRET_KEY || '').trim();
+let relayerBytes;
+if (relayerRaw.startsWith('[')) {
+  relayerBytes = Uint8Array.from(JSON.parse(relayerRaw));
+} else {
+  relayerBytes = bs58.decode(relayerRaw);
+}
+const relayer =
+  relayerBytes.length === 64
+    ? Keypair.fromSecretKey(relayerBytes)
+    : relayerBytes.length === 32
+      ? Keypair.fromSeed(relayerBytes)
+      : (() => { throw new Error(`ORBS_RELAYER_SECRET_KEY decoded to ${relayerBytes.length} bytes`); })();
 if (!relayer.publicKey.equals(expectedRelayer)) throw new Error('ORBS_RELAYER_SECRET_KEY public key mismatch');
 if (!new PublicKey(process.env.TURNKEY_CLAIM_ADDRESS).equals(expectedClaim)) throw new Error('TURNKEY_CLAIM_ADDRESS mismatch');
 NODE

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { getOrbRecord } from "@/lib/orbStore";
-import { buildClaimInstruction, loadVerifiedOrbState, turnkeyClaimAddress } from "@/lib/orbsProgram";
+import { buildClaimInstruction, loadVerifiedOrbState, serverRelayerKeypair, turnkeyClaimAddress } from "@/lib/orbsProgram";
 import { signOrbsClaimTransaction } from "@/lib/turnkeyServer";
 import { getCurrentXSession } from "@/lib/xAuth";
 import { getWinner } from "@/lib/upstashWinner";
@@ -65,11 +65,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     const claim = buildClaimInstruction(record, winnerWallet, ORBS_RENT_RECEIVER_WALLET);
     if (!claim.claimAuthority.equals(turnkeyClaimAddress())) throw new Error("Turnkey claim authority mismatch");
     const latest = await state.connection.getLatestBlockhash("confirmed");
-    const relayerRaw = (process.env.ORBS_RELAYER_SECRET_KEY || "").trim();
-    const parsed = JSON.parse(relayerRaw) as number[];
-    const { Keypair } = await import("@solana/web3.js");
-    const relayer = Keypair.fromSecretKey(Uint8Array.from(parsed));
-    if (!relayer.publicKey.equals(ORBS_RENT_RECEIVER_WALLET)) throw new Error("Relayer key mismatch");
+    const relayer = serverRelayerKeypair();
     const tx = new Transaction({ feePayer: relayer.publicKey, recentBlockhash: latest.blockhash }).add(claim.instruction);
     tx.partialSign(relayer);
     const turnkeySigned = await signOrbsClaimTransaction(tx);

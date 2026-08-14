@@ -28,7 +28,8 @@
     "three": "0.185.1",
     "@dimforge/rapier3d-compat": "0.20.0",
     "@turnkey/sdk-server": "5.1.1",
-    "@turnkey/solana": "1.1.26"
+    "@turnkey/solana": "1.1.26",
+    "bs58": "6.0.0"
   },
   "devDependencies": {
     "@types/node": "20.11.30",
