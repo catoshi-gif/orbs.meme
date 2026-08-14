@@ -1,4 +1,0 @@
-# The Solana mobile/wallet adapter dependency tree currently carries peer ranges
-# that conflict with this Next.js/React 19 web app. Keep npm's install behavior
-# deterministic across Codespaces and Vercel rather than using a one-off CLI flag.
-legacy-peer-deps=true
