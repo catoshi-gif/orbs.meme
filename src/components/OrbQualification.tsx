@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
 import EligibilityGate from "@/components/EligibilityGate";
@@ -65,6 +65,8 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   const [shareStarted, setShareStarted] = useState(false);
   const [shareLine, setShareLine] = useState("");
   const [verifyingShare, setVerifyingShare] = useState(false);
+  const [recoveringShare, setRecoveringShare] = useState(false);
+  const recoveringShareRef = useRef(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [verifiedPostUrl, setVerifiedPostUrl] = useState<string | null>(null);
   const [shareCardReady, setShareCardReady] = useState(false);
@@ -146,6 +148,20 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
     if (line.length < 12) { setShareError("Add one original line first so entry posts do not become repetitive spam."); return; }
     if (!shareCardReady) { setShareError("The X card is still preparing. Wait a moment, then post."); return; }
     setShareError(null);
+
+    // Persist the exact line before leaving Orbs. Some iOS wallet/dApp browsers
+    // reload this page when X opens, so React state alone is not durable enough.
+    void fetch(`/api/orbs/${encodeURIComponent(slug)}/qualify/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet, originalLine: line, mode: "intent" }),
+      keepalive: true,
+    }).catch(() => { /* Recovery can still fall back to manual verification. */ });
+
+    try {
+      localStorage.setItem(`orbs:share-intent:${slug}:${wallet}`, String(Date.now()));
+    } catch {}
+
     const text = `${line}\n\nI’m racing @${hostUsername} for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
     const params = new URLSearchParams({ text, url: orbShareUrl });
     window.open(`https://x.com/intent/post?${params.toString()}`, "_blank", "noopener,noreferrer");
@@ -168,10 +184,65 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
     finally { setVerifyingShare(false); }
   };
 
+
+  const recoverShare = useCallback(async (quiet = false) => {
+    if (!wallet || !xUser || shareVerified || recoveringShareRef.current) return;
+    recoveringShareRef.current = true;
+    setRecoveringShare(true);
+    if (!quiet) setShareError(null);
+    try {
+      const response = await fetch(`/api/orbs/${encodeURIComponent(slug)}/qualify/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet, mode: "recover" }),
+        cache: "no-store",
+      });
+      const payload = await apiPayload<{ verified?: boolean; pending?: boolean; postUrl?: string; error?: string }>(response);
+      if (payload.verified) {
+        setShareVerified(true);
+        setVerifiedPostUrl(payload.postUrl || null);
+        setShareStarted(true);
+        setShareError(null);
+        try { localStorage.removeItem(`orbs:share-intent:${slug}:${wallet}`); } catch {}
+      } else if (payload.pending) {
+        setShareStarted(true);
+        if (!quiet && payload.error) setShareError(payload.error);
+      }
+    } catch (error) {
+      if (!quiet) setShareError(error instanceof Error ? error.message : "Could not check X for your post");
+    } finally {
+      recoveringShareRef.current = false;
+      setRecoveringShare(false);
+    }
+  }, [shareVerified, slug, wallet, xUser]);
+
   const onXChange = useCallback((next: XUser | null) => { setXUser(next); setHumanVerified(false); setShareVerified(false); }, []);
   const readyForHuman = Boolean(xUser && followed && connected && walletVerified && eligibilityConfirmed && wallet);
   const readyForShare = readyForHuman && humanVerified;
   const qualified = readyForShare && shareVerified;
+
+  useEffect(() => {
+    if (!readyForShare || shareVerified || !wallet || !xUser) return;
+
+    let localIntent = false;
+    try { localIntent = Boolean(localStorage.getItem(`orbs:share-intent:${slug}:${wallet}`)); } catch {}
+
+    // A server-side intent check is cheap and returns without touching X when
+    // no composer was opened. This makes recovery work even if Jupiter Mobile
+    // discarded the page's local React state while the user posted on X.
+    void recoverShare(true);
+
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      window.setTimeout(() => void recoverShare(true), localIntent ? 1200 : 300);
+    };
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("focus", onReturn);
+    return () => {
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("focus", onReturn);
+    };
+  }, [readyForShare, recoverShare, shareVerified, slug, wallet, xUser]);
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("orbs:qualification-state", {
       detail: { slug, qualified, wallet: qualified ? wallet : "" },
@@ -191,7 +262,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
       <div className={`q-row ${walletVerified ? "ready" : ""}`}><span className="q-num">{walletVerified ? "✓" : "3"}</span><div style={{flex:1}}><strong>{connected ? "Verify wallet" : "Connect wallet"}</strong><small>{walletVerified ? "Signed ownership proof ready" : connected ? "One free message signature · no transaction" : "This wallet becomes your winner identity"}</small>{walletError ? <small className="q-error">{walletError}</small> : null}</div>{!connected ? <ConnectWallet compact /> : !walletVerified ? <button className="mini-action" onClick={() => void verifyWallet()} disabled={verifyingWallet || !xUser}>{verifyingWallet ? "Signing…" : "Verify"}</button> : null}</div>
       <div className={`q-row q-row-stacked ${eligibilityConfirmed ? "ready" : ""}`}><span className="q-num">{eligibilityConfirmed ? "✓" : "4"}</span><div className="q-stack"><div className="q-copy"><strong>18+ eligibility</strong><small>{eligibilityConfirmed ? "Eligibility receipt saved for this wallet" : walletVerified ? "One-time neutral age check. Your date of birth is not stored." : "Verify your wallet first"}</small></div>{walletVerified ? <EligibilityGate compact onChange={setEligibilityConfirmed} /> : null}</div></div>
       <div className={`q-row q-row-stacked q-human ${humanVerified ? "ready" : ""}`}><span className="q-num">{humanVerified ? "✓" : "5"}</span><div className="q-stack"><div className="q-copy"><strong>Human check</strong><small>{humanVerified ? "Cloudflare challenge verified" : readyForHuman ? "Complete the quick anti-bot check below." : "Finish the steps above to unlock the human check."}</small></div><TurnstileGate key={`${slug}:${xUser?.id || "none"}:${wallet}`} slug={slug} wallet={wallet} enabled={readyForHuman} onVerified={setHumanVerified} /></div></div>
-      <div className={`q-row q-share ${shareVerified ? "ready" : ""}`}><span className="q-num">{shareVerified ? "✓" : "6"}</span><div className="q-copy"><strong>Share your entry</strong><small>{shareVerified ? "Orb post verified directly from your X account" : readyForShare ? shareCardReady ? "Add your own line, post the waiting-room card, then verify it here" : "Preparing the X card before posting…" : "Complete the human check first"}</small>{shareError ? <small className="q-error">{shareError}</small> : null}{shareVerified && verifiedPostUrl ? <a className="q-post-link" href={verifiedPostUrl} target="_blank" rel="noreferrer">View verified post ↗</a> : null}</div>{readyForShare && !shareVerified ? <div className="q-share-actions"><input value={shareLine} onChange={(event) => setShareLine(event.target.value.slice(0, 70))} maxLength={70} placeholder="Why are you going to win?" aria-label="Your original line for the X post" />{shareStarted ? <><button className="mini-action" onClick={() => void verifyShare()} disabled={verifyingShare}>{verifyingShare ? "Checking…" : "Verify post"}</button><button className="q-compose-again" onClick={openShareComposer} disabled={!shareCardReady}>Open composer again</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card if X delays preview</a></> : <><button className="mini-action" onClick={openShareComposer} disabled={!shareCardReady}>{shareCardReady ? "Post on X" : "Preparing card…"}</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card</a></>}</div> : null}</div>
+      <div className={`q-row q-share ${shareVerified ? "ready" : ""}`}><span className="q-num">{shareVerified ? "✓" : "6"}</span><div className="q-copy"><strong>Share your entry</strong><small>{shareVerified ? "Orb post verified directly from your X account" : recoveringShare ? "Checking your X account for the entry post you already made…" : readyForShare ? shareStarted ? "Already posted? Orbs can find and verify it without making you post again." : shareCardReady ? "Add your own line and post the waiting-room card. Orbs will check X when you return." : "Preparing the X card before posting…" : "Complete the human check first"}</small>{shareError ? <small className="q-error">{shareError}</small> : null}{shareVerified && verifiedPostUrl ? <a className="q-post-link" href={verifiedPostUrl} target="_blank" rel="noreferrer">View verified post ↗</a> : null}</div>{readyForShare && !shareVerified ? <div className="q-share-actions"><input value={shareLine} onChange={(event) => setShareLine(event.target.value.slice(0, 70))} maxLength={70} placeholder="Why are you going to win?" aria-label="Your original line for the X post" />{shareStarted ? <><button className="mini-action" onClick={() => void recoverShare(false)} disabled={recoveringShare}>{recoveringShare ? "Checking X…" : "Check X for my post"}</button><button className="q-compose-again" onClick={openShareComposer} disabled={!shareCardReady || shareLine.trim().length < 12}>Open composer again</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card if X delays preview</a></> : <><button className="mini-action" onClick={openShareComposer} disabled={!shareCardReady}>{shareCardReady ? "Post on X" : "Preparing card…"}</button><button className="q-compose-again" onClick={() => void recoverShare(false)} disabled={recoveringShare}>{recoveringShare ? "Checking X…" : "Already posted? Check X"}</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card</a></>}</div> : null}</div>
     </div>
     <a className={`btn-primary qualify-play ${qualified && live ? "" : "disabled"}`} href={qualified && live ? `/orb/${slug}/play?wallet=${encodeURIComponent(wallet)}` : undefined} aria-disabled={!qualified || !live}>{live ? qualified ? "Enter live Orb →" : "Finish registration" : "Game opens at launch"}</a>
   </aside>;

@@ -6,6 +6,7 @@ import { enteredOrbsKey, ORB_HISTORY_TTL_SECONDS } from "@/lib/orbLifecycle";
 export const followProofKey = (sourceXId: string, targetXId: string) => `orbs:v1:x:followproof:${sourceXId}:${targetXId}`;
 export const walletProofKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:walletproof:${slug}:${xUserId}:${wallet}`;
 export const shareProofKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:shareproof:${slug}:${xUserId}:${wallet}`;
+export const shareIntentKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:shareintent:${slug}:${xUserId}:${wallet}`;
 const walletNonceKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:walletnonce:${slug}:${xUserId}:${wallet}`;
 const entrantXKey = (slug: string, xUserId: string) => `orbs:v1:entrant:x:${slug}:${xUserId}`;
 const entrantWalletKey = (slug: string, wallet: string) => `orbs:v1:entrant:wallet:${slug}:${wallet}`;
@@ -62,6 +63,36 @@ export async function verifyWalletChallenge(slug: string, xUserId: string, walle
 }
 
 export type ShareProof = { postId: string; postCreatedAt: number; confirmedAt: number };
+
+export type ShareIntent = {
+  originalLine: string;
+  startedAt: number;
+};
+
+export async function storeShareIntent(
+  slug: string,
+  xUserId: string,
+  wallet: string,
+  intent: ShareIntent,
+  ttlSeconds = 30 * 60,
+) {
+  const normalized = normalizeWallet(wallet);
+  if (!normalized) throw new Error("INVALID_WALLET");
+  await redisCommand(["SET", shareIntentKey(slug, xUserId, normalized), JSON.stringify(intent), "EX", ttlSeconds]);
+}
+
+export async function getShareIntent(slug: string, xUserId: string, wallet: string) {
+  const normalized = normalizeWallet(wallet);
+  if (!normalized) return null;
+  return redisGetJson<ShareIntent>(shareIntentKey(slug, xUserId, normalized));
+}
+
+export async function clearShareIntent(slug: string, xUserId: string, wallet: string) {
+  const normalized = normalizeWallet(wallet);
+  if (!normalized) return;
+  await redisCommand(["DEL", shareIntentKey(slug, xUserId, normalized)]);
+}
+
 
 const orbEntrantsKey = (slug: string) => `orbs:v1:entrants:${slug}`;
 

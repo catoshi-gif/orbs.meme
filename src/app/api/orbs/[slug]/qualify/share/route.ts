@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getPublicOrb } from "@/lib/orbStore";
-import { getShareProof, hasFollowProof, hasWalletProof, indexEnteredOrb, storeShareProof } from "@/lib/qualification";
+import { clearShareIntent, getShareIntent, getShareProof, hasFollowProof, hasWalletProof, indexEnteredOrb, storeShareIntent, storeShareProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
 import { getCurrentXSession, getRecentXPostsForCurrentSession, XApiRequestError } from "@/lib/xAuth";
 import { redisCommand } from "@/lib/upstash";
@@ -47,11 +47,54 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
   }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
+
+async function qualificationReady(slug: string, wallet: string, xUserId: string, hostXId: string) {
+  const [followed, walletVerified, humanVerified] = await Promise.all([
+    hasFollowProof(xUserId, hostXId),
+    hasWalletProof(slug, xUserId, wallet),
+    hasHumanProof(slug, xUserId, wallet),
+  ]);
+  return followed && walletVerified && humanVerified;
+}
+
+function findMatchingEntryPost(
+  posts: Awaited<ReturnType<typeof getRecentXPostsForCurrentSession>>["posts"],
+  slug: string,
+  originalLine: string,
+  notBefore: number,
+) {
+  const expectedLine = originalLine.replace(/\s+/g, " ").toLocaleLowerCase();
+  return posts.find((post) =>
+    post.createdAt >= notBefore &&
+    post.text.replace(/\s+/g, " ").toLocaleLowerCase().includes(expectedLine) &&
+    post.urls.some((url) => isOrbUrl(url, slug)),
+  );
+}
+
+async function saveVerifiedShare(
+  slug: string,
+  wallet: string,
+  x: NonNullable<Awaited<ReturnType<typeof getCurrentXSession>>>,
+  orb: NonNullable<Awaited<ReturnType<typeof getPublicOrb>>>,
+  post: Awaited<ReturnType<typeof getRecentXPostsForCurrentSession>>["posts"][number],
+) {
+  const ttl = Math.max(60 * 60 * 24 * 2, Math.ceil((orbEndsAt(orb) - Date.now()) / 1000) + 60 * 60 * 24 * 2);
+  const activityTtl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(orb) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
+  await storeShareProof(slug, x.user.id, wallet, { postId: post.id, postCreatedAt: post.createdAt, confirmedAt: Date.now() }, ttl, activityTtl);
+  await clearShareIntent(slug, x.user.id, wallet);
+  return NextResponse.json({
+    ok: true,
+    verified: true,
+    postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${post.id}`,
+  });
+}
+
 async function verifySharePost(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const body = await request.json().catch(() => ({})) as { wallet?: unknown; originalLine?: unknown };
+  const body = await request.json().catch(() => ({})) as { wallet?: unknown; originalLine?: unknown; mode?: unknown };
   const wallet = normalizeWallet(body.wallet);
   const originalLine = typeof body.originalLine === "string" ? body.originalLine.trim().replace(/\s+/g, " ") : "";
+  const mode = body.mode === "intent" || body.mode === "recover" ? body.mode : "verify";
   if (!wallet) return NextResponse.json({ ok: false, error: "Invalid wallet" }, { status: 400 });
 
   const [orb, x] = await Promise.all([getPublicOrb(slug), getCurrentXSession()]);
@@ -67,15 +110,33 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   if (Date.now() >= orbEndsAt(orb) || await getWinner(orb.id)) {
     return NextResponse.json({ ok: false, error: "This Orb is already closed. New entries are no longer accepted." }, { status: 409 });
   }
-  if (originalLine.length < 12 || originalLine.length > 70) return NextResponse.json({ ok: false, error: "Use the same original line you added before opening the X composer." }, { status: 400 });
 
-  const [followed, walletVerified, humanVerified] = await Promise.all([
-    hasFollowProof(x.user.id, orb.hostX.id),
-    hasWalletProof(slug, x.user.id, wallet),
-    hasHumanProof(slug, x.user.id, wallet),
-  ]);
-  if (!followed || !walletVerified || !humanVerified) {
+  if (!await qualificationReady(slug, wallet, x.user.id, orb.hostX.id)) {
     return NextResponse.json({ ok: false, error: "Complete the earlier qualification steps first" }, { status: 403 });
+  }
+
+  if (mode === "intent") {
+    if (originalLine.length < 12 || originalLine.length > 70) {
+      return NextResponse.json({ ok: false, error: "Add one original line before opening X." }, { status: 400 });
+    }
+    await storeShareIntent(slug, x.user.id, wallet, { originalLine, startedAt: Date.now() });
+    return NextResponse.json({ ok: true, pending: true }, { headers: { "Cache-Control": "private, no-store" } });
+  }
+
+  let verificationLine = originalLine;
+  let notBefore = orb.createdAt - 5 * 60_000;
+
+  if (mode === "recover") {
+    const intent = await getShareIntent(slug, x.user.id, wallet);
+    // No pending intent means there is nothing to recover. Crucially, do not
+    // spend an X API read for ordinary visitors who have not opened the composer.
+    if (!intent) {
+      return NextResponse.json({ ok: true, verified: false, pending: false }, { headers: { "Cache-Control": "private, no-store" } });
+    }
+    verificationLine = intent.originalLine;
+    notBefore = Math.max(notBefore, intent.startedAt - 2 * 60_000);
+  } else if (verificationLine.length < 12 || verificationLine.length > 70) {
+    return NextResponse.json({ ok: false, error: "Use the same original line you added before opening the X composer." }, { status: 400 });
   }
 
   const minute = Math.floor(Date.now() / 60_000);
@@ -85,13 +146,18 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   if (count > 4) return NextResponse.json({ ok: false, error: "Too many verification attempts. Wait a minute, then try again." }, { status: 429 });
 
   const { posts } = await getRecentXPostsForCurrentSession(5);
-  const expectedLine = originalLine.toLocaleLowerCase();
-  const match = posts.find((post) => post.createdAt >= orb.createdAt - 5 * 60_000 && post.text.replace(/\s+/g, " ").toLocaleLowerCase().includes(expectedLine) && post.urls.some((url) => isOrbUrl(url, slug)));
-  if (!match) return NextResponse.json({ ok: false, verified: false, error: "No recent post from this X account contains the exact Orb link yet. Publish it, wait a few seconds, then verify again." }, { status: 422 });
-  const ttl = Math.max(60 * 60 * 24 * 2, Math.ceil((orbEndsAt(orb) - Date.now()) / 1000) + 60 * 60 * 24 * 2);
-  const activityTtl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(orb) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
-  await storeShareProof(slug, x.user.id, wallet, { postId: match.id, postCreatedAt: match.createdAt, confirmedAt: Date.now() }, ttl, activityTtl);
-  return NextResponse.json({ ok: true, verified: true, postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${match.id}` });
+  const match = findMatchingEntryPost(posts, slug, verificationLine, notBefore);
+  if (!match) {
+    return NextResponse.json({
+      ok: true,
+      verified: false,
+      pending: mode === "recover",
+      error: mode === "recover"
+        ? "Your X post is not visible to Orbs yet. If you just posted it, wait a few seconds and check again."
+        : "No recent post from this X account contains the exact Orb link yet. Publish it, wait a few seconds, then verify again.",
+    }, { status: mode === "recover" ? 200 : 422, headers: { "Cache-Control": "private, no-store" } });
+  }
+  return saveVerifiedShare(slug, wallet, x, orb, match);
 }
 
 export async function POST(request: Request, context: { params: Promise<{ slug: string }> }) {
