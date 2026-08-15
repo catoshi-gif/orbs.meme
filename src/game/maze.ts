@@ -394,7 +394,7 @@ export function normalizeDifficulty(value?: string | null): DifficultyKey {
   return "classic";
 }
 
-function generateManifestWithBaseSeed(slug: string, difficulty: DifficultyKey, style: GameStyle, baseSeed: number, generatorVersion = GAME_GENERATOR_VERSION): GameManifest {
+function generateManifestWithBaseSeed(slug: string, difficulty: DifficultyKey, style: GameStyle, baseSeed: number, generatorVersion: string = GAME_GENERATOR_VERSION): GameManifest {
   const profile = DIFFICULTY_PROFILES[difficulty];
   const logical = selectCandidate(baseSeed, difficulty);
   const path = logical.pathIndices.map((idx) => worldPoint(logical.cells[idx]!, logical.grid, profile.cellSize));
@@ -451,7 +451,7 @@ export function generateGameManifestFromSecret(
   difficulty: DifficultyKey,
   style: GameStyle,
   secretSeedHex: string,
-  generatorVersion = GAME_GENERATOR_VERSION,
+  generatorVersion: string = GAME_GENERATOR_VERSION,
 ): GameManifest {
   if (!/^[0-9a-fA-F]{64}$/.test(secretSeedHex)) throw new Error("secretSeedHex must be 32 bytes encoded as hex");
   const baseSeed = hashString(`orbs-glass-roller:${slug}:${difficulty}:secret:${secretSeedHex.toLowerCase()}:v2`);
