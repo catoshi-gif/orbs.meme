@@ -1240,26 +1240,52 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
     });
   }, []);
 
+  const joystickVisualFrameRef = useRef<number | null>(null);
+  const joystickVisualRef = useRef({ x: 0, y: 0, element: null as HTMLElement | null });
+  const paintJoystick = useCallback((element: HTMLElement, x: number, y: number) => {
+    joystickVisualRef.current = { x, y, element };
+    if (joystickVisualFrameRef.current !== null) return;
+    joystickVisualFrameRef.current = window.requestAnimationFrame(() => {
+      joystickVisualFrameRef.current = null;
+      const pending = joystickVisualRef.current;
+      if (pending.element) {
+        // translate3d keeps the tiny control on its own compositor layer. In iOS
+        // WKWebView/Safari this avoids repeatedly recompositing the WebGL canvas
+        // underneath the joystick during abrupt pointer direction changes.
+        pending.element.style.transform = `translate3d(${pending.x}px, ${pending.y}px, 0)`;
+      }
+    });
+  }, []);
   const touchStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
   }, []);
   const touchMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     const y = ((event.clientY - rect.top) / rect.height) * 2 - 1;
     const len = Math.max(1, Math.hypot(x, y));
-    controlsRef.current.touchX = clamp(x / len, -1, 1);
-    controlsRef.current.touchY = clamp(-y / len, -1, 1);
+    const normalizedX = clamp(x / len, -1, 1);
+    const normalizedY = clamp(y / len, -1, 1);
+    // Keep physics input immediate; only the decorative knob paint is frame-throttled.
+    controlsRef.current.touchX = normalizedX;
+    controlsRef.current.touchY = -normalizedY;
     const knob = event.currentTarget.querySelector<HTMLElement>(".game-touch-knob");
-    if (knob) knob.style.transform = `translate(${clamp(x / len, -1, 1) * 30}px, ${clamp(y / len, -1, 1) * 30}px)`;
-  }, []);
+    if (knob) paintJoystick(knob, normalizedX * 30, normalizedY * 30);
+  }, [paintJoystick]);
   const touchEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
     controlsRef.current.touchX = 0;
     controlsRef.current.touchY = 0;
     const knob = event.currentTarget.querySelector<HTMLElement>(".game-touch-knob");
-    if (knob) knob.style.transform = "translate(0,0)";
+    if (knob) paintJoystick(knob, 0, 0);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, [paintJoystick]);
+
+  useEffect(() => () => {
+    if (joystickVisualFrameRef.current !== null) cancelAnimationFrame(joystickVisualFrameRef.current);
   }, []);
 
   return (
