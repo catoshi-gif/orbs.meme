@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 
 type Counts = { total: number; registered: number; unregistered: number };
@@ -17,7 +17,7 @@ function relativeTime(sentAt: number) {
   return `${Math.floor(minutes / 60)}h`;
 }
 
-export default function WaitingRoomPresence({ slug }: { slug: string }) {
+export default function WaitingRoomPresence({ slug, details }: { slug: string; details?: ReactNode }) {
   const { publicKey } = useWallet();
   const [counts, setCounts] = useState<Counts>(EMPTY);
   const [available, setAvailable] = useState(false);
@@ -126,6 +126,7 @@ export default function WaitingRoomPresence({ slug }: { slug: string }) {
       <div className="waiting-presence-split"><span><b>{counts.registered}</b> registered</span><span><b>{counts.unregistered}</b> watching</span></div>
       <small>Registration is required to enter the live maze.</small>
     </div>
+    {details ? <div className="waiting-room-priority">{details}</div> : null}
     <div className="waiting-chat">
       <div className="waiting-chat-head"><div><span>WAITING ROOM CHAT</span><strong>Talk a little trash.</strong></div><small>{messages.length ? `${messages.length} recent` : "quiet for now"}</small></div>
       <div className={`waiting-chat-feed ${messages.length ? "" : "empty"}`}>

@@ -246,3 +246,74 @@ html:not(.dark) .real-orb-hero>.waiting-orb-showcase{
 .waiting-chat-compose{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.waiting-chat-compose input{min-width:0;height:36px;padding:0 10px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--surface2) 88%,transparent);color:var(--text);font-size:9px}.waiting-chat-compose input:disabled{opacity:.62}.waiting-chat-compose .mini-action{min-width:58px}.waiting-chat-hint{color:var(--muted);font-size:7.5px}
 .x-identity.compact .x-disconnect.compact{display:inline-block;margin-left:2px;padding:4px 5px;white-space:nowrap;font-size:7px}
 @media(max-width:700px){.x-identity.compact .x-disconnect.compact{display:inline-block}.waiting-social{margin-top:14px}.waiting-chat{padding:10px 11px}.waiting-chat-feed{max-height:150px}.waiting-chat-compose{grid-template-columns:minmax(0,1fr) 58px}}
+
+
+/* -------------------------------------------------------------------------- */
+/* Waiting-room information hierarchy + alignment                             */
+/* -------------------------------------------------------------------------- */
+/* Presence stays immediately under the prize. Timing/launch information takes
+   priority next, with chat intentionally last in the social stack. All waiting
+   room panels now share one width and horizontal rhythm. */
+.waiting-social{
+  width:100%;
+  max-width:none;
+  gap:12px;
+  margin-top:18px;
+}
+.waiting-social .waiting-presence{
+  width:100%;
+  max-width:none;
+  margin:0;
+}
+.waiting-room-priority{
+  display:grid;
+  width:100%;
+  gap:12px;
+}
+.waiting-room-priority>.countdown{
+  width:100%;
+  margin:2px 0 0;
+  align-items:stretch;
+}
+.waiting-room-priority>.countdown>div{
+  min-width:0;
+  min-height:84px;
+  display:grid;
+  grid-template-rows:1fr auto;
+  place-items:center;
+  align-content:center;
+  padding:14px 8px;
+}
+.waiting-room-priority>.countdown strong{
+  align-self:end;
+  line-height:1;
+}
+.waiting-room-priority>.countdown span{
+  align-self:start;
+  margin-top:9px;
+}
+.waiting-room-priority>.local-launch-time,
+.waiting-room-priority>.commitment-card,
+.waiting-room-priority>.live-launch-panel{
+  box-sizing:border-box;
+  width:100%;
+  max-width:none;
+  margin:0;
+}
+.waiting-room-priority>.local-launch-time{
+  padding:13px 15px;
+}
+.waiting-room-priority>.commitment-card{
+  padding:12px 14px;
+}
+.waiting-social>.waiting-chat{
+  width:100%;
+  margin:0;
+}
+@media(max-width:700px){
+  .waiting-social{gap:10px;margin-top:14px}
+  .waiting-room-priority{gap:10px}
+  .waiting-room-priority>.countdown{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+  .waiting-room-priority>.countdown>div{min-height:74px}
+  .waiting-room-priority>.local-launch-time{padding:11px 12px}
+}
