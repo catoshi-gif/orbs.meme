@@ -203,12 +203,20 @@ export default function CreateWizard() {
     const signed = await signTransaction(transaction);
     const connection = new Connection(rpc, "confirmed");
     const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
-    const confirmation = await connection.confirmTransaction({
-      signature,
-      blockhash: fundingPayload.funding.blockhash,
-      lastValidBlockHeight: fundingPayload.funding.lastValidBlockHeight,
-    }, "confirmed");
-    if (confirmation.value.err) throw new Error("Solana rejected the Orb funding transaction");
+    try {
+      const confirmation = await connection.confirmTransaction({
+        signature,
+        blockhash: fundingPayload.funding.blockhash,
+        lastValidBlockHeight: fundingPayload.funding.lastValidBlockHeight,
+      }, "confirmed");
+      if (confirmation.value.err) throw new Error("Solana rejected the Orb funding transaction");
+    } catch (error) {
+      // Once sendRawTransaction returns a signature, never abandon server-side
+      // reconciliation solely because this browser/RPC confirmation request had
+      // a transient transport/visibility failure. The server independently
+      // verifies the exact signature and escrow state before finalizing the Orb.
+      if (error instanceof Error && /rejected the Orb funding transaction/i.test(error.message)) throw error;
+    }
     const confirmResponse = await fetch(`/api/orbs/${encodeURIComponent(orb.slug)}/funding/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

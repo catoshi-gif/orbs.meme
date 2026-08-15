@@ -35,6 +35,7 @@ export type OrbRecord = {
   feeRawAmount: string;
   priceQuotedAt: number;
   fundingQuoteExpiresAt: number;
+  fundingBroadcastSignature?: string;
   fundingTxSignature?: string;
   hostSharePostId?: string;
   hostSharePostCreatedAt?: number;
@@ -52,6 +53,8 @@ export type PublicOrbRecord = Omit<OrbRecord, "encryptedSecretSeed" | "endsAt"> 
 
 const orbKey = (slug: string) => `orbs:v1:orb:${slug}`;
 const hostedOrbsKey = (wallet: string) => `orbs:v1:hosted:${wallet}`;
+const recoveryOrbKey = (slug: string) => `orbs:v1:recovery:orb:${slug}`;
+const recoveryHostedOrbsKey = (wallet: string) => `orbs:v1:recovery:hosted:${wallet}`;
 const publicOrbsKey = "orbs:v1:public:funded";
 const publicOrbsMigrationKey = "orbs:v1:public:funded:migrated-v2-onchain-only";
 
@@ -261,19 +264,27 @@ export async function createTestOrb(input: {
     end
     redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
     redis.call('ZADD', KEYS[2], ARGV[2], ARGV[4])
+    redis.call('SET', KEYS[4], ARGV[1], 'EX', ARGV[3])
+    redis.call('ZADD', KEYS[5], ARGV[2], ARGV[4])
     local count = redis.call('ZCARD', KEYS[2])
     if count > 100 then redis.call('ZREMRANGEBYRANK', KEYS[2], 0, count - 101) end
+    local recovery_count = redis.call('ZCARD', KEYS[5])
+    if recovery_count > 100 then redis.call('ZREMRANGEBYRANK', KEYS[5], 0, recovery_count - 101) end
     local index_ttl = redis.call('TTL', KEYS[2])
     if index_ttl < tonumber(ARGV[3]) then redis.call('EXPIRE', KEYS[2], ARGV[3]) end
+    local recovery_index_ttl = redis.call('TTL', KEYS[5])
+    if recovery_index_ttl < tonumber(ARGV[3]) then redis.call('EXPIRE', KEYS[5], ARGV[3]) end
     return 'OK'
   `;
   const stored = await redisCommand<string>([
     "EVAL",
     storeScript,
-    "3",
+    "5",
     orbKey(slug),
     hostedOrbsKey(record.hostWallet),
     activeHostedOrbKey(record.hostWallet),
+    recoveryOrbKey(slug),
+    recoveryHostedOrbsKey(record.hostWallet),
     JSON.stringify(record),
     String(record.createdAt),
     String(ttl),
@@ -295,15 +306,18 @@ export async function finalizeFundedOrb(slug: string, fundingTxSignature: string
   const activeTtl = Math.max(60, Math.ceil((orbEndsAt(funded) - Date.now()) / 1000));
   const script = `
     redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    redis.call('SET', KEYS[4], ARGV[1], 'EX', ARGV[2])
+    redis.call('ZADD', KEYS[5], ARGV[8], ARGV[4])
+    redis.call('ZADD', KEYS[6], ARGV[8], ARGV[4])
     if ARGV[3] == '1' then redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[5]) end
     redis.call('ZADD', KEYS[3], ARGV[6], ARGV[4])
     redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[7])
     return 'OK'
   `;
   const result = await redisCommand<string>([
-    "EVAL", script, "3", orbKey(slug), activeHostedOrbKey(funded.hostWallet), publicOrbsKey,
+    "EVAL", script, "6", orbKey(slug), activeHostedOrbKey(funded.hostWallet), publicOrbsKey, recoveryOrbKey(slug), hostedOrbsKey(funded.hostWallet), recoveryHostedOrbsKey(funded.hostWallet),
     JSON.stringify(funded), String(ttl), isAdminWallet(funded.hostWallet) ? "0" : "1", slug, String(activeTtl),
-    String(funded.startsAt), String(Date.now() - ORB_COMPETITION_WINDOW_MS - 60_000),
+    String(funded.startsAt), String(Date.now() - ORB_COMPETITION_WINDOW_MS - 60_000), String(funded.createdAt),
   ]);
   if (result !== "OK") throw new Error("Could not finalize funded Orb");
   await recordFundedOrbAnalytics({
@@ -325,7 +339,33 @@ export async function finalizeFundedOrb(slug: string, fundingTxSignature: string
 
 export async function getOrbRecord(slug: string) {
   if (!upstashConfigured()) return null;
-  return redisGetJson<OrbRecord>(orbKey(slug));
+  const primary = await redisGetJson<OrbRecord>(orbKey(slug));
+  if (primary) return primary;
+  const recovery = await redisGetJson<OrbRecord>(recoveryOrbKey(slug));
+  if (!recovery) return null;
+  const ttl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(recovery) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
+  await redisCommand<string>(["SET", orbKey(slug), JSON.stringify(recovery), "EX", String(ttl)]);
+  await redisCommand<number>(["ZADD", hostedOrbsKey(recovery.hostWallet), String(recovery.createdAt), recovery.slug]);
+  return recovery;
+}
+
+export async function noteFundingBroadcast(slug: string, signature: string) {
+  const record = await getOrbRecord(slug);
+  if (!record) throw new Error("Orb funding record was not found");
+  if (record.status !== "funding-pending") return publicRecord(record);
+  const updated: OrbRecord = { ...record, fundingBroadcastSignature: signature };
+  const ttl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(updated) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
+  const result = await redisCommand<string>([
+    "EVAL",
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2]); return 'OK'",
+    "2",
+    orbKey(slug),
+    recoveryOrbKey(slug),
+    JSON.stringify(updated),
+    String(ttl),
+  ]);
+  if (result !== "OK") throw new Error("Could not persist the funding broadcast receipt");
+  return publicRecord(updated);
 }
 
 export async function recordHostSharePost(slug: string, hostXId: string, postId: string, postCreatedAt: number) {
@@ -337,7 +377,15 @@ export async function recordHostSharePost(slug: string, hostXId: string, postId:
   const updated: OrbRecord = { ...record, hostSharePostId: postId, hostSharePostCreatedAt: postCreatedAt };
   const currentTtl = Number(await redisCommand<number>(["TTL", orbKey(slug)]) || -1);
   const ttl = currentTtl > 0 ? currentTtl : ORB_HISTORY_TTL_SECONDS;
-  const stored = await redisCommand<string>(["SET", orbKey(slug), JSON.stringify(updated), "EX", String(ttl)]);
+  const stored = await redisCommand<string>([
+    "EVAL",
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2]); return 'OK'",
+    "2",
+    orbKey(slug),
+    recoveryOrbKey(slug),
+    JSON.stringify(updated),
+    String(ttl),
+  ]);
   if (stored !== "OK") throw new Error("Could not save the host X post");
   await recordHostSharePostAnalytics(slug, postId).catch((error) => console.warn("[orbs:analytics] host post snapshot failed", error));
   return publicRecord(updated);
@@ -430,19 +478,64 @@ export async function listDiscoverableOrbs(limit = 9): Promise<PublicOrbRecord[]
 
 export async function listHostedOrbs(wallet: string, limit = 50): Promise<PublicOrbRecord[]> {
   if (!upstashConfigured()) return [];
-  const slugs = await redisCommand<string[]>([
-    "ZREVRANGE",
-    hostedOrbsKey(wallet),
-    "0",
-    String(Math.max(0, Math.min(100, limit) - 1)),
+  const max = Math.max(1, Math.min(100, limit));
+  let [primarySlugs, recoverySlugs] = await Promise.all([
+    redisCommand<string[]>(["ZREVRANGE", hostedOrbsKey(wallet), "0", String(max - 1)]),
+    redisCommand<string[]>(["ZREVRANGE", recoveryHostedOrbsKey(wallet), "0", String(max - 1)]),
   ]);
+  if (!(primarySlugs?.length || recoverySlugs?.length)) {
+    // Bounded disaster-recovery path for legacy records created before the
+    // independent recovery index existed, or for an accidentally deleted host
+    // index. Normal dashboard reads never scan when either index is healthy.
+    const repaired: Array<{ slug: string; createdAt: number }> = [];
+    let cursor = "0";
+    let passes = 0;
+    do {
+      const scan = await redisCommand<[string, string[]]>(["SCAN", cursor, "MATCH", "orbs:v1:orb:*", "COUNT", "200"]);
+      if (!scan) break;
+      cursor = String(scan[0] || "0");
+      const keys = scan[1] || [];
+      if (keys.length) {
+        const raw = await redisCommand<Array<string | null>>(["MGET", ...keys]);
+        for (const value of raw || []) {
+          if (!value) continue;
+          try {
+            const record = JSON.parse(value) as OrbRecord;
+            if (record.hostWallet === wallet) repaired.push({ slug: record.slug, createdAt: record.createdAt });
+          } catch {}
+        }
+      }
+      passes += 1;
+    } while (cursor !== "0" && passes < 20 && repaired.length < max);
+    repaired.sort((a, b) => b.createdAt - a.createdAt);
+    if (repaired.length) {
+      for (const item of repaired.slice(0, max)) {
+        await redisCommand<number>(["ZADD", hostedOrbsKey(wallet), String(item.createdAt), item.slug]);
+      }
+      primarySlugs = repaired.slice(0, max).map((item) => item.slug);
+      recoverySlugs = [];
+    }
+  }
+  const slugs = [...new Set([...(primarySlugs || []), ...(recoverySlugs || [])])].slice(0, max);
   if (!slugs?.length) return [];
-  const raw = await redisCommand<Array<string | null>>(["MGET", ...slugs.map(orbKey)]);
-  return (raw || []).flatMap((value) => {
+  const [raw, recoveryRaw] = await Promise.all([
+    redisCommand<Array<string | null>>(["MGET", ...slugs.map(orbKey)]),
+    redisCommand<Array<string | null>>(["MGET", ...slugs.map(recoveryOrbKey)]),
+  ]);
+  const records = slugs.flatMap((slug, index) => {
+    const value = raw?.[index] || recoveryRaw?.[index];
     if (!value) return [];
-    try { return [publicRecord(JSON.parse(value) as OrbRecord)]; }
-    catch { return []; }
+    try {
+      const record = JSON.parse(value) as OrbRecord;
+      if (!raw?.[index] && recoveryRaw?.[index]) {
+        const ttl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(record) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
+        void redisCommand<string>(["SET", orbKey(slug), JSON.stringify(record), "EX", String(ttl)]);
+        void redisCommand<number>(["ZADD", hostedOrbsKey(wallet), String(record.createdAt), slug]);
+      }
+      return [publicRecord(record)];
+    } catch { return []; }
   });
+  return records.sort((a, b) => b.createdAt - a.createdAt).slice(0, max);
 }
 
 export async function listEnteredOrbs(wallet: string, limit = 50): Promise<PublicOrbRecord[]> {

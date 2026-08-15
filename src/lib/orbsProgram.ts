@@ -311,36 +311,96 @@ function assertOrbMatchesRecord(decoded: DecodedOrb, record: OrbRecord, host: Pu
   if (decoded.startsAt !== expectedStarts || decoded.refundAfter !== expectedRefund) throw new Error("On-chain custody window does not match the sealed funding record");
 }
 
+async function waitForSuccessfulSignature(connection: Connection, signature: string) {
+  let lastStatus: Awaited<ReturnType<Connection["getSignatureStatuses"]>>["value"][number] = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const response = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
+    const status = response.value[0];
+    if (status) {
+      lastStatus = status;
+      if (status.err) throw new Error("Solana rejected the Orb funding transaction");
+      if (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized" || status.confirmations === null) return status;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  if (lastStatus?.err) throw new Error("Solana rejected the Orb funding transaction");
+  throw new Error("Funding transaction is not yet visible to the server RPC; retry confirmation in a moment");
+}
+
+async function parsedFundingTransaction(connection: Connection, signature: string, programId: PublicKey, orb: PublicKey) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const parsed = await connection.getParsedTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+    if (parsed) {
+      if (parsed.meta?.err) throw new Error("Solana rejected the Orb funding transaction");
+      const referencesProgram = parsed.transaction.message.instructions.some((ix) => "programId" in ix && ix.programId.equals(programId));
+      const referencesOrb = parsed.transaction.message.accountKeys.some((entry) => entry.pubkey.equals(orb));
+      if (!referencesProgram || !referencesOrb) throw new Error("Supplied funding signature does not reference this Orb PDA");
+      return parsed;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  throw new Error("Funding transaction is confirmed but its transaction data is not yet visible to the server RPC; retry confirmation in a moment");
+}
+
+async function accountInfoAtOrAfterSlot(connection: Connection, address: PublicKey, minContextSlot: number) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      const response = await connection.getAccountInfoAndContext(address, { commitment: "confirmed", minContextSlot });
+      if (response.value) return response.value;
+    } catch (error) {
+      if (attempt === 5) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  return null;
+}
+
 export async function verifyFundedOrbOnChain(record: OrbRecord, suppliedSignature = "") {
   const host = new PublicKey(record.hostWallet);
   const mint = new PublicKey(record.token.mint);
   const accounts = deriveOrbsAccounts(host, record.id, mint);
   const connection = new Connection(solanaRpcUrl(), "confirmed");
 
-  const info = await connection.getAccountInfo(accounts.orb, "confirmed");
+  const requested = suppliedSignature.trim() || record.fundingBroadcastSignature?.trim() || "";
+  let minContextSlot = 0;
+  if (requested) {
+    const status = await waitForSuccessfulSignature(connection, requested);
+    minContextSlot = status.slot;
+    await parsedFundingTransaction(connection, requested, accounts.programId, accounts.orb);
+  }
+
+  const info = minContextSlot > 0
+    ? await accountInfoAtOrAfterSlot(connection, accounts.orb, minContextSlot)
+    : await connection.getAccountInfo(accounts.orb, "confirmed");
   if (!info) throw new Error("ORB_NOT_FUNDED");
   if (!info.owner.equals(accounts.programId)) throw new Error("Orb PDA is owned by an unexpected program");
   const decoded = decodeOrbAccount(Buffer.from(info.data));
   assertOrbMatchesRecord(decoded, record, host, mint);
 
-  const vault = await connection.getTokenAccountBalance(accounts.prizeVault, "confirmed");
-  if (BigInt(vault.value.amount) < BigInt(record.prizeRawAmount)) throw new Error("Prize vault is underfunded");
+  if (minContextSlot > 0) {
+    const vaultInfo = await accountInfoAtOrAfterSlot(connection, accounts.prizeVault, minContextSlot);
+    if (!vaultInfo || !vaultInfo.owner.equals(CLASSIC_SPL_TOKEN_PROGRAM_ID) || vaultInfo.data.length < 72) throw new Error("Prize vault is missing or malformed");
+    const vaultAmount = Buffer.from(vaultInfo.data).readBigUInt64LE(64);
+    if (vaultAmount < BigInt(record.prizeRawAmount)) throw new Error("Prize vault is underfunded");
+  } else {
+    const vault = await connection.getTokenAccountBalance(accounts.prizeVault, "confirmed");
+    if (BigInt(vault.value.amount) < BigInt(record.prizeRawAmount)) throw new Error("Prize vault is underfunded");
+  }
+
+  if (requested) {
+    return { signature: requested, orbPda: accounts.orb.toBase58(), prizeVault: accounts.prizeVault.toBase58() };
+  }
 
   const signatures = await connection.getSignaturesForAddress(accounts.orb, { limit: 20 }, "confirmed");
   const successful = signatures.filter((entry) => !entry.err);
   if (!successful.length) throw new Error("Funded Orb has no successful creation transaction");
-  const requested = suppliedSignature.trim();
-  const candidates = requested
-    ? successful.filter((entry) => entry.signature === requested)
-    : successful;
-  if (!candidates.length) throw new Error("Supplied funding signature does not reference this Orb PDA");
-
   let signature = "";
-  for (const candidate of candidates) {
+  for (const candidate of successful) {
     const parsed = await connection.getParsedTransaction(candidate.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
     if (!parsed || parsed.meta?.err) continue;
     const referencesProgram = parsed.transaction.message.instructions.some((ix) => "programId" in ix && ix.programId.equals(accounts.programId));
-    if (!referencesProgram) continue;
+    const referencesOrb = parsed.transaction.message.accountKeys.some((entry) => entry.pubkey.equals(accounts.orb));
+    if (!referencesProgram || !referencesOrb) continue;
     signature = candidate.signature;
     break;
   }

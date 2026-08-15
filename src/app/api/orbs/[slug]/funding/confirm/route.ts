@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { finalizeFundedOrb, getOrbRecord, getPublicOrb } from "@/lib/orbStore";
+import { finalizeFundedOrb, getOrbRecord, getPublicOrb, noteFundingBroadcast } from "@/lib/orbStore";
 import { verifyFundedOrbOnChain } from "@/lib/orbsProgram";
 import { getCurrentXSession } from "@/lib/xAuth";
 
@@ -25,7 +25,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       const orb = await getPublicOrb(slug);
       return NextResponse.json({ ok: true, orb });
     }
-    const chain = await verifyFundedOrbOnChain(record, signature);
+    const recorded = signature ? await noteFundingBroadcast(slug, signature) : null;
+    const chain = await verifyFundedOrbOnChain(recorded ? { ...record, fundingBroadcastSignature: signature } : record, signature);
     const orb = await finalizeFundedOrb(slug, chain.signature, chain.orbPda, chain.prizeVault);
     return NextResponse.json({ ok: true, orb, shareUrl: `/orb/${orb.slug}` }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {

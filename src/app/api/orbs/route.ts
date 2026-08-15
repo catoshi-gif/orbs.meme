@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { hasEligibilityReceipt } from "@/lib/eligibility";
 import { PublicKey } from "@solana/web3.js";
-import { createTestOrb, getActiveHostedOrb } from "@/lib/orbStore";
+import { createTestOrb, finalizeFundedOrb, getActiveHostedOrb, getOrbRecord, listHostedOrbs } from "@/lib/orbStore";
 import { getWalletSplTokens } from "@/lib/walletTokens";
 import { usdMicrosForRawAmount, verifyPrizeQuote } from "@/lib/prizeQuote";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber, tokenInputToRaw } from "@/lib/prizeEconomics";
@@ -13,10 +13,30 @@ import type { GameStyle } from "@/game/types";
 import { listWalletOrbActivity } from "@/lib/orbActivity";
 import { isAdminWallet } from "@/lib/orbLifecycle";
 import { consumeHostAuthorization } from "@/lib/hostAuthorization";
+import { verifyFundedOrbOnChain } from "@/lib/orbsProgram";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 20;
+
+async function reconcileRecentHostedFunding(wallet: string, xUserId: string) {
+  const hosted = await listHostedOrbs(wallet, 20);
+  const pending = hosted
+    .filter((orb) => orb.status === "funding-pending")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 8);
+  for (const candidate of pending) {
+    const record = await getOrbRecord(candidate.slug);
+    if (!record || record.status !== "funding-pending" || record.hostX.id !== xUserId) continue;
+    try {
+      const chain = await verifyFundedOrbOnChain(record, record.fundingBroadcastSignature || "");
+      await finalizeFundedOrb(record.slug, chain.signature, chain.orbPda, chain.prizeVault);
+    } catch (error) {
+      if (error instanceof Error && (error.message === "ORB_NOT_FUNDED" || /not yet visible/i.test(error.message))) continue;
+      console.warn(`[orbs:reconcile] Could not reconcile ${record.slug}`, error);
+    }
+  }
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -25,6 +45,8 @@ export async function GET(request: Request) {
   try { normalized = new PublicKey(hostWallet).toBase58(); }
   catch { return NextResponse.json({ ok: false, error: "Invalid host wallet" }, { status: 400 }); }
   try {
+    const x = await getCurrentXSession();
+    if (x) await reconcileRecentHostedFunding(normalized, x.user.id);
     const [activities, activeOrb] = await Promise.all([
       listWalletOrbActivity(normalized),
       getActiveHostedOrb(normalized),
