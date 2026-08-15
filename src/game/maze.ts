@@ -336,7 +336,7 @@ function pickGates(pathCells: Cell[], path: Point2[], checkpoints: Checkpoint[],
   }));
 }
 
-function pickBumpers(pathCells: Cell[], path: Point2[], gates: GateModule[], checkpoints: Checkpoint[], count: number, cellSize: number, seed: number): BumperModule[] {
+function pickBumpers(pathCells: Cell[], path: Point2[], gates: GateModule[], checkpoints: Checkpoint[], count: number, cellSize: number, seed: number, generatorVersion: string): BumperModule[] {
   const rng = mulberry32(hashString(`${seed}:bumpers`));
   const gatePoints = new Set(gates.map((g) => `${g.x.toFixed(3)}:${g.z.toFixed(3)}`));
   const checkpointPoints = new Set(checkpoints.map((cp) => `${cp.x.toFixed(3)}:${cp.z.toFixed(3)}`));
@@ -366,12 +366,19 @@ function pickBumpers(pathCells: Cell[], path: Point2[], gates: GateModule[], che
     const next = pathCells[idx + 1]!;
     const horizontal = prev.z === next.z;
     const sign = rng() > 0.5 ? 1 : -1;
-    const offset = cellSize * 0.17 * sign;
+    // v2.2 used 0.17 / 0.115. On Brutal's 1.62-cell corridor that leaves
+    // less physical clearance than the 0.42-radius marble requires, so a
+    // route bumper can mathematically seal the canonical path. v2.3 moves
+    // route bumpers slightly toward one rail and trims their radius while
+    // preserving the obstacle feel. Keep v2.2 exact for already-funded
+    // committed Orbs whose generator version is frozen on creation.
+    const legacy = generatorVersion === "glass-roller-gen-v2.2";
+    const offset = cellSize * (legacy ? 0.17 : 0.20) * sign;
     return {
       id: `bumper-${i + 1}`,
       x: path[idx]!.x + (horizontal ? 0 : offset),
       z: path[idx]!.z + (horizontal ? offset : 0),
-      radius: cellSize * 0.115,
+      radius: cellSize * (legacy ? 0.115 : 0.10),
     };
   });
 }
@@ -387,7 +394,7 @@ export function normalizeDifficulty(value?: string | null): DifficultyKey {
   return "classic";
 }
 
-function generateManifestWithBaseSeed(slug: string, difficulty: DifficultyKey, style: GameStyle, baseSeed: number): GameManifest {
+function generateManifestWithBaseSeed(slug: string, difficulty: DifficultyKey, style: GameStyle, baseSeed: number, generatorVersion = GAME_GENERATOR_VERSION): GameManifest {
   const profile = DIFFICULTY_PROFILES[difficulty];
   const logical = selectCandidate(baseSeed, difficulty);
   const path = logical.pathIndices.map((idx) => worldPoint(logical.cells[idx]!, logical.grid, profile.cellSize));
@@ -397,12 +404,12 @@ function generateManifestWithBaseSeed(slug: string, difficulty: DifficultyKey, s
   const walls = buildWalls(logical.cells, logical.grid, profile.cellSize);
   const checkpoints = pickCheckpoints(path, profile.checkpointCount);
   const gates = pickGates(pathCells, path, checkpoints, profile.gateCount, profile.cellSize, baseSeed);
-  const bumpers = pickBumpers(pathCells, path, gates, checkpoints, profile.bumperCount, profile.cellSize, baseSeed);
-  const fingerprint = `${GAME_GENERATOR_VERSION}|${GAME_PHYSICS_VERSION}|${RAPIER_VERSION}|${slug}|${difficulty}|${baseSeed}|${path.length}|${walls.length}|${bumpers.length}|${gates.map((g) => `${g.x},${g.z},${g.phase.toFixed(4)}`).join(";")}|${style.marble}|${style.marbleSecondary}|${style.walls}|${style.floor}|${style.accent}`;
+  const bumpers = pickBumpers(pathCells, path, gates, checkpoints, profile.bumperCount, profile.cellSize, baseSeed, generatorVersion);
+  const fingerprint = `${generatorVersion}|${GAME_PHYSICS_VERSION}|${RAPIER_VERSION}|${slug}|${difficulty}|${baseSeed}|${path.length}|${walls.length}|${bumpers.length}|${gates.map((g) => `${g.x},${g.z},${g.phase.toFixed(4)}`).join(";")}|${style.marble}|${style.marbleSecondary}|${style.walls}|${style.floor}|${style.accent}`;
 
   return {
     version: "glass-roller-local-v3",
-    generatorVersion: GAME_GENERATOR_VERSION,
+    generatorVersion,
     physicsVersion: GAME_PHYSICS_VERSION,
     rapierVersion: RAPIER_VERSION,
     slug,
@@ -444,9 +451,10 @@ export function generateGameManifestFromSecret(
   difficulty: DifficultyKey,
   style: GameStyle,
   secretSeedHex: string,
+  generatorVersion = GAME_GENERATOR_VERSION,
 ): GameManifest {
   if (!/^[0-9a-fA-F]{64}$/.test(secretSeedHex)) throw new Error("secretSeedHex must be 32 bytes encoded as hex");
   const baseSeed = hashString(`orbs-glass-roller:${slug}:${difficulty}:secret:${secretSeedHex.toLowerCase()}:v2`);
-  return generateManifestWithBaseSeed(slug, difficulty, style, baseSeed);
+  return generateManifestWithBaseSeed(slug, difficulty, style, baseSeed, generatorVersion);
 }
 

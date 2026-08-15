@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { buildGameCommitment, hashCanonicalManifest, sha256Hex } from "@/game/canonical";
-import { GAME_GENERATOR_VERSION, GAME_PHYSICS_VERSION, RAPIER_VERSION } from "@/game/constants";
+import { GAME_GENERATOR_VERSION, GAME_PHYSICS_VERSION, RAPIER_VERSION, SUPPORTED_GAME_GENERATOR_VERSIONS } from "@/game/constants";
 import { generateGameManifestFromSecret } from "@/game/maze";
 import type { DifficultyKey, GameManifest, GameStyle } from "@/game/types";
 import type { WalletSplToken } from "@/lib/walletTokens";
@@ -466,11 +466,11 @@ export async function getCanonicalOrbManifest(slug: string): Promise<{ record: O
   const record = await getOrbRecord(slug);
   if (!record || !hasVerifiedOnChainFunding(record)) throw new Error("ORB_NOT_FOUND");
   if (Date.now() < record.startsAt) throw new Error("ORB_NOT_LIVE");
-  if (record.generatorVersion !== GAME_GENERATOR_VERSION || record.physicsVersion !== GAME_PHYSICS_VERSION || record.rapierVersion !== RAPIER_VERSION) {
+  if (!SUPPORTED_GAME_GENERATOR_VERSIONS.has(record.generatorVersion) || record.physicsVersion !== GAME_PHYSICS_VERSION || record.rapierVersion !== RAPIER_VERSION) {
     throw new Error("ORB_VERSION_UNSUPPORTED");
   }
   const seed = decryptSeed(record.encryptedSecretSeed);
-  const manifest = generateGameManifestFromSecret(record.slug, record.difficulty, record.style, seed);
+  const manifest = generateGameManifestFromSecret(record.slug, record.difficulty, record.style, seed, record.generatorVersion);
   const manifestHash = await hashCanonicalManifest(manifest);
   return { record, manifest, manifestHash };
 }
