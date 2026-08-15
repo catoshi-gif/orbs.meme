@@ -27,6 +27,8 @@ type Props = {
   wallet?: string;
   manifestHash?: string;
   onRunStarted?: () => void;
+  /** Admin-only local marketing mode. Never submits runs or touches winner state. */
+  sandboxMode?: boolean;
 };
 
 type Phase = "loading" | "ready" | "countdown" | "playing" | "verifying" | "won" | "lost" | "fun" | "fun-finished" | "verify-error";
@@ -244,7 +246,7 @@ function makeRoundedWallGeometry(THREE: typeof import("three"), thickness: numbe
   return geometry;
 }
 
-export default function GlassRoller({ slug, difficulty, style, manifestOverride, competitiveSession, wallet, manifestHash: trustedManifestHash, onRunStarted }: Props) {
+export default function GlassRoller({ slug, difficulty, style, manifestOverride, competitiveSession, wallet, manifestHash: trustedManifestHash, onRunStarted, sandboxMode = false }: Props) {
   const manifest = useMemo(() => manifestOverride || generateGameManifest(slug, difficulty, style), [manifestOverride, slug, difficulty, style]);
   const mountRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<Phase>("loading");
@@ -291,6 +293,13 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
   }, []);
 
   const submitFinish = useCallback(async (replay: ReplayEnvelope) => {
+    if (sandboxMode) {
+      setVerificationMessage("Marketing sandbox clear. No live Orb, prize, winner lock, or server verification was touched.");
+      setVerifiedHash(null);
+      audioRef.current?.victory();
+      changePhase("won");
+      return;
+    }
     setVerificationMessage("Replaying your run on the Orbs verifier…");
     setVerifiedHash(null);
     try {
@@ -326,7 +335,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
       setVerificationMessage("Verification is temporarily unavailable. Your replay is still saved on this device.");
       changePhase("verify-error");
     }
-  }, [changePhase, competitiveSession, difficulty, slug, style, wallet]);
+  }, [changePhase, competitiveSession, difficulty, sandboxMode, slug, style, wallet]);
 
   useEffect(() => {
     if (!competitiveSession || !wallet || phase !== "playing") return;
@@ -1069,7 +1078,9 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
                 changePhase("verifying");
                 const envelope = buildReplayEnvelope(manifest, replay, replayEvents, runDriveProfile, finishTick, finish * 1000, resetCount, nextCheckpoint);
                 lastReplayRef.current = envelope;
-                try { sessionStorage.setItem(`orbs:replay:${slug}`, JSON.stringify(envelope)); } catch {}
+                if (!sandboxMode) {
+                  try { sessionStorage.setItem(`orbs:replay:${slug}`, JSON.stringify(envelope)); } catch {}
+                }
                 void submitFinish(envelope);
               }
               accumulator = 0;
@@ -1205,7 +1216,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
       disposeEngine?.();
       while (mount.firstChild) mount.removeChild(mount.firstChild);
     };
-  }, [changePhase, manifest, onRunStarted, style.accent, style.floor, style.marble, style.marbleSecondary, style.walls, submitFinish]);
+  }, [changePhase, manifest, onRunStarted, sandboxMode, style.accent, style.floor, style.marble, style.marbleSecondary, style.walls, submitFinish]);
 
   const begin = useCallback(() => startRef.current?.(), []);
   const reset = useCallback(() => resetRef.current?.(), []);
@@ -1283,8 +1294,8 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
 
       {phase === "ready" ? (
         <div className="game-overlay game-overlay-card">
-          <span className="game-kicker">{manifest.profile.subtitle}</span>
-          <h1>Enter the Orb.</h1>
+          <span className="game-kicker">{sandboxMode ? `MARKETING SANDBOX · ${manifest.profile.subtitle}` : manifest.profile.subtitle}</span>
+          <h1>{sandboxMode ? "Roll the demo." : "Enter the Orb."}</h1>
           <p>
             Roll a luminous glass marble through a unique deterministic maze. Cross every glowing ring in order before the finish opens. Desktop gets precision steering; mobile maps physical device tilt into the same responsive steering model while the crystal board moves with you.
           </p>
@@ -1323,15 +1334,19 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
 
       {phase === "won" ? (
         <div className="game-overlay game-overlay-card game-win-card">
-          <span className="game-kicker">ORB CLEARED · SERVER VERIFIED</span>
+          <span className="game-kicker">{sandboxMode ? "DEMO CLEAR" : "ORB CLEARED · SERVER VERIFIED"}</span>
           <h1>You found the light.</h1>
           <div className="game-win-time">{formatTime(elapsed)}</div>
           <p>{resets === 0 ? "A clean run." : `${resets} recovery ${resets === 1 ? "reset" : "resets"}.`} {verificationMessage}</p>
-          {verifiedHash ? <div className="game-verified-hash"><span>REPLAY PROOF</span><strong>{verifiedHash}</strong></div> : null}
-          <div className="game-ready-actions">
-            <Link className="btn-primary" href={`/orb/${slug}/results`}>Claim your prize</Link>
-            <button className="btn-secondary" onClick={() => window.location.reload()}>Run it again</button>
-          </div>
+          {!sandboxMode && verifiedHash ? <div className="game-verified-hash"><span>REPLAY PROOF</span><strong>{verifiedHash}</strong></div> : null}
+          {sandboxMode ? (
+            <div className="game-ready-actions"><span className="game-sandbox-finish-note">Use the sandbox controls above to generate another take.</span></div>
+          ) : (
+            <div className="game-ready-actions">
+              <Link className="btn-primary" href={`/orb/${slug}/results`}>Claim your prize</Link>
+              <button className="btn-secondary" onClick={() => window.location.reload()}>Run it again</button>
+            </div>
+          )}
         </div>
       ) : null}
 
