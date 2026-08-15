@@ -96,7 +96,12 @@ export default function EligibilityGate({
 
   if (!wallet) return null;
   if (loading) return <div className={`eligibility-gate ${compact ? "compact" : ""}`}><small>Checking eligibility receipt…</small></div>;
-  if (confirmed) return <div className={`eligibility-gate confirmed ${compact ? "compact" : ""}`}><strong>18+ eligibility confirmed ✓</strong><small>Saved for this wallet under the current Rules and Terms.</small></div>;
+  if (confirmed) {
+    // Compact qualification rows already show a teal success check and receipt
+    // status. Avoid rendering a second success card inside the completed row.
+    if (compact) return null;
+    return <div className="eligibility-gate confirmed"><strong>18+ eligibility confirmed ✓</strong><small>Saved for this wallet under the current Rules and Terms.</small></div>;
+  }
 
   return <div className={`eligibility-gate ${compact ? "compact" : ""}`}>
     <div className="eligibility-heading"><strong>Confirm your age once</strong><small>Enter your date of birth to confirm eligibility. We check your age, then discard the date itself.</small></div>

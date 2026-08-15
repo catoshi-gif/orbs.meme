@@ -14,10 +14,11 @@ type Props = {
   returnTo?: string;
   compact?: boolean;
   requirePublic?: boolean;
+  minimalConnected?: boolean;
   onChange?: (user: XUser | null) => void;
 };
 
-export default function XConnect({ returnTo, compact = false, requirePublic = false, onChange }: Props) {
+export default function XConnect({ returnTo, compact = false, requirePublic = false, minimalConnected = false, onChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [configured, setConfigured] = useState(true);
   const [user, setUser] = useState<XUser | null>(null);
@@ -55,6 +56,10 @@ export default function XConnect({ returnTo, compact = false, requirePublic = fa
   if (loading) return <div className={`x-connect-skeleton ${compact ? "compact" : ""}`}>Checking X…</div>;
   if (!configured) return <div className="x-config-note">X connection is ready in code. Add the X OAuth environment variables to enable it.</div>;
   if (!user) return <button className={`btn-x ${compact ? "btn-small" : ""}`} onClick={connect}><span className="x-mark">𝕏</span> Connect X</button>;
+
+  if (minimalConnected) {
+    return <button type="button" className="x-disconnect compact x-switch-only" onClick={disconnect}>Switch X</button>;
+  }
 
   return (
     <div className={`x-identity ${compact ? "compact" : ""}`}>

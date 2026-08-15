@@ -81,7 +81,9 @@ export default function TurnstileGate({ slug, wallet, enabled, onVerified }: Pro
 
   if (!enabled) return <small>Complete the steps above first.</small>;
   if (configured === false || !siteKey) return <small className="q-error">Turnstile is not configured yet. Add the Cloudflare keys to enable competitive entry.</small>;
-  if (verified) return <small className="human-proof-saved">✓ Human proof saved for this Orb</small>;
+  // OrbQualification already turns the Human check row into a teal checked
+  // success state. Do not nest a second success bubble inside that row.
+  if (verified) return null;
 
   return <div className="turnstile-gate">
     <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onLoad={() => setScriptReady(true)} />
