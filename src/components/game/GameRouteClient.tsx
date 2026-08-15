@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import GlassRoller from "./GlassRoller";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
@@ -75,6 +75,7 @@ export default function GameRouteClient(props: Props) {
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const runStartReportedRef = useRef(false);
 
   const isDemo = orb === null || (orb === undefined && props.slug.toLowerCase().startsWith("demo"));
 
@@ -97,6 +98,18 @@ export default function GameRouteClient(props: Props) {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(timer);
   }, [orb]);
+
+  const recordRunStarted = useCallback(() => {
+    if (!orb || !props.wallet || !competitiveSession || runStartReportedRef.current) return;
+    runStartReportedRef.current = true;
+    void fetch(`/api/orbs/${encodeURIComponent(props.slug)}/analytics/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet: props.wallet, competitiveSession }),
+      keepalive: true,
+    }).then((response) => { if (!response.ok) runStartReportedRef.current = false; })
+      .catch(() => { runStartReportedRef.current = false; });
+  }, [competitiveSession, orb, props.slug, props.wallet]);
 
   const requestSession = useCallback(async () => {
     if (!orb || !props.wallet || Date.now() < orb.startsAt || sessionLoading || competitiveSession) return;
@@ -155,6 +168,7 @@ export default function GameRouteClient(props: Props) {
         competitiveSession={competitiveSession || undefined}
         wallet={props.wallet}
         manifestHash={manifestHash || undefined}
+        onRunStarted={recordRunStarted}
       />
       {isDemo ? (
         <>

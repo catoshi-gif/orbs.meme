@@ -6,6 +6,7 @@ import { getPublicOrb } from "@/lib/orbStore";
 import { hasShareProof } from "@/lib/qualification";
 import { redisCommand, upstashConfigured } from "@/lib/upstash";
 import { getCurrentXSession } from "@/lib/xAuth";
+import { recordWaitingRoomVisitor } from "@/lib/durableAnalytics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -91,6 +92,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (!/^[A-Za-z0-9_-]{24,80}$/.test(visitorId)) {
     visitorId = randomBytes(24).toString("base64url");
     freshVisitor = true;
+  }
+
+  if (!leave) {
+    await recordWaitingRoomVisitor(slug, visitorId, orb.startsAt)
+      .catch((error) => console.warn("[orbs:analytics] waiting-room visitor count failed", error));
   }
 
   let registered = false;

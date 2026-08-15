@@ -1,9 +1,8 @@
 import "server-only";
 
 import { getOrbRecord, recordHostSharePost } from "@/lib/orbStore";
-import { allOrbRecords } from "@/lib/adminMetrics";
-import { ORB_HISTORY_TTL_SECONDS } from "@/lib/orbLifecycle";
 import { redisCommand } from "@/lib/upstash";
+import { getAllDurableOrbAnalytics } from "@/lib/durableAnalytics";
 
 type PublicMetrics = {
   impression_count?: number;
@@ -75,13 +74,13 @@ export async function attachHostPostForAdmin(slug: string, postId: string) {
   const createdAt = post.created_at ? Date.parse(post.created_at) : Date.now();
   await recordHostSharePost(slug, orb.hostX.id, post.id, Number.isFinite(createdAt) ? createdAt : Date.now());
   const metrics = normalizeMetrics(post);
-  await redisCommand<string>(["SET", metricKey(post.id), JSON.stringify(metrics), "EX", String(ORB_HISTORY_TTL_SECONDS)]);
+  await redisCommand<string>(["SET", metricKey(post.id), JSON.stringify(metrics)]);
   return metrics;
 }
 
 export async function refreshAllHostPostMetrics() {
-  const records = (await allOrbRecords()).filter((r) => r.status !== "funding-pending" && r.hostSharePostId);
-  const ids = [...new Set(records.map((r) => r.hostSharePostId!).filter(Boolean))];
+  const durable = await getAllDurableOrbAnalytics();
+  const ids = [...new Set(durable.map((r) => r.hostSharePostId).filter((id): id is string => Boolean(id)))];
   if (!ids.length) return { postsRead: 0, estimatedCostUsd: 0, totalImpressions: 0 };
 
   let totalImpressions = 0;
@@ -97,7 +96,7 @@ export async function refreshAllHostPostMetrics() {
       const metrics = normalizeMetrics(post);
       totalImpressions += metrics.impressions;
       postsRead += 1;
-      await redisCommand<string>(["SET", metricKey(post.id), JSON.stringify(metrics), "EX", String(ORB_HISTORY_TTL_SECONDS)]);
+      await redisCommand<string>(["SET", metricKey(post.id), JSON.stringify(metrics)]);
     }
   }
   return { postsRead, estimatedCostUsd: postsRead * 0.005, totalImpressions };

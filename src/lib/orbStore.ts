@@ -9,6 +9,7 @@ import { usdMicrosForRawAmount } from "@/lib/prizeQuote";
 import type { XProfile } from "@/lib/xAuth";
 import { redisCommand, redisGetJson, upstashConfigured } from "@/lib/upstash";
 import { activeHostedOrbKey, enteredOrbsKey, isAdminWallet, ORB_COMPETITION_WINDOW_MS, ORB_CREATION_MIN_LEAD_MS, ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
+import { recordFundedOrbAnalytics, recordHostSharePostAnalytics } from "@/lib/durableAnalytics";
 
 export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice" | "isNativeSol">;
 
@@ -305,6 +306,20 @@ export async function finalizeFundedOrb(slug: string, fundingTxSignature: string
     String(funded.startsAt), String(Date.now() - ORB_COMPETITION_WINDOW_MS - 60_000),
   ]);
   if (result !== "OK") throw new Error("Could not finalize funded Orb");
+  await recordFundedOrbAnalytics({
+    slug: funded.slug,
+    orbId: funded.id,
+    createdAt: funded.createdAt,
+    fundedAt: Date.now(),
+    startsAt: funded.startsAt,
+    endsAt: orbEndsAt(funded),
+    hostXUsername: funded.hostX?.username || "unknown",
+    tokenSymbol: funded.token?.symbol || "SPL",
+    prizeUsd: Number(funded.prizeUsd || 0),
+    prizeTokenAmount: Number(funded.prizeTokenAmount || 0),
+    feeUsd: Number(funded.feeUsd || 0),
+    fundingTxSignature,
+  }).catch((error) => console.warn("[orbs:analytics] funded Orb snapshot failed", error));
   return publicRecord(funded);
 }
 
@@ -324,6 +339,7 @@ export async function recordHostSharePost(slug: string, hostXId: string, postId:
   const ttl = currentTtl > 0 ? currentTtl : ORB_HISTORY_TTL_SECONDS;
   const stored = await redisCommand<string>(["SET", orbKey(slug), JSON.stringify(updated), "EX", String(ttl)]);
   if (stored !== "OK") throw new Error("Could not save the host X post");
+  await recordHostSharePostAnalytics(slug, postId).catch((error) => console.warn("[orbs:analytics] host post snapshot failed", error));
   return publicRecord(updated);
 }
 

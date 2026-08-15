@@ -4,6 +4,16 @@ import type { OrbRecord } from "@/lib/orbStore";
 import { orbEndsAt } from "@/lib/orbLifecycle";
 import { redisCommand } from "@/lib/upstash";
 import { getWinners, type WinnerRecord } from "@/lib/upstashWinner";
+import {
+  ensureAnalyticsCounterAtLeast,
+  getDurableAnalyticsTotals,
+  getDurableOrbAnalytics,
+  recordClaimAnalytics,
+  recordFundedOrbAnalytics,
+  recordHostSharePostAnalytics,
+  recordWinnerAnalytics,
+  type DurableOrbAnalytics,
+} from "@/lib/durableAnalytics";
 
 export type AdminGameRow = {
   slug: string;
@@ -12,7 +22,7 @@ export type AdminGameRow = {
   startsAt: number;
   endsAt: number;
   phase: "funding-pending" | "upcoming" | "live" | "won" | "expired";
-  hostWallet: string;
+  hostWallet: string | null;
   hostXUsername: string;
   hostSharePostId: string | null;
   xImpressions: number | null;
@@ -21,8 +31,12 @@ export type AdminGameRow = {
   xReplies: number | null;
   xQuotes: number | null;
   xMetricsRefreshedAt: number | null;
+  waitingRoomVisitors: number;
   participants: number;
   verifiedEntryPosts: number;
+  liveRacers: number;
+  registrationRate: number | null;
+  showRate: number | null;
   prizeUsd: number;
   prizeTokenAmount: number;
   tokenSymbol: string;
@@ -59,14 +73,6 @@ export async function allOrbRecords(limit = 500) {
   return records.sort((a,b) => b.createdAt - a.createdAt).slice(0, limit);
 }
 
-function phaseFor(record: OrbRecord, winner: WinnerRecord | undefined, now: number): AdminGameRow["phase"] {
-  if (record.status === "funding-pending") return "funding-pending";
-  if (winner) return "won";
-  if (now < record.startsAt) return "upcoming";
-  if (now < orbEndsAt(record)) return "live";
-  return "expired";
-}
-
 type CachedXMetrics = {
   postId: string;
   impressions: number;
@@ -76,12 +82,74 @@ type CachedXMetrics = {
   quotes: number;
   refreshedAt: number;
 };
-
 const xMetricKey = (postId: string) => `orbs:v1:admin:xmetrics:${postId}`;
 
+function phaseForDurable(row: DurableOrbAnalytics, now: number): AdminGameRow["phase"] {
+  if (row.winnerXUsername) return "won";
+  if (now < row.startsAt) return "upcoming";
+  if (now < row.endsAt) return "live";
+  return "expired";
+}
+
+async function backfillCurrentHistory(records: OrbRecord[], winners: Map<string, WinnerRecord>, entrantCounts: Map<string, number>) {
+  for (const record of records) {
+    if (record.status === "funding-pending" || !record.fundingTxSignature) continue;
+    await recordFundedOrbAnalytics({
+      slug: record.slug,
+      orbId: record.id,
+      createdAt: record.createdAt,
+      // Old operational records did not retain a distinct funding timestamp.
+      // createdAt is the safest deterministic approximation for the one-time backfill.
+      fundedAt: record.createdAt,
+      startsAt: record.startsAt,
+      endsAt: orbEndsAt(record),
+      hostXUsername: record.hostX?.username || "unknown",
+      tokenSymbol: record.token?.symbol || "SPL",
+      prizeUsd: Number(record.prizeUsd || 0),
+      prizeTokenAmount: Number(record.prizeTokenAmount || 0),
+      feeUsd: Number(record.feeUsd || 0),
+      fundingTxSignature: record.fundingTxSignature,
+    });
+    await ensureAnalyticsCounterAtLeast(record.slug, "qualifiedEntries", entrantCounts.get(record.slug) || 0);
+    if (record.hostSharePostId) await recordHostSharePostAnalytics(record.slug, record.hostSharePostId);
+    const winner = winners.get(record.id);
+    if (winner) {
+      await recordWinnerAnalytics({
+        slug: record.slug,
+        orbId: record.id,
+        xUsername: winner.xUsername,
+        verifiedElapsedMs: winner.verifiedElapsedMs,
+        verifiedAt: winner.verifiedAt,
+      });
+      if (winner.claimTxSignature && winner.claimedAt) {
+        await recordClaimAnalytics({ slug: record.slug, orbId: record.id, claimTxSignature: winner.claimTxSignature, claimedAt: winner.claimedAt });
+      }
+    }
+  }
+}
+
 export async function getAdminMetrics() {
-  const records = await allOrbRecords();
-  const postIds = records.map((r) => r.hostSharePostId).filter((id): id is string => Boolean(id));
+  // Operational records expire after the normal product-retention window. We use
+  // them only to backfill whatever history is still available and to enrich recent
+  // rows. Durable analytics below is the lifetime source of truth.
+  const records = await allOrbRecords(1000);
+  const fundedRecords = records.filter((r) => r.status !== "funding-pending" && Boolean(r.fundingTxSignature));
+  const winners = await getWinners(fundedRecords.map((r) => r.id));
+  const entrantCounts = new Map<string, number>();
+  await Promise.all(fundedRecords.map(async (record) => {
+    entrantCounts.set(record.slug, Number(await redisCommand<number>(["SCARD", `orbs:v1:entrants:${record.slug}`]) || 0));
+  }));
+  await backfillCurrentHistory(fundedRecords, winners, entrantCounts);
+
+  const [durable, lifetime] = await Promise.all([getDurableOrbAnalytics(1000), getDurableAnalyticsTotals()]);
+  const currentBySlug = new Map(records.map((record) => [record.slug, record]));
+  const currentWinnerBySlug = new Map<string, WinnerRecord>();
+  for (const record of fundedRecords) {
+    const winner = winners.get(record.id);
+    if (winner) currentWinnerBySlug.set(record.slug, winner);
+  }
+
+  const postIds = durable.map((r) => r.hostSharePostId).filter((id): id is string => Boolean(id));
   const cachedX = new Map<string, CachedXMetrics>();
   if (postIds.length) {
     const raw = await redisCommand<Array<string | null>>(["MGET", ...postIds.map(xMetricKey)]);
@@ -91,75 +159,80 @@ export async function getAdminMetrics() {
       try { cachedX.set(id, JSON.parse(value) as CachedXMetrics); } catch {}
     });
   }
-  const winners = await getWinners(records.map((r) => r.id));
-  const entrantMembers = await Promise.all(records.map(async (record) => {
-    const members = await redisCommand<string[]>(["SMEMBERS", `orbs:v1:entrants:${record.slug}`]);
-    return members || [];
-  }));
+
   const now = Date.now();
-  const funded = records.filter((r) => r.status !== "funding-pending");
-  const rows: AdminGameRow[] = records.map((record, index) => {
-    const winner = winners.get(record.id);
-    const participants = entrantMembers[index]?.length || 0;
-    const x = record.hostSharePostId ? cachedX.get(record.hostSharePostId) : undefined;
+  const rows: AdminGameRow[] = durable.map((row) => {
+    const current = currentBySlug.get(row.slug);
+    const currentWinner = currentWinnerBySlug.get(row.slug);
+    const x = row.hostSharePostId ? cachedX.get(row.hostSharePostId) : undefined;
     return {
-      slug: record.slug,
-      id: record.id,
-      createdAt: record.createdAt,
-      startsAt: record.startsAt,
-      endsAt: orbEndsAt(record),
-      phase: phaseFor(record, winner, now),
-      hostWallet: record.hostWallet,
-      hostXUsername: record.hostX?.username || "unknown",
-      hostSharePostId: record.hostSharePostId || null,
+      slug: row.slug,
+      id: row.orbId,
+      createdAt: row.createdAt,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      phase: phaseForDurable(row, now),
+      hostWallet: current?.hostWallet || null,
+      hostXUsername: row.hostXUsername,
+      hostSharePostId: row.hostSharePostId,
       xImpressions: x?.impressions ?? null,
       xLikes: x?.likes ?? null,
       xReposts: x?.reposts ?? null,
       xReplies: x?.replies ?? null,
       xQuotes: x?.quotes ?? null,
       xMetricsRefreshedAt: x?.refreshedAt ?? null,
-      participants,
-      verifiedEntryPosts: participants,
-      prizeUsd: Number(record.prizeUsd || 0),
-      prizeTokenAmount: Number(record.prizeTokenAmount || 0),
-      tokenSymbol: record.token?.symbol || "SPL",
-      feeUsd: Number(record.feeUsd || 0),
-      winnerXUsername: winner?.xUsername || null,
-      winnerWallet: winner?.wallet || null,
-      verifiedElapsedMs: winner?.verifiedElapsedMs || null,
-      claimed: Boolean(winner?.claimTxSignature),
-      fundingTxSignature: record.fundingTxSignature || null,
-      claimTxSignature: winner?.claimTxSignature || null,
+      waitingRoomVisitors: row.waitingRoomVisitors,
+      participants: row.qualifiedEntries,
+      verifiedEntryPosts: row.qualifiedEntries,
+      liveRacers: row.liveRacers,
+      registrationRate: row.waitingRoomVisitors ? row.qualifiedEntries / row.waitingRoomVisitors : null,
+      showRate: row.qualifiedEntries ? row.liveRacers / row.qualifiedEntries : null,
+      prizeUsd: row.prizeUsd,
+      prizeTokenAmount: row.prizeTokenAmount,
+      tokenSymbol: row.tokenSymbol,
+      feeUsd: row.feeUsd,
+      winnerXUsername: row.winnerXUsername,
+      winnerWallet: currentWinner?.wallet || null,
+      verifiedElapsedMs: row.winnerVerifiedElapsedMs,
+      claimed: Boolean(row.claimTxSignature),
+      fundingTxSignature: row.fundingTxSignature || null,
+      claimTxSignature: row.claimTxSignature,
     };
   });
 
-  const uniqueHosts = new Set(funded.map((r) => r.hostWallet));
-  const uniqueHostX = new Set(funded.map((r) => r.hostX?.id).filter(Boolean));
-  const uniqueEntrants = new Set(entrantMembers.flat());
-  const winnerRows = rows.filter((r) => r.phase === "won");
-  const claimed = winnerRows.filter((r) => r.claimed);
-  const finishTimes = winnerRows.map((r) => r.verifiedElapsedMs).filter((v): v is number => Number.isFinite(v));
-  const totalParticipants = rows.reduce((sum, row) => sum + row.participants, 0);
+  // Pending records are useful operationally but intentionally never enter the
+  // permanent funded-Orb ledger.
+  const pending = records.filter((record) => record.status === "funding-pending");
+  const finishTimes = durable.map((r) => r.winnerVerifiedElapsedMs).filter((v): v is number => Number.isFinite(v));
+  const uniqueHostX = new Set(durable.map((r) => r.hostXUsername).filter((value) => value && value !== "unknown"));
+  const average = (numerator: number, denominator: number) => denominator ? numerator / denominator : 0;
 
   return {
     generatedAt: new Date().toISOString(),
+    durableAnalyticsSince: "v1",
     totals: {
-      orbRecords: records.length,
-      fundedOrbs: funded.length,
+      orbRecords: durable.length + pending.length,
+      fundedOrbs: lifetime.fundedOrbs,
       upcoming: rows.filter((r) => r.phase === "upcoming").length,
       live: rows.filter((r) => r.phase === "live").length,
-      completedWithWinner: winnerRows.length,
+      completedWithWinner: lifetime.winners,
       expiredWithoutWinner: rows.filter((r) => r.phase === "expired").length,
-      fundingPending: rows.filter((r) => r.phase === "funding-pending").length,
-      uniqueHostWallets: uniqueHosts.size,
+      fundingPending: pending.length,
+      uniqueHostWallets: null,
       uniqueHostXAccounts: uniqueHostX.size,
-      totalQualifiedEntries: totalParticipants,
-      uniqueEntrantBindings: uniqueEntrants.size,
-      verifiedEntryPosts: totalParticipants,
-      claimedPrizes: claimed.length,
-      totalWinnerPrizeUsdAtFunding: funded.reduce((sum, r) => sum + Number(r.prizeUsd || 0), 0),
-      totalProtocolFeesUsdAtFunding: funded.reduce((sum, r) => sum + Number(r.feeUsd || 0), 0),
-      averageEntriesPerFundedOrb: funded.length ? totalParticipants / funded.length : 0,
+      waitingRoomVisitors: lifetime.waitingRoomVisitors,
+      totalQualifiedEntries: lifetime.qualifiedEntries,
+      uniqueEntrantBindings: null,
+      verifiedEntryPosts: lifetime.qualifiedEntries,
+      totalLiveRacers: lifetime.liveRacers,
+      claimedPrizes: lifetime.claimedPrizes,
+      totalWinnerPrizeUsdAtFunding: lifetime.totalWinnerPrizeUsdAtFunding,
+      totalProtocolFeesUsdAtFunding: lifetime.totalProtocolFeesUsdAtFunding,
+      averageWaitingVisitorsPerFundedOrb: average(lifetime.waitingRoomVisitors, lifetime.fundedOrbs),
+      averageEntriesPerFundedOrb: average(lifetime.qualifiedEntries, lifetime.fundedOrbs),
+      averageRacersPerFundedOrb: average(lifetime.liveRacers, lifetime.fundedOrbs),
+      waitingToRegistrationRate: lifetime.waitingRoomVisitors ? lifetime.qualifiedEntries / lifetime.waitingRoomVisitors : null,
+      registrationToRaceRate: lifetime.qualifiedEntries ? lifetime.liveRacers / lifetime.qualifiedEntries : null,
       averageVerifiedWinMs: finishTimes.length ? finishTimes.reduce((a,b) => a+b, 0) / finishTimes.length : null,
       fastestVerifiedWinMs: finishTimes.length ? Math.min(...finishTimes) : null,
     },

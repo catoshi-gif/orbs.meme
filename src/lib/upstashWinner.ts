@@ -1,5 +1,6 @@
 import { getUpstashConfig, redisCommand } from "@/lib/upstash";
 import { ORB_HISTORY_TTL_SECONDS } from "@/lib/orbLifecycle";
+import { recordClaimAnalytics, recordWinnerAnalytics } from "@/lib/durableAnalytics";
 
 export type WinnerRecord = {
   slug: string;
@@ -46,6 +47,12 @@ export async function tryAcquireWinner(lockId: string, record: WinnerRecord): Pr
   if (result === "OK") {
     try { await indexWinnerForLeaderboard(lockId, record); }
     catch (error) { console.warn("[orbs:leaderboard] winner was secured but leaderboard indexing will retry later", error); }
+    if (record.orbId) {
+      await recordWinnerAnalytics({
+        slug: record.slug, orbId: record.orbId, xUsername: record.xUsername,
+        verifiedElapsedMs: record.verifiedElapsedMs, verifiedAt: record.verifiedAt,
+      }).catch((error) => console.warn("[orbs:analytics] winner snapshot failed", error));
+    }
     return { configured: true, acquired: true, record };
   }
 
@@ -96,6 +103,10 @@ export async function markWinnerClaimed(lockId: string, wallet: string, signatur
   }
   const updated: WinnerRecord = { ...current, claimTxSignature: signature, claimedAt: new Date().toISOString() };
   await redisCommand<string>(["SET", winnerKey(lockId), JSON.stringify(updated), "EX", ORB_HISTORY_TTL_SECONDS]);
+  if (updated.orbId && updated.claimedAt) {
+    await recordClaimAnalytics({ slug: updated.slug, orbId: updated.orbId, claimTxSignature: signature, claimedAt: updated.claimedAt })
+      .catch((error) => console.warn("[orbs:analytics] claim snapshot failed", error));
+  }
   return updated;
 }
 

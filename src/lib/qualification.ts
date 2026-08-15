@@ -2,6 +2,7 @@ import { createPublicKey, randomBytes, verify as verifySignature } from "node:cr
 import { PublicKey } from "@solana/web3.js";
 import { redisCommand, redisDelete, redisGetJson, redisSetJson } from "@/lib/upstash";
 import { enteredOrbsKey, ORB_HISTORY_TTL_SECONDS } from "@/lib/orbLifecycle";
+import { recordQualifiedEntryAnalytics } from "@/lib/durableAnalytics";
 
 export const followProofKey = (sourceXId: string, targetXId: string) => `orbs:v1:x:followproof:${sourceXId}:${targetXId}`;
 export const walletProofKey = (slug: string, xUserId: string, wallet: string) => `orbs:v1:walletproof:${slug}:${xUserId}:${wallet}`;
@@ -152,6 +153,8 @@ export async function storeShareProof(slug: string, xUserId: string, wallet: str
     `${xUserId}:${normalized}`,
   ]);
   if (stored !== 1) throw new Error("Could not persist this verified Orb entry");
+  await recordQualifiedEntryAnalytics(slug, `${xUserId}:${normalized}`, Math.max(ORB_HISTORY_TTL_SECONDS, activityTtlSeconds))
+    .catch((error) => console.warn("[orbs:analytics] qualified-entry count failed", error));
 }
 
 export async function getShareProof(slug: string, xUserId: string, wallet: string) {

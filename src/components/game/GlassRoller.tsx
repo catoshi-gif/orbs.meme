@@ -26,6 +26,7 @@ type Props = {
   competitiveSession?: string;
   wallet?: string;
   manifestHash?: string;
+  onRunStarted?: () => void;
 };
 
 type Phase = "loading" | "ready" | "countdown" | "playing" | "verifying" | "won" | "lost" | "fun" | "fun-finished" | "verify-error";
@@ -243,7 +244,7 @@ function makeRoundedWallGeometry(THREE: typeof import("three"), thickness: numbe
   return geometry;
 }
 
-export default function GlassRoller({ slug, difficulty, style, manifestOverride, competitiveSession, wallet, manifestHash: trustedManifestHash }: Props) {
+export default function GlassRoller({ slug, difficulty, style, manifestOverride, competitiveSession, wallet, manifestHash: trustedManifestHash, onRunStarted }: Props) {
   const manifest = useMemo(() => manifestOverride || generateGameManifest(slug, difficulty, style), [manifestOverride, slug, difficulty, style]);
   const mountRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<Phase>("loading");
@@ -865,6 +866,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
       const begin = () => {
         if (phaseRef.current !== "ready") return;
         void audioRef.current?.unlock();
+        onRunStarted?.();
 
         // Fullscreen is opportunistic: modern browsers may grant it from this user gesture.
         // iOS Safari historically varies here, so Home Screen standalone mode remains the
@@ -1203,7 +1205,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
       disposeEngine?.();
       while (mount.firstChild) mount.removeChild(mount.firstChild);
     };
-  }, [changePhase, manifest, style.accent, style.floor, style.marble, style.marbleSecondary, style.walls, submitFinish]);
+  }, [changePhase, manifest, onRunStarted, style.accent, style.floor, style.marble, style.marbleSecondary, style.walls, submitFinish]);
 
   const begin = useCallback(() => startRef.current?.(), []);
   const reset = useCallback(() => resetRef.current?.(), []);
