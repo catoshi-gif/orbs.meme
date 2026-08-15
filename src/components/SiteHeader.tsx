@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import Logo from "@/components/Logo";
 import ThemeToggle from "@/components/ThemeToggle";
 import ConnectWallet from "@/components/ConnectWallet";
+import SocialLinks from "@/components/SocialLinks";
 
 const links: Array<[string, string]> = [
   ["/", "Live Orbs"],
@@ -35,9 +36,10 @@ export default function SiteHeader() {
           ))}
         </nav>
         <div className="head-actions">
+          <div className="social-desktop"><SocialLinks compact /></div>
           <ThemeToggle />
           <div className="wallet-desktop"><ConnectWallet compact /></div>
-          <button className="menu-btn" onClick={() => setOpen((value) => !value)} aria-label="Menu">☰</button>
+          <button className="menu-btn" onClick={() => setOpen((value) => !value)} aria-label="Menu" aria-expanded={open}>☰</button>
         </div>
       </div>
       {open ? (
@@ -45,7 +47,8 @@ export default function SiteHeader() {
           {links.map(([href, label]) => (
             <Link key={href} href={href} onClick={() => setOpen(false)}>{label}</Link>
           ))}
-          <Link href="/me">My Orbs</Link>
+          <Link href="/me" onClick={() => setOpen(false)}>My Orbs</Link>
+          <div className="mobile-socials"><SocialLinks /></div>
           <ConnectWallet />
         </div>
       ) : null}
