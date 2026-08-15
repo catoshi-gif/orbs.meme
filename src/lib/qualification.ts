@@ -11,6 +11,11 @@ const walletNonceKey = (slug: string, xUserId: string, wallet: string) => `orbs:
 const entrantXKey = (slug: string, xUserId: string) => `orbs:v1:entrant:x:${slug}:${xUserId}`;
 const entrantWalletKey = (slug: string, wallet: string) => `orbs:v1:entrant:wallet:${slug}:${wallet}`;
 
+function normalizeWallet(value: unknown) {
+  if (typeof value !== "string") return null;
+  try { return new PublicKey(value).toBase58(); } catch { return null; }
+}
+
 async function bindEntrantIdentity(slug: string, xUserId: string, wallet: string) {
   const script = `
     local by_x = redis.call('GET', KEYS[1])
