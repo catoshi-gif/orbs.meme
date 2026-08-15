@@ -128,7 +128,7 @@ export default function SolanaWalletProvider({ children }: { children: React.Rea
 
   return (
     <ConnectionProvider endpoint={RPC}>
-      <AdapterWalletProvider wallets={wallets} autoConnect>
+      <AdapterWalletProvider wallets={wallets} autoConnect={!iosBrowser}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </AdapterWalletProvider>
     </ConnectionProvider>

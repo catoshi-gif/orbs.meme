@@ -61,7 +61,7 @@ export default function XConnect({ returnTo, compact = false, requirePublic = fa
       {user.profileImageUrl ? <img src={user.profileImageUrl} alt="" referrerPolicy="no-referrer" /> : <span className="x-avatar-fallback">𝕏</span>}
       <div><strong>@{user.username}</strong><small>{user.protected ? "Protected account" : "Connected · public account"}</small></div>
       {requirePublic && user.protected ? <span className="x-private-warning">Host must be public</span> : <span className="x-connected-check">✓</span>}
-      {!compact ? <button className="x-disconnect" onClick={disconnect}>Disconnect</button> : null}
+      <button className={`x-disconnect ${compact ? "compact" : ""}`} onClick={disconnect}>{compact ? "Switch X" : "Disconnect"}</button>
     </div>
   );
 }

@@ -16,15 +16,28 @@ const KEY_TTL_SECONDS = 15 * 60;
 
 function allKey(slug: string) { return `orbs:v1:presence:${slug}:all`; }
 function registeredKey(slug: string) { return `orbs:v1:presence:${slug}:registered`; }
+function chatKey(slug: string) { return `orbs:v1:waiting-chat:${slug}`; }
 
 function normalizeWallet(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return null;
   try { return new PublicKey(value).toBase58(); } catch { return null; }
 }
 
+function parseMessages(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((value) => {
+    if (typeof value !== "string") return [];
+    try {
+      const row = JSON.parse(value) as { id?: string; username?: string; profileImageUrl?: string; text?: string; sentAt?: number };
+      if (!row.id || !row.username || !row.text || !Number.isFinite(row.sentAt)) return [];
+      return [{ id: row.id, username: row.username, profileImageUrl: row.profileImageUrl || undefined, text: row.text, sentAt: Number(row.sentAt) }];
+    } catch { return []; }
+  });
+}
+
 async function counts(slug: string, visitorId: string, registered: boolean, leave: boolean) {
   const now = Date.now();
-  const result = await redisCommand<number[]>([
+  const result = await redisCommand<unknown[]>([
     "EVAL",
     `
       local cutoff = tonumber(ARGV[1])
@@ -45,11 +58,12 @@ async function counts(slug: string, visitorId: string, registered: boolean, leav
         redis.call('EXPIRE', KEYS[2], ARGV[6])
       end
 
-      return { redis.call('ZCARD', KEYS[1]), redis.call('ZCARD', KEYS[2]) }
+      return { redis.call('ZCARD', KEYS[1]), redis.call('ZCARD', KEYS[2]), redis.call('ZRANGE', KEYS[3], -20, -1) }
     `,
-    "2",
+    "3",
     allKey(slug),
     registeredKey(slug),
+    chatKey(slug),
     String(now - ACTIVE_WINDOW_MS),
     visitorId,
     String(now),
@@ -59,14 +73,14 @@ async function counts(slug: string, visitorId: string, registered: boolean, leav
   ]);
   const total = Math.max(0, Number(result?.[0] || 0));
   const registeredCount = Math.min(total, Math.max(0, Number(result?.[1] || 0)));
-  return { total, registered: registeredCount, unregistered: Math.max(0, total - registeredCount) };
+  return { total, registered: registeredCount, unregistered: Math.max(0, total - registeredCount), messages: parseMessages(result?.[2]) };
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const orb = await getPublicOrb(slug);
   if (!orb) return NextResponse.json({ ok: false, error: "Orb not found" }, { status: 404 });
-  if (!upstashConfigured()) return NextResponse.json({ ok: true, available: false, total: 0, registered: 0, unregistered: 0 });
+  if (!upstashConfigured()) return NextResponse.json({ ok: true, available: false, total: 0, registered: 0, unregistered: 0, messages: [], canChat: false });
 
   const body = await request.json().catch(() => ({})) as { wallet?: unknown; leave?: unknown };
   const wallet = normalizeWallet(body.wallet);
@@ -86,7 +100,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   }
 
   const current = await counts(slug, visitorId, registered, leave);
-  const response = NextResponse.json({ ok: true, available: true, ...current }, {
+  const response = NextResponse.json({ ok: true, available: true, ...current, canChat: registered }, {
     headers: { "Cache-Control": "private, no-store" },
   });
   if (freshVisitor) {
