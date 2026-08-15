@@ -143,29 +143,45 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
     finally { setVerifyingWallet(false); }
   };
 
-  const openShareComposer = () => {
+  const openShareComposer = async () => {
     const line = shareLine.trim();
     if (line.length < 12) { setShareError("Add one original line first so entry posts do not become repetitive spam."); return; }
     if (!shareCardReady) { setShareError("The X card is still preparing. Wait a moment, then post."); return; }
     setShareError(null);
 
-    // Persist the exact line before leaving Orbs. Some iOS wallet/dApp browsers
-    // reload this page when X opens, so React state alone is not durable enough.
-    void fetch(`/api/orbs/${encodeURIComponent(slug)}/qualify/share`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet, originalLine: line, mode: "intent" }),
-      keepalive: true,
-    }).catch(() => { /* Recovery can still fall back to manual verification. */ });
+    const postText = `${line}\n\nI’m racing @${hostUsername} for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
+    const params = new URLSearchParams({ text: postText, url: orbShareUrl });
+    const composeUrl = `https://x.com/intent/post?${params.toString()}`;
+
+    // Open a blank destination synchronously while the user's tap still owns a
+    // browser activation. iOS wallet/dApp browsers may suspend this webview as
+    // soon as X opens, so the durable server intent must finish first.
+    const composer = window.open("about:blank", "_blank");
 
     try {
-      localStorage.setItem(`orbs:share-intent:${slug}:${wallet}`, String(Date.now()));
-    } catch {}
+      const intentResponse = await fetch(`/api/orbs/${encodeURIComponent(slug)}/qualify/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ wallet, originalLine: line, mode: "intent" }),
+        cache: "no-store",
+      });
+      const intent = await apiPayload<{ pending?: boolean; error?: string }>(intentResponse);
+      if (!intentResponse.ok || !intent.pending) {
+        try { composer?.close(); } catch {}
+        throw new Error(intent.error || "Could not prepare X post verification");
+      }
 
-    const text = `${line}\n\nI’m racing @${hostUsername} for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
-    const params = new URLSearchParams({ text, url: orbShareUrl });
-    window.open(`https://x.com/intent/post?${params.toString()}`, "_blank", "noopener,noreferrer");
-    setShareStarted(true);
+      try {
+        localStorage.setItem(`orbs:share-intent:${slug}:${wallet}`, JSON.stringify({ startedAt: Date.now(), originalLine: line }));
+      } catch {}
+
+      if (composer && !composer.closed) composer.location.href = composeUrl;
+      else window.location.href = composeUrl;
+      setShareStarted(true);
+    } catch (error) {
+      try { composer?.close(); } catch {}
+      setShareError(error instanceof Error ? error.message : "Could not prepare X post verification");
+    }
   };
 
   const verifyShare = async () => {
@@ -227,14 +243,14 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
     let localIntent = false;
     try { localIntent = Boolean(localStorage.getItem(`orbs:share-intent:${slug}:${wallet}`)); } catch {}
 
-    // A server-side intent check is cheap and returns without touching X when
-    // no composer was opened. This makes recovery work even if Jupiter Mobile
-    // discarded the page's local React state while the user posted on X.
-    void recoverShare(true);
+    // Automatic recovery is reserved for browsers where this page itself
+    // recorded a composer handoff. Manual "Check X" still works without this
+    // marker, which covers iOS webviews that lost state during the handoff.
+    if (localIntent) void recoverShare(true);
 
     const onReturn = () => {
-      if (document.visibilityState !== "visible") return;
-      window.setTimeout(() => void recoverShare(true), localIntent ? 1200 : 300);
+      if (document.visibilityState !== "visible" || !localIntent) return;
+      window.setTimeout(() => void recoverShare(true), 1200);
     };
     document.addEventListener("visibilitychange", onReturn);
     window.addEventListener("focus", onReturn);

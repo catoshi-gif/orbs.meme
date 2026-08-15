@@ -62,13 +62,20 @@ function findMatchingEntryPost(
   slug: string,
   originalLine: string,
   notBefore: number,
+  allowStandardizedRecovery = false,
 ) {
   const expectedLine = originalLine.replace(/\s+/g, " ").toLocaleLowerCase();
-  return posts.find((post) =>
-    post.createdAt >= notBefore &&
-    post.text.replace(/\s+/g, " ").toLocaleLowerCase().includes(expectedLine) &&
-    post.urls.some((url) => isOrbUrl(url, slug)),
-  );
+  return posts.find((post) => {
+    if (post.createdAt < notBefore || !post.urls.some((url) => isOrbUrl(url, slug))) return false;
+    const normalized = post.text.replace(/\s+/g, " ").toLocaleLowerCase();
+    if (expectedLine && normalized.includes(expectedLine)) return true;
+    // Recovery fallback for iOS webviews that were suspended before the tiny
+    // share-intent write completed. This still requires a post authored by the
+    // connected X account, the exact Orb URL and the standardized contest copy.
+    return allowStandardizedRecovery &&
+      normalized.includes("#contest") &&
+      normalized.includes("first verified finish wins");
+  });
 }
 
 async function saveVerifiedShare(
@@ -126,15 +133,16 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   let verificationLine = originalLine;
   let notBefore = orb.createdAt - 5 * 60_000;
 
+  let pendingIntent = null as Awaited<ReturnType<typeof getShareIntent>>;
   if (mode === "recover") {
-    const intent = await getShareIntent(slug, x.user.id, wallet);
-    // No pending intent means there is nothing to recover. Crucially, do not
-    // spend an X API read for ordinary visitors who have not opened the composer.
-    if (!intent) {
-      return NextResponse.json({ ok: true, verified: false, pending: false }, { headers: { "Cache-Control": "private, no-store" } });
+    pendingIntent = await getShareIntent(slug, x.user.id, wallet);
+    if (pendingIntent) {
+      verificationLine = pendingIntent.originalLine;
+      notBefore = Math.max(notBefore, pendingIntent.startedAt - 2 * 60_000);
     }
-    verificationLine = intent.originalLine;
-    notBefore = Math.max(notBefore, intent.startedAt - 2 * 60_000);
+    // If an iOS wallet/dApp browser suspended Orbs before the intent write
+    // completed, manual recovery is still allowed to inspect this connected
+    // account's recent authored posts. Matching remains Orb-specific below.
   } else if (verificationLine.length < 12 || verificationLine.length > 70) {
     return NextResponse.json({ ok: false, error: "Use the same original line you added before opening the X composer." }, { status: 400 });
   }
@@ -145,8 +153,8 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   if (count === 1) await redisCommand(["EXPIRE", rateKey, 70]);
   if (count > 4) return NextResponse.json({ ok: false, error: "Too many verification attempts. Wait a minute, then try again." }, { status: 429 });
 
-  const { posts } = await getRecentXPostsForCurrentSession(5);
-  const match = findMatchingEntryPost(posts, slug, verificationLine, notBefore);
+  const { posts } = await getRecentXPostsForCurrentSession(mode === "recover" ? 10 : 5);
+  const match = findMatchingEntryPost(posts, slug, verificationLine, notBefore, mode === "recover");
   if (!match) {
     return NextResponse.json({
       ok: true,
