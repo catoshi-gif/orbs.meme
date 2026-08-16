@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const ARENA_GAME_VERSION = "orb-arena-course-v2" as const;
+export const ARENA_GAME_VERSION = "orb-arena-coliseum-v3" as const;
 export const ARENA_HARD_CAP_SECONDS = 10 * 60;
 
 export type ArenaPace = "demo" | "production";
@@ -25,7 +25,7 @@ export type ArenaConfig = {
 /** Approximate half-footprint of the authored course. Geometry scales, physics does not. */
 export function arenaRadiusForPlayers(playerCount: number) {
   const players = Math.max(2, Math.min(200, Math.floor(playerCount)));
-  return Math.min(35, Math.max(13, 10.5 + Math.sqrt(players) * 1.72));
+  return Math.min(62, Math.max(24, 20 + Math.sqrt(players) * 2.05));
 }
 
 export function buildArenaConfig(input: {
@@ -41,21 +41,21 @@ export function buildArenaConfig(input: {
     version: ARENA_GAME_VERSION,
     playerCount,
     radius,
-    courseScale: radius / 17.5,
+    courseScale: radius / 26,
     maxSeconds,
     outerCloseAt: maxSeconds * 0.36,
     innerCloseAt: maxSeconds * 0.62,
     suddenDeathAt: maxSeconds * 0.78,
     finalCollapseAt: maxSeconds * 0.92,
-    jumpImpulse: 4.9,
+    jumpImpulse: 4.8,
     jumpCooldownMs: 760,
-    impactDamageScale: 4.5,
+    impactDamageScale: 2.15,
     style: input.style,
     seed: input.seed,
   };
 }
 
-/** Kept for admin compatibility. Arena V2 closes authored sectors instead of shrinking a circle. */
+/** Kept for admin compatibility. Arena V3 is an enclosed coliseum; playable territory closes with gates, never a death edge. */
 export function arenaRadiusAt(config: ArenaConfig, _elapsedSeconds: number, _survivors: number) {
   return config.radius;
 }
