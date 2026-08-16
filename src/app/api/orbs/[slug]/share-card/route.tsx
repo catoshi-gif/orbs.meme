@@ -31,12 +31,16 @@ function safeRemoteImage(value: string | null | undefined, kind: "token" | "avat
 async function loadRemoteImage(value: string | null) {
   if (!value) return null;
   try {
-    const response = await fetch(value, { cache: "force-cache", signal: AbortSignal.timeout(3_000) });
+    const response = await fetch(value, { cache: "force-cache", signal: AbortSignal.timeout(5_000) });
     const type = (response.headers.get("content-type") || "").split(";")[0].toLowerCase();
-    if (!response.ok || !["image/jpeg", "image/png", "image/webp"].includes(type)) return null;
+    if (!response.ok || !type.startsWith("image/") || type === "image/svg+xml") return null;
     const bytes = Buffer.from(await response.arrayBuffer());
     if (!bytes.length || bytes.length > 2_000_000) return null;
-    return `data:${type};base64,${bytes.toString("base64")}`;
+    const png = await sharp(bytes, { animated: false })
+      .resize(256, 256, { fit: "contain", withoutEnlargement: true })
+      .png()
+      .toBuffer();
+    return `data:image/png;base64,${png.toString("base64")}`;
   } catch { return null; }
 }
 
