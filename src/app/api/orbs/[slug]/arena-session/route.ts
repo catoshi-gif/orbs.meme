@@ -8,7 +8,7 @@ import { getCurrentXSession } from "@/lib/xAuth";
 import { getWinner } from "@/lib/upstashWinner";
 import { orbEndsAt } from "@/lib/orbLifecycle";
 import { assignArenaEntrantProfile, getArenaEntrantProfile } from "@/lib/arenaEntrants";
-import { arenaRealtimeUrl, arenaRuntimeConfigured, issueArenaJoinToken } from "@/lib/arenaRuntime";
+import { arenaRealtimeUrl, arenaRuntimeConfigured, arenaRuntimeHealthy, issueArenaJoinToken } from "@/lib/arenaRuntime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (!orb || orbGameType(orb) !== "arena") return NextResponse.json({ ok:false,error:"Arena not found" }, { status:404 });
   if (!x) return NextResponse.json({ ok:false,error:"Connect X first" }, { status:401 });
   if (!arenaRuntimeConfigured()) return NextResponse.json({ ok:false,error:"Arena realtime service is not configured" }, { status:503 });
+  if (!await arenaRuntimeHealthy()) return NextResponse.json({ ok:false,error:"Arena realtime service is not healthy or is running a mismatched game version" }, { status:503 });
   if (Date.now() < orb.startsAt - 60_000) return NextResponse.json({ ok:false,error:"ARENA_NOT_OPEN",startsAt:orb.startsAt }, { status:403 });
   const endsAt = orbEndsAt(orb);
   if (Date.now() >= endsAt || await getWinner(orb.id)) return NextResponse.json({ ok:false,error:"ORB_CLOSED",endsAt }, { status:409 });

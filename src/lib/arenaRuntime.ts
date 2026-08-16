@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { ARENA_GAME_VERSION } from "@/game/arena";
 import type { GameStyle } from "@/game/types";
 import type { ArenaEntrantProfile } from "@/lib/arenaEntrants";
 
@@ -43,6 +44,37 @@ export function arenaRuntimeConfigured() {
   try {
     return Boolean(arenaRealtimeUrl()) && (process.env.ARENA_RUNTIME_HMAC_KEY || "").trim().length >= 32;
   } catch { return false; }
+}
+
+
+function arenaHealthUrl() {
+  const ws = new URL(arenaRealtimeUrl());
+  ws.protocol = ws.protocol === "wss:" ? "https:" : "http:";
+  ws.pathname = "/health";
+  ws.search = "";
+  ws.hash = "";
+  return ws.toString();
+}
+
+export async function arenaRuntimeHealthy(timeoutMs = 2500) {
+  if (!arenaRuntimeConfigured()) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(arenaHealthUrl(), {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { "accept": "application/json" },
+    });
+    if (!response.ok) return false;
+    const payload = await response.json().catch(() => null) as { ok?: unknown; version?: unknown } | null;
+    return payload?.ok === true && payload.version === ARENA_GAME_VERSION;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function sign(encoded: string) {

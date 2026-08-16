@@ -10,6 +10,7 @@ const HMAC_KEY = (process.env.ARENA_RUNTIME_HMAC_KEY || "").trim();
 const SITE_URL = (process.env.ORBS_SITE_URL || "").trim().replace(/\/$/, "");
 if (HMAC_KEY.length < 32) throw new Error("ARENA_RUNTIME_HMAC_KEY must be at least 32 characters");
 if (!/^https?:\/\//.test(SITE_URL)) throw new Error("ORBS_SITE_URL must be the canonical https://orbs.meme site URL");
+const SITE_ORIGIN = new URL(SITE_URL).origin;
 
 const VERSION = "orb-arena-v8";
 const FIXED = 1 / 60;
@@ -30,6 +31,9 @@ const HARD_CAP_MS = 10 * 60 * 1000;
 const SNAPSHOT_MS = 50;
 const LOBBY_GRACE_MS = 12_000;
 const MAX_PLAYERS = 200;
+const LOBBY_CLOSE_MS = 120_000;
+const MAX_MESSAGES_PER_SECOND = 120;
+const MAX_ACTIONS_PER_SECOND = 24;
 
 const POWER_META = {
   superjump:{label:"DOUBLE JUMP",color:"#FFD86B"},
@@ -67,7 +71,7 @@ class Room {
   constructor(payload){
     this.orbId=payload.orbId;this.slug=payload.slug;this.commitment=payload.commitment;this.style=payload.style;this.startsAt=payload.startsAt;this.endsAt=payload.endsAt;
     this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.pickups=[];this.pedestals=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
-    this.timer=setInterval(()=>this.tick(),1000/60);
+    this.abortReason=null;this.resultRetryTimer=null;this.timer=setInterval(()=>this.tick(),1000/60);
   }
   compatible(p){return p.orbId===this.orbId&&p.slug===this.slug&&p.commitment===this.commitment&&p.startsAt===this.startsAt&&p.endsAt===this.endsAt}
   add(ws,p){
@@ -81,7 +85,7 @@ class Room {
     }
     const prior=this.clients.get(p.wallet);if(prior&&prior!==ws)try{prior.close(4001,"Arena reconnected elsewhere")}catch{}
     player.connected=true;player.lastSeq=-1;this.clients.set(p.wallet,ws);ws.player=player;ws.room=this;
-    this.send(ws,{t:"welcome",matchId:this.matchId,playerId:player.id,phase:this.phase,liveAt:this.liveAt,version:VERSION,winnerId:this.winner?.id||null});
+    this.send(ws,{t:"welcome",matchId:this.matchId,playerId:player.id,phase:this.phase,liveAt:this.liveAt,version:VERSION,winnerId:this.winner?.id||null,abortReason:this.abortReason});
     this.broadcastRoster();
   }
   remove(ws){if(!ws.player)return;const p=ws.player;if(this.clients.get(p.wallet)!==ws)return;this.clients.delete(p.wallet);p.connected=false;p.input={x:0,z:0};this.broadcastRoster()}
@@ -135,27 +139,29 @@ class Room {
   pickupsTick(now){const elapsed=(now-this.startedAt)/1000,respawn=elapsed>=this.config.overchargeAt?.38:elapsed>=this.config.suddenDeathAt?.58:1,s=this.config.courseScale;for(const pick of this.pickups){if(now<pick.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body)continue;const pos=p.body.translation();if(Math.hypot(pos.x-pick.x,pos.z-pick.z)>1.5*s||Math.abs(pos.y-pick.y)>2.4)continue;pick.readyAt=now+this.config.ringRespawnMs*respawn;if(pick.kind==="recovery"){const before=p.health;p.health=Math.min(100,p.health+this.config.recoveryAmount);this.event("recover",{playerId:p.id,amount:p.health-before})}else this.grantPower(p,pick.kind,now);break}}
     for(const ped of this.pedestals){if(now<ped.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body||p.powerKind)continue;const pos=p.body.translation();if(Math.hypot(pos.x-ped.x,pos.z-ped.z)>1.55*s||pos.y<1.35)continue;ped.readyAt=now+this.config.pedestalRespawnMs*respawn;this.grantPower(p,ped.kind,now);break}}
   }
+  abort(reason){if(this.phase==="finished"||this.phase==="aborted")return;this.phase="aborted";this.completedAt=Date.now();this.abortReason=reason;this.broadcast({t:"aborted",reason,completedAt:this.completedAt});}
   eliminate(p,reason){if(!p.alive)return;p.alive=false;if(p.body)p.body.setEnabled(false);this.event("eliminated",{playerId:p.id,reason});this.maybeFinish()}
   maybeFinish(){const alive=[...this.players.values()].filter(p=>p.alive);if(this.phase!=="live"||alive.length>1)return;if(alive.length===1)this.finish(alive[0]);else this.finish(null)}
   finish(winner){if(this.phase==="finished")return;this.phase="finished";this.completedAt=Date.now();this.winner=winner||null;this.broadcast({t:"finished",winnerId:winner?.id||null,completedAt:this.completedAt});if(winner)void this.postResult(winner)}
-  async postResult(winner){if(this.resultPosted||this.resultPosting)return;this.resultPosting=true;const body=JSON.stringify({schemaVersion:1,version:VERSION,matchId:this.matchId,orbId:this.orbId,slug:this.slug,startedAt:this.startedAt,completedAt:this.completedAt,participantCount:this.players.size,winnerWallet:winner.wallet,winnerXUserId:winner.xUserId,winnerUsername:winner.username});const ts=String(Date.now()),sig=createHmac("sha256",HMAC_KEY).update(`${ts}.${body}`,"utf8").digest("base64url");try{const r=await fetch(`${SITE_URL}/api/arena/runtime/result`,{method:"POST",headers:{"content-type":"application/json","x-arena-timestamp":ts,"x-arena-signature":sig},body});if(!r.ok)throw new Error(`result callback ${r.status}: ${await r.text()}`);this.resultPosted=true}catch(e){console.error("[arena] winner callback failed",e);setTimeout(()=>{this.resultPosting=false;void this.postResult(winner)},3000);return}this.resultPosting=false}
-  tick(){const now=Date.now();if(this.phase==="lobby"){if(now>=this.liveAt)this.buildWorld();if(now-this.lastSnapshot>=SNAPSHOT_MS){this.lastSnapshot=now;this.broadcast({t:"lobby",phase:this.phase,liveAt:this.liveAt,connected:[...this.players.values()].filter(p=>p.connected).length})}return}if(this.phase!=="live")return;this.updatePlayers(now);this.world.step();this.impacts(now);this.updateProjectiles(now);this.pickupsTick(now);this.postStep(now);const elapsed=now-this.startedAt;if(elapsed>=HARD_CAP_MS){const alive=[...this.players.values()].filter(p=>p.alive).sort((a,b)=>b.health-a.health||a.wallet.localeCompare(b.wallet));for(const p of alive.slice(1))this.eliminate(p,"SUDDEN DEATH");this.maybeFinish()}if(now-this.lastSnapshot>=SNAPSHOT_MS){this.lastSnapshot=now;this.snapshot(now)}}
+  async postResult(winner){if(this.resultPosted||this.resultPosting)return;this.resultPosting=true;const body=JSON.stringify({schemaVersion:1,version:VERSION,matchId:this.matchId,orbId:this.orbId,slug:this.slug,startedAt:this.startedAt,completedAt:this.completedAt,participantCount:this.players.size,commitment:this.commitment,winnerWallet:winner.wallet,winnerXUserId:winner.xUserId,winnerUsername:winner.username});const ts=String(Date.now()),sig=createHmac("sha256",HMAC_KEY).update(`${ts}.${body}`,"utf8").digest("base64url");try{const r=await fetch(`${SITE_URL}/api/arena/runtime/result`,{method:"POST",headers:{"content-type":"application/json","x-arena-timestamp":ts,"x-arena-signature":sig},body});if(!r.ok)throw new Error(`result callback ${r.status}: ${await r.text()}`);this.resultPosted=true}catch(e){console.error("[arena] winner callback failed",e);this.resultRetryTimer=setTimeout(()=>{this.resultRetryTimer=null;this.resultPosting=false;void this.postResult(winner)},3000);return}this.resultPosting=false}
+  tick(){const now=Date.now();if(this.phase==="lobby"){if(now>this.startsAt+LOBBY_CLOSE_MS){this.abort("Arena could not start with at least two connected entrants in the launch window");return}if(now>=this.liveAt)this.buildWorld();if(now-this.lastSnapshot>=SNAPSHOT_MS){this.lastSnapshot=now;this.broadcast({t:"lobby",phase:this.phase,liveAt:this.liveAt,connected:[...this.players.values()].filter(p=>p.connected).length})}return}if(this.phase!=="live")return;this.updatePlayers(now);this.world.step();this.impacts(now);this.updateProjectiles(now);this.pickupsTick(now);this.postStep(now);const elapsed=now-this.startedAt;if(elapsed>=HARD_CAP_MS){const alive=[...this.players.values()].filter(p=>p.alive).sort((a,b)=>b.health-a.health||a.wallet.localeCompare(b.wallet));for(const p of alive.slice(1))this.eliminate(p,"SUDDEN DEATH");this.maybeFinish()}if(now-this.lastSnapshot>=SNAPSHOT_MS){this.lastSnapshot=now;this.snapshot(now)}}
   snapshot(now){this.broadcast({t:"snapshot",phase:this.phase,matchId:this.matchId,startedAt:this.startedAt,serverNow:now,maxSeconds:this.config.maxSeconds,courseScale:this.config.courseScale,players:[...this.players.values()].map(p=>{const pos=p.body?.translation(),q=p.body?.rotation(),v=p.body?.linvel();return{id:p.id,p:pos?[pos.x,pos.y,pos.z]:null,q:q?[q.x,q.y,q.z,q.w]:null,v:v?[v.x,v.y,v.z]:null,h:Math.round(p.health),alive:p.alive,power:p.powerKind,exp:p.powerExpiresAt,speed:p.speedUntil}}),projectiles:this.projectiles.map(b=>({id:b.id,p:[b.x,b.y,b.z]})),pickups:this.pickups.map(p=>({id:p.id,ready:now>=p.readyAt})),pedestals:this.pedestals.map(p=>({id:p.id,ready:now>=p.readyAt}))})}
-  close(){clearInterval(this.timer);for(const ws of this.clients.values())try{ws.close()}catch{}}
+  close(){clearInterval(this.timer);if(this.resultRetryTimer)clearTimeout(this.resultRetryTimer);for(const ws of this.clients.values())try{ws.close()}catch{}}
 }
 
 const rooms=new Map();
 const server=http.createServer((req,res)=>{if(req.url==="/health"){res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({ok:true,version:VERSION,rooms:rooms.size}));return}res.writeHead(404);res.end("Not found")});
 const wss=new WebSocketServer({noServer:true,maxPayload:16*1024});
-server.on("upgrade",(req,socket,head)=>{try{const url=new URL(req.url||"/",`http://${req.headers.host||"localhost"}`);if(url.pathname!=="/arena")throw new Error("Not found");wss.handleUpgrade(req,socket,head,ws=>wss.emit("connection",ws,req))}catch{socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");socket.destroy()}});
+server.on("upgrade",(req,socket,head)=>{try{const url=new URL(req.url||"/",`http://${req.headers.host||"localhost"}`);if(url.pathname!=="/arena")throw new Error("Not found");const origin=String(req.headers.origin||"");if(origin!==SITE_ORIGIN)throw new Error("Forbidden origin");wss.handleUpgrade(req,socket,head,ws=>wss.emit("connection",ws,req))}catch{socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");socket.destroy()}});
 wss.on("connection",ws=>{
-  let room=null;let authed=false;const authTimer=setTimeout(()=>{if(!authed)ws.close(1008,"Arena authentication timeout")},5000);
+  let room=null;let authed=false;let windowStarted=Date.now(),messageCount=0,actionCount=0,strikes=0;const authTimer=setTimeout(()=>{if(!authed)ws.close(1008,"Arena authentication timeout")},5000);
   ws.on("message",raw=>{
+    const now=Date.now();if(now-windowStarted>=1000){windowStarted=now;messageCount=0;actionCount=0}messageCount++;if(messageCount>MAX_MESSAGES_PER_SECOND){strikes++;if(strikes>=3)ws.close(1008,"Arena input rate exceeded");return}
     if(raw.length>8192)return;const msg=safeJson(raw.toString());if(!msg)return;
     if(!authed){if(msg.t!=="auth")return;const p=verifyToken(msg.token);if(!p){ws.close(1008,"Invalid Arena token");return}room=rooms.get(p.orbId);if(!room){if(Date.now()>p.startsAt+120_000){ws.close(1008,"Arena start window closed");return}room=new Room(p);rooms.set(p.orbId,room)}try{room.add(ws,p)}catch(e){ws.close(1008,e instanceof Error?e.message:"Arena rejected");return}authed=true;clearTimeout(authTimer);return}
-    if(!ws.player||!room)return;if(msg.t==="input")room.input(ws.player,msg);else if(msg.t==="action")room.action(ws.player);else if(msg.t==="ping")room.send(ws,{t:"pong",at:Date.now()});
+    if(!ws.player||!room)return;if(msg.t==="input")room.input(ws.player,msg);else if(msg.t==="action"){actionCount++;if(actionCount<=MAX_ACTIONS_PER_SECOND)room.action(ws.player)}else if(msg.t==="ping")room.send(ws,{t:"pong",at:Date.now()});
   });
   ws.on("close",()=>{clearTimeout(authTimer);room?.remove(ws)});ws.on("error",()=>{clearTimeout(authTimer);room?.remove(ws)});
 });
-setInterval(()=>{const now=Date.now();for(const [id,room] of rooms){if(now>room.endsAt+60_000||room.phase==="finished"&&now-room.completedAt>120_000){room.close();rooms.delete(id)}}},30_000).unref();
+setInterval(()=>{const now=Date.now();for(const [id,room] of rooms){if(now>room.endsAt+60_000||(room.phase==="finished"||room.phase==="aborted")&&now-room.completedAt>120_000){room.close();rooms.delete(id)}}},30_000).unref();
 server.listen(PORT,"0.0.0.0",()=>console.log(`[arena] ${VERSION} authoritative server listening on :${PORT}`));
