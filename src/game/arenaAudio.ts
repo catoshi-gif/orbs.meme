@@ -68,6 +68,26 @@ export class ArenaAudioEngine {
     this.tone(420, 0.065, 0.024, "sine", 0.045);
   }
 
+
+  powerPickup(kind: "kinetic" | "slam" | "shield" | "superjump" | "recovery") {
+    const base = kind === "kinetic" ? 180 : kind === "slam" ? 138 : kind === "shield" ? 220 : kind === "superjump" ? 285 : 330;
+    this.tone(base, 0.09, 0.06, "triangle");
+    this.tone(base * 1.5, 0.16, 0.05, "sine", 0.045);
+    this.tone(base * 2, 0.2, 0.035, "triangle", 0.09);
+  }
+
+  powerUse(kind: "kinetic" | "slam" | "shield" | "superjump") {
+    const base = kind === "kinetic" ? 72 : kind === "slam" ? 48 : kind === "shield" ? 165 : 240;
+    this.tone(base, 0.14, 0.09, kind === "shield" ? "sine" : "sawtooth");
+    this.tone(base * 2.2, 0.09, 0.05, "triangle", 0.012);
+  }
+
+  recover() {
+    this.tone(330, 0.1, 0.05, "sine");
+    this.tone(440, 0.14, 0.045, "triangle", 0.06);
+    this.tone(660, 0.18, 0.04, "sine", 0.12);
+  }
+
   eliminated() {
     this.tone(180, 0.18, 0.08, "sawtooth");
     this.tone(118, 0.28, 0.07, "triangle", 0.09);
