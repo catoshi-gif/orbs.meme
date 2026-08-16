@@ -23,8 +23,10 @@ export class ArenaAudioEngine {
     if (!this.ctx) {
       this.ctx = new AudioContext();
 
+      // SFX keep the existing compressed/arcade character, but music gets its own
+      // uncompressed path so the MIDI retains the dynamics of the original composition.
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.124;
+      this.master.gain.value = 0.145;
 
       this.compressor = this.ctx.createDynamicsCompressor();
       this.compressor.threshold.value = -12;
@@ -36,17 +38,20 @@ export class ArenaAudioEngine {
       this.compressor.connect(this.ctx.destination);
 
       this.musicBus = this.ctx.createGain();
-      this.musicBus.gain.value = 1.26;
+      // This bus now feeds the destination directly, so its gain is intentionally much
+      // lower than the old pre-master value. Net music level is ~22% higher than before.
+      this.musicBus.gain.value = 0.19;
 
       this.musicFilter = this.ctx.createBiquadFilter();
       this.musicFilter.type = "lowpass";
       this.musicFilter.frequency.value = 7200;
       this.musicFilter.Q.value = 0.55;
       this.musicBus.connect(this.musicFilter);
-      this.musicFilter.connect(this.master);
+      this.musicFilter.connect(this.ctx.destination);
 
       this.sfxBus = this.ctx.createGain();
-      this.sfxBus.gain.value = 0.9;
+      // Slightly stronger SFX on phone speakers while preserving the existing compressor.
+      this.sfxBus.gain.value = 1.0;
       this.sfxBus.connect(this.master);
 
       this.noiseBuffer = this.ctx.createBuffer(
