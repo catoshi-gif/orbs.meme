@@ -97,13 +97,24 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
         const mat=color?new THREE.MeshPhysicalMaterial({color,emissive:new THREE.Color(style.accent).multiplyScalar(.08),roughness:.26,metalness:.3,clearcoat:1}):terrainMat;const mesh=new THREE.Mesh(new THREE.BoxGeometry(size.x,size.y,size.z),mat);mesh.name=name;mesh.position.set(pos.x,pos.y,pos.z);mesh.rotation.set(rot.x,rot.y,rot.z);mesh.receiveShadow=true;mesh.castShadow=true;scene.add(mesh);staticMeshes.push(mesh);return body;
       }
       function addRamp(name:string,x:number,z:number,axis:"x"|"z",dir:number,width=5*s,length=8*s,height=1.7*s){
-        // Solid triangular-prism terrain: there is physically no under-ramp cavity to spawn or roll into.
+        // A true solid wedge: convex-hull physics prevents the Orb from ever entering an "under-ramp" cavity.
         const L=length,W=width,H=height;
-        const vertices=new Float32Array([-L/2,0,-W/2,-L/2,0,W/2,L/2,0,-W/2,L/2,0,W/2,L/2,H,-W/2,L/2,H,W/2]);
-        const indices=new Uint32Array([0,4,2,0,1,4,1,5,4,2,4,5,2,5,3,0,2,3,0,3,1,0,5,4,0,1,5]);
+        const vertices=new Float32Array([
+          -L/2,0,-W/2, -L/2,0,W/2,
+           L/2,0,-W/2,  L/2,0,W/2,
+           L/2,H,-W/2,  L/2,H,W/2,
+        ]);
+        const indices=new Uint32Array([
+          0,2,3, 0,3,1,       // floor
+          0,1,5, 0,5,4,       // sloped top
+          2,4,5, 2,5,3,       // tall end
+          0,4,2,               // side
+          1,3,5,               // side
+        ]);
         const ry=axis==="x"?(dir>0?0:Math.PI):(dir>0?-Math.PI/2:Math.PI/2),q=quat(0,ry,0);
         const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,0,z).setRotation(q));
-        world.createCollider(RAPIER.ColliderDesc.trimesh(vertices,indices).setFriction(.62).setRestitution(.035),body);
+        const solid=RAPIER.ColliderDesc.convexHull(vertices);
+        world.createCollider((solid??RAPIER.ColliderDesc.trimesh(vertices,indices)).setFriction(.62).setRestitution(.035),body);
         const g=new THREE.BufferGeometry();g.setAttribute("position",new THREE.BufferAttribute(vertices,3));g.setIndex(new THREE.BufferAttribute(indices,1));g.computeVertexNormals();
         const mesh=new THREE.Mesh(g,terrainMat);mesh.name=name;mesh.position.set(x,0,z);mesh.rotation.y=ry;mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);staticMeshes.push(mesh);return body;
       }
@@ -122,19 +133,48 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
       const arenaHalf=30*s;addSurface("coliseum floor",{x:0,y:-.28,z:0},{x:arenaHalf*2,y:.56,z:arenaHalf*2});
       // Broad banks / bowls. Continuous ground means traversal, not ring-out survival.
       const d=15.5*s;[[-d,0,"x",1],[d,0,"x",-1],[0,-d,"z",1],[0,d,"z",-1]].forEach(([x,z,axis,dir],i)=>addRamp(`outer bank ${i}`,x as number,z as number,axis as "x"|"z",dir as number,6.5*s,10*s,2.2*s));
-      [[-11,-11,Math.PI/4],[11,-11,-Math.PI/4],[-11,11,-Math.PI/4],[11,11,Math.PI/4]].forEach(([x,z,r],i)=>addSurface(`diagonal ridge ${i}`,{x:x*s,y:.55,z:z*s},{x:10*s,y:.62,z:4*s},{x:0,y:r,z:0}));
+      // Ridges are grounded blocks, never floating shelves the camera/player can slip beneath.
+      [[-11,-11,Math.PI/4],[11,-11,-Math.PI/4],[-11,11,-Math.PI/4],[11,11,Math.PI/4]].forEach(([x,z,r],i)=>{
+        const top=.86;
+        addSurface(`diagonal ridge ${i}`,{x:x*s,y:top/2,z:z*s},{x:10*s,y:top,z:4*s},{x:0,y:r,z:0});
+      });
       // Central multi-level orbital dais with four stair approaches.
       addSurface("dais lower",{x:0,y:.28,z:0},{x:16*s,y:.55,z:16*s});
       addSurface("dais middle",{x:0,y:.78,z:0},{x:11.5*s,y:.55,z:11.5*s});
       addSurface("dais upper",{x:0,y:1.32,z:0},{x:7.2*s,y:.55,z:7.2*s});
       const stepDepth=1.05*s,stepWidth=5.4*s;
-      for(let side=0;side<4;side++)for(let i=0;i<4;i++){const h=.18+i*.28,offset=(8.4-i*1.05)*s;const isNS=side<2,x=isNS?0:(side===2?-offset:offset),z=isNS?(side===0?-offset:offset):0;addSurface(`dais stair ${side}-${i}`,{x,y:h,z},{x:isNS?stepWidth:stepDepth,y:.32,z:isNS?stepDepth:stepWidth})}
-      // Coliseum containment.
-      const wallMat=new THREE.MeshPhysicalMaterial({color:style.walls,emissive:new THREE.Color(style.accent).multiplyScalar(.13),emissiveIntensity:.7,roughness:.22,metalness:.3,transmission:.08,clearcoat:1});const wallR=arenaHalf*.965,wallSegments=44;
-      for(let i=0;i<wallSegments;i++){const a=(i/wallSegments)*Math.PI*2,x=Math.cos(a)*wallR,z=Math.sin(a)*wallR,len=2*Math.PI*wallR/wallSegments*1.07,q=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-a,0));const rb=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,1.9,z).setRotation({x:q.x,y:q.y,z:q.z,w:q.w}));world.createCollider(RAPIER.ColliderDesc.cuboid(len/2,2.1,.5*s).setFriction(.48).setRestitution(.28),rb);const mesh=new THREE.Mesh(new THREE.BoxGeometry(len,4.2,1*s),wallMat);mesh.position.set(x,1.9,z);mesh.rotation.y=-a;mesh.castShadow=true;scene.add(mesh)}
+      // Every stair is filled all the way to the floor. No hollow/floating step undersides.
+      for(let side=0;side<4;side++)for(let i=0;i<4;i++){
+        const top=.34+i*.28,offset=(8.4-i*1.05)*s,isNS=side<2;
+        const x=isNS?0:(side===2?-offset:offset),z=isNS?(side===0?-offset:offset):0;
+        addSurface(`dais stair ${side}-${i}`,{x,y:top/2,z},{x:isNS?stepWidth:stepDepth,y:top,z:isNS?stepDepth:stepWidth});
+      }
+      // Coliseum containment: physics stays continuous/invisible; architecture is a proper colonnade.
+      const wallR=arenaHalf*.965,wallSegments=48;
+      for(let i=0;i<wallSegments;i++){
+        const a=(i/wallSegments)*Math.PI*2,x=Math.cos(a)*wallR,z=Math.sin(a)*wallR,len=2*Math.PI*wallR/wallSegments*1.08;
+        // Tangent to the circle (the old -a rotation made radial fins).
+        const ry=Math.PI/2-a,q=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,ry,0));
+        const rb=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,1.9,z).setRotation({x:q.x,y:q.y,z:q.z,w:q.w}));
+        world.createCollider(RAPIER.ColliderDesc.cuboid(len/2,2.1,.5*s).setFriction(.48).setRestitution(.28),rb);
+      }
+      const columnMat=new THREE.MeshPhysicalMaterial({color:style.walls,emissive:new THREE.Color(style.accent).multiplyScalar(.12),emissiveIntensity:.62,roughness:.2,metalness:.28,transmission:.07,clearcoat:1});
+      const trimMat=new THREE.MeshPhysicalMaterial({color:style.marbleSecondary,emissive:new THREE.Color(style.accent).multiplyScalar(.18),emissiveIntensity:.72,roughness:.18,metalness:.34,clearcoat:1});
+      const columnCount=32,columnR=wallR*1.025;
+      for(let i=0;i<columnCount;i++){
+        const a=(i/columnCount)*Math.PI*2,x=Math.cos(a)*columnR,z=Math.sin(a)*columnR;
+        const group=new THREE.Group();group.position.set(x,0,z);group.rotation.y=-a;
+        const base=new THREE.Mesh(new THREE.CylinderGeometry(.66*s,.74*s,.24,28),trimMat);base.position.y=.12;
+        const foot=new THREE.Mesh(new THREE.CylinderGeometry(.5*s,.61*s,.22,28),columnMat);foot.position.y=.35;
+        const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.34*s,.39*s,3.35,28),columnMat);shaft.position.y=2.13;
+        const collar=new THREE.Mesh(new THREE.CylinderGeometry(.5*s,.42*s,.2,28),columnMat);collar.position.y=3.9;
+        const capital=new THREE.Mesh(new THREE.CylinderGeometry(.72*s,.56*s,.3,28),trimMat);capital.position.y=4.15;
+        for(const part of [base,foot,shaft,collar,capital]){part.castShadow=true;part.receiveShadow=true;group.add(part)}
+        scene.add(group);
+      }
       // Bankable impact columns.
       const bumperMat=new THREE.MeshPhysicalMaterial({color:style.marbleSecondary,emissive:style.accent,emissiveIntensity:1.2,roughness:.16,metalness:.36,clearcoat:1});
-      [[-9,-16],[9,-16],[-16,-9],[16,9],[-9,16],[9,16],[16,-9],[-16,9]].forEach(([xx,zz])=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,1.05,z));world.createCollider(RAPIER.ColliderDesc.cylinder(1.05,.72*s).setRestitution(.7).setFriction(.2),body);const mesh=new THREE.Mesh(new THREE.CylinderGeometry(.72*s,.94*s,2.1,8),bumperMat);mesh.position.set(x,1.05,z);mesh.castShadow=true;scene.add(mesh)});
+      [[-9,-16],[9,-16],[-16,-9],[16,9],[-9,16],[9,16],[16,-9],[-16,9]].forEach(([xx,zz])=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,1.05,z));world.createCollider(RAPIER.ColliderDesc.cylinder(1.05,.72*s).setRestitution(.7).setFriction(.2),body);const mesh=new THREE.Mesh(new THREE.CylinderGeometry(.72*s,.94*s,2.1,28),bumperMat);mesh.position.set(x,1.05,z);mesh.castShadow=true;scene.add(mesh)});
       // Orbs identity sculpture: a landmark, not a hazard.
       const logo=makeOrbLogo(THREE,style.accent,1.5*s);logo.position.set(0,4.15,0);scene.add(logo);
       [[-21,-21],[21,-21],[-21,21],[21,21]].forEach(([xx,zz])=>{const mini=makeOrbLogo(THREE,style.accent,.55*s);mini.position.set(xx*s,2.2,zz*s);mini.rotation.y=rand()*Math.PI*2;scene.add(mini)});
@@ -282,7 +322,7 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
       <span>HEALTH {integrity}%</span><div className="arena-meter"><i style={{transform:`scaleX(${integrity/100})`}}/></div>
       {powerMeta?<><span style={{color:powerMeta.color}}>{powerMeta.label}</span><div className="arena-meter arena-power-meter"><i style={{transform:`scaleX(${powerLeft})`,background:powerMeta.color}}/></div></>:null}
     </div>
-    {phase==="ready"?<div className="arena-center-card"><span>ADMIN ARENA V6</span><h3>POWER COLOSSEUM</h3><p>Every ring has one job: gold ↑ = double jump · orange ● = blaster · cyan » = 5× invulnerable super speed · pink/green + = health. Power pedestals award one of the three active powers.</p><button className="btn-primary" onClick={()=>startRef.current()}>Enter Arena →</button></div>:null}
+    {phase==="ready"?<div className="arena-center-card"><span>ADMIN ONLY</span><h3>ARENA</h3><p>Every ring has one job: gold ↑ = double jump · orange ● = blaster · cyan » = 5× invulnerable super speed · pink/green + = health. Power pedestals award one of the three active powers.</p><button className="btn-primary" onClick={()=>startRef.current()}>Enter Arena →</button></div>:null}
     {phase==="countdown"?<div className="arena-countdown">{countdown||"GO"}</div>:null}
     {(phase==="eliminated"||phase==="finished"||phase==="won")?<div className="arena-result-card"><span>{phase==="eliminated"?"SPECTATING":"MATCH COMPLETE"}</span><h3>{phase==="won"?"YOU WIN":winner?`${winner} WINS`:"YOU'RE OUT"}</h3><p>{phase==="eliminated"?`${survivors} Orbs remain. Watch them fight for the remaining powers.`:"Last Orb standing takes the prize."}</p></div>:null}
     {phase==="playing"?<div className="arena-jump-wrap"><button className={`arena-jump ${power?"armed":""}`} style={powerMeta?{borderColor:powerMeta.color,boxShadow:`0 0 28px ${powerMeta.color}55`}:undefined} onClick={()=>actionRef.current()} disabled={!power&&jumpCooldown>0.02}><span>{powerMeta?(power==="blaster"?"FIRE":power==="superspeed"?"SPEED":powerMeta.label.split(" ")[0]):"JUMP"}</span><i style={{transform:`scaleX(${power?powerLeft:1-jumpCooldown})`,background:powerMeta?.color}}/></button></div>:null}

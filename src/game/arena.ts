@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const ARENA_GAME_VERSION = "orb-arena-coliseum-v6" as const;
+export const ARENA_GAME_VERSION = "orb-arena-v7" as const;
 export const ARENA_HARD_CAP_SECONDS = 10 * 60;
 
 export type ArenaPace = "demo" | "production";
@@ -60,7 +60,7 @@ export function buildArenaConfig(input: {
   };
 }
 
-/** Arena V5 is physically contained; this is retained for admin compatibility only. */
+/** Arena is physically contained; this is retained for admin compatibility only. */
 export function arenaRadiusAt(config: ArenaConfig, _elapsedSeconds: number, _survivors: number) {
   return config.radius;
 }
