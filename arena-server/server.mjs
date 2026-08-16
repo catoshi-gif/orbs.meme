@@ -120,7 +120,7 @@ class Room {
     const addRamp=(x,z,axis,dir,width=5*s,length=8*s,height=1.7*s)=>{const L=length,W=width,H=height,vertices=new Float32Array([-L/2,0,-W/2,-L/2,0,W/2,L/2,0,-W/2,L/2,0,W/2,L/2,H,-W/2,L/2,H,W/2]),ry=axis==="x"?(dir>0?0:Math.PI):(dir>0?-Math.PI/2:Math.PI/2),body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,0,z).setRotation(quat(0,ry,0))),solid=RAPIER.ColliderDesc.convexHull(vertices);if(!solid)throw new Error("Could not build Arena ramp");world.createCollider(solid.setFriction(.62).setRestitution(.035),body)};
     addSurface(0,-.28,0,this.arenaHalf*2,.56,this.arenaHalf*2);
     const d=15.5*s;[[-d,0,"x",1],[d,0,"x",-1],[0,-d,"z",1],[0,d,"z",-1]].forEach(v=>addRamp(v[0],v[1],v[2],v[3],6.5*s,10*s,2.2*s));
-    [[-11,-11,Math.PI/4],[11,-11,-Math.PI/4],[-11,11,-Math.PI/4],[11,11,Math.PI/4]].forEach(v=>addSurface(v[0]*s,.43,v[1]*s,10*s,.86,4*s,v[2]));
+    // Diagonal approaches intentionally remain continuous floor; no hidden ridge colliders.
     addSurface(0,.28,0,16*s,.55,16*s);addSurface(0,.78,0,11.5*s,.55,11.5*s);addSurface(0,1.32,0,7.2*s,.55,7.2*s);
     const stepDepth=1.05*s,stepWidth=5.4*s;for(let side=0;side<4;side++)for(let i=0;i<4;i++){const top=.34+i*.28,offset=(8.4-i*1.05)*s,isNS=side<2,x=isNS?0:(side===2?-offset:offset),z=isNS?(side===0?-offset:offset):0;addSurface(x,top/2,z,isNS?stepWidth:stepDepth,top,isNS?stepDepth:stepWidth)}
     const wallR=this.arenaHalf*.965,wallSegments=48;for(let i=0;i<wallSegments;i++){const a=i/wallSegments*Math.PI*2,x=Math.cos(a)*wallR,z=Math.sin(a)*wallR,len=2*Math.PI*wallR/wallSegments*1.08;addSurface(x,1.9,z,len,4.2,1*s,Math.PI/2-a,.28,.48)}

@@ -133,11 +133,9 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
       const arenaHalf=30*s;addSurface("coliseum floor",{x:0,y:-.28,z:0},{x:arenaHalf*2,y:.56,z:arenaHalf*2});
       // Broad banks / bowls. Continuous ground means traversal, not ring-out survival.
       const d=15.5*s;[[-d,0,"x",1],[d,0,"x",-1],[0,-d,"z",1],[0,d,"z",-1]].forEach(([x,z,axis,dir],i)=>addRamp(`outer bank ${i}`,x as number,z as number,axis as "x"|"z",dir as number,6.5*s,10*s,2.2*s));
-      // Ridges are grounded blocks, never floating shelves the camera/player can slip beneath.
-      [[-11,-11,Math.PI/4],[11,-11,-Math.PI/4],[-11,11,-Math.PI/4],[11,11,Math.PI/4]].forEach(([x,z,r],i)=>{
-        const top=.86;
-        addSurface(`diagonal ridge ${i}`,{x:x*s,y:top/2,z:z*s},{x:10*s,y:top,z:4*s},{x:0,y:r,z:0});
-      });
+      // Keep the four diagonal approaches visually clean. Earlier raised ridge blocks intersected
+      // nearby ramps/dais sightlines and read like accidental mesh overlap, so the continuous
+      // coliseum floor now carries these approaches without an extra obstacle layer.
       // Central multi-level orbital dais with four stair approaches.
       addSurface("dais lower",{x:0,y:.28,z:0},{x:16*s,y:.55,z:16*s});
       addSurface("dais middle",{x:0,y:.78,z:0},{x:11.5*s,y:.55,z:11.5*s});
