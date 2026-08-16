@@ -11,10 +11,18 @@ import { redisCommand, redisGetJson, upstashConfigured } from "@/lib/upstash";
 import { activeHostedOrbKey, enteredOrbsKey, isAdminWallet, ORB_COMPETITION_WINDOW_MS, ORB_CREATION_MIN_LEAD_MS, ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
 import { recordFundedOrbAnalytics, recordHostSharePostAnalytics } from "@/lib/durableAnalytics";
 
+export type OrbGameType = "maze" | "arena";
+
+export function orbGameType(orb: { gameType?: OrbGameType | null }): OrbGameType {
+  return orb.gameType === "arena" ? "arena" : "maze";
+}
+
 export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice" | "isNativeSol">;
 
 export type OrbRecord = {
   schemaVersion: 1;
+  /** Legacy Redis records omit this field and are intentionally interpreted as MAZE. */
+  gameType?: OrbGameType;
   id: string;
   slug: string;
   createdAt: number;
@@ -89,7 +97,7 @@ function cleanStyle(style: GameStyle): GameStyle {
 
 function publicRecord(record: OrbRecord): PublicOrbRecord {
   const { encryptedSecretSeed: _secret, endsAt: _storedEndsAt, ...safe } = record;
-  return { ...safe, endsAt: orbEndsAt(record) };
+  return { ...safe, gameType: orbGameType(record), endsAt: orbEndsAt(record) };
 }
 
 /**
@@ -215,6 +223,7 @@ export async function createTestOrb(input: {
   const commitment = await buildGameCommitment({ orbId: id, secretSeedHex, settingsHash, generatorVersion: GAME_GENERATOR_VERSION });
   const record: OrbRecord = {
     schemaVersion: 1,
+    gameType: "maze",
     id,
     slug,
     createdAt: Date.now(),
@@ -340,9 +349,10 @@ export async function finalizeFundedOrb(slug: string, fundingTxSignature: string
 export async function getOrbRecord(slug: string) {
   if (!upstashConfigured()) return null;
   const primary = await redisGetJson<OrbRecord>(orbKey(slug));
-  if (primary) return primary;
+  if (primary) return { ...primary, gameType: orbGameType(primary) };
   const recovery = await redisGetJson<OrbRecord>(recoveryOrbKey(slug));
   if (!recovery) return null;
+  recovery.gameType = orbGameType(recovery);
   const ttl = Math.max(ORB_HISTORY_TTL_SECONDS, Math.ceil((orbEndsAt(recovery) - Date.now()) / 1000) + ORB_HISTORY_TTL_SECONDS);
   await redisCommand<string>(["SET", orbKey(slug), JSON.stringify(recovery), "EX", String(ttl)]);
   await redisCommand<number>(["ZADD", hostedOrbsKey(recovery.hostWallet), String(recovery.createdAt), recovery.slug]);

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
 import AdminGameSandbox from "@/components/AdminGameSandbox";
+import AdminArenaSandbox from "@/components/AdminArenaSandbox";
 
 function b64(bytes: Uint8Array) { let s=""; for (const b of bytes) s+=String.fromCharCode(b); return btoa(s); }
 function money(v:number){return new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:2}).format(v||0)}
@@ -108,5 +109,6 @@ export default function AdminDashboard(){
     <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Orb</th><th>Host</th><th>Phase</th><th>Prize</th><th>Funnel</th><th>X reach</th><th>Winner</th><th>Claimed</th><th>Launch</th></tr></thead><tbody>{metrics.games.map(g=><tr key={g.id}><td><a href={`/orb/${g.slug}`}>{g.slug}</a><small>{short(g.hostWallet)}</small></td><td><a href={`https://x.com/${encodeURIComponent(g.hostXUsername)}`} target="_blank" rel="noreferrer">@{g.hostXUsername}</a>{g.hostSharePostId?<small><a href={`https://x.com/${encodeURIComponent(g.hostXUsername)}/status/${g.hostSharePostId}`} target="_blank" rel="noreferrer">host post ↗</a></small>:<div className="admin-x-attach"><input value={attachValues[g.slug]||""} onChange={e=>setAttachValues(v=>({...v,[g.slug]:e.target.value}))} placeholder="paste host post URL" /><button className="mini-action" onClick={()=>void attachPost(g.slug)} disabled={xBusy}>attach</button></div>}</td><td>{g.phase}</td><td>{g.prizeTokenAmount.toLocaleString(undefined,{maximumFractionDigits:6})} {g.tokenSymbol}<small>{money(g.prizeUsd)}</small></td><td><strong>{g.liveRacers} racers</strong><small>{g.waitingRoomVisitors} waiting · {g.participants} registered</small><small>{pct(g.registrationRate)} register · {pct(g.showRate)} show</small></td><td>{g.xImpressions===null?"—":g.xImpressions.toLocaleString()}<small>{g.xImpressions===null?g.hostSharePostId?"not refreshed yet":"attach host post first":`${g.xReposts||0} reposts · ${g.xLikes||0} likes`}</small></td><td>{g.winnerXUsername?<><a href={`https://x.com/${encodeURIComponent(g.winnerXUsername)}`} target="_blank" rel="noreferrer">@{g.winnerXUsername}</a><small>{short(g.winnerWallet)}</small></>:"—"}</td><td>{g.claimed?"yes":"no"}</td><td>{new Date(g.startsAt).toLocaleString()}</td></tr>)}</tbody></table></div>
     {error?<div className="form-error">{error}</div>:null}
     <AdminGameSandbox/>
+    <AdminArenaSandbox/>
   </div>
 }
