@@ -2,7 +2,6 @@ export class ArenaAudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private musicBus: GainNode | null = null;
-  private musicFilter: BiquadFilterNode | null = null;
   private sfxBus: GainNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
@@ -17,34 +16,30 @@ export class ArenaAudioEngine {
       this.ctx = new AudioContext();
 
       this.master = this.ctx.createGain();
-      // Slightly louder than V2, but with extra headroom so the score stays clean during firefights.
-      this.master.gain.value = 0.128;
+      this.master.gain.value = 0.122;
 
       this.compressor = this.ctx.createDynamicsCompressor();
-      this.compressor.threshold.value = -10;
-      this.compressor.knee.value = 12;
-      this.compressor.ratio.value = 2.6;
-      this.compressor.attack.value = 0.004;
-      this.compressor.release.value = 0.18;
+      this.compressor.threshold.value = -13;
+      this.compressor.knee.value = 18;
+      this.compressor.ratio.value = 2.2;
+      this.compressor.attack.value = 0.012;
+      this.compressor.release.value = 0.26;
       this.master.connect(this.compressor);
       this.compressor.connect(this.ctx.destination);
 
       this.musicBus = this.ctx.createGain();
-      // Forward enough to feel like a real soundtrack, while the compressor keeps weapon SFX readable.
-      this.musicBus.gain.value = 1.36;
-      this.musicFilter = this.ctx.createBiquadFilter();
-      this.musicFilter.type = "lowpass";
-      this.musicFilter.frequency.value = 2050;
-      this.musicFilter.Q.value = 1.4;
-      this.musicBus.connect(this.musicFilter);
-      this.musicFilter.connect(this.master);
+      this.musicBus.gain.value = 1.24;
+      this.musicBus.connect(this.master);
 
       this.sfxBus = this.ctx.createGain();
-      this.sfxBus.gain.value = 0.92;
+      this.sfxBus.gain.value = 0.9;
       this.sfxBus.connect(this.master);
 
-      // One reusable noise buffer for hats/percussion; no per-beat allocations.
-      this.noiseBuffer = this.ctx.createBuffer(1, Math.max(1, Math.floor(this.ctx.sampleRate * 0.08)), this.ctx.sampleRate);
+      this.noiseBuffer = this.ctx.createBuffer(
+        1,
+        Math.max(1, Math.floor(this.ctx.sampleRate * 0.08)),
+        this.ctx.sampleRate,
+      );
       const data = this.noiseBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
     }
@@ -67,151 +62,105 @@ export class ArenaAudioEngine {
     const now = ctx.currentTime + when;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
+
     osc.type = type;
     osc.frequency.setValueAtTime(frequency, now);
-    if (detune) osc.detune.setValueAtTime(detune, now);
+    osc.detune.setValueAtTime(detune, now);
+
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, gainValue), now + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.025, duration));
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.03, duration));
+
     osc.connect(gain);
     gain.connect(destination);
     osc.start(now);
     osc.stop(now + duration + 0.04);
-    osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
   }
 
-  private bassPluck(frequency: number, duration: number, gainValue: number, when = 0) {
+  private warmBass(frequency: number, duration: number, gainValue: number, when = 0, accent = 1) {
     const ctx = this.ensure();
     if (!ctx || !this.musicBus) return;
     const now = ctx.currentTime + when;
-    const osc = ctx.createOscillator();
+
+    const body = ctx.createOscillator();
     const sub = ctx.createOscillator();
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
 
-    osc.type = "sawtooth";
+    body.type = "triangle";
     sub.type = "sine";
-    osc.frequency.setValueAtTime(frequency, now);
+    body.frequency.setValueAtTime(frequency, now);
     sub.frequency.setValueAtTime(frequency * 0.5, now);
+
     filter.type = "lowpass";
-    filter.Q.setValueAtTime(5.4, now);
-    filter.frequency.setValueAtTime(920, now);
-    filter.frequency.exponentialRampToValueAtTime(245, now + Math.max(0.07, duration * 0.82));
+    filter.Q.setValueAtTime(1.4, now);
+    filter.frequency.setValueAtTime(720 + accent * 180, now);
+    filter.frequency.exponentialRampToValueAtTime(300, now + duration);
 
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(gainValue * accent, now + 0.009);
+    gain.gain.setValueAtTime(gainValue * 0.82, now + Math.min(0.12, duration * 0.45));
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-    osc.connect(filter);
+    body.connect(filter);
+    filter.connect(gain);
     sub.connect(gain);
-    filter.connect(gain);
     gain.connect(this.musicBus);
-    osc.start(now);
+
+    body.start(now);
     sub.start(now);
-    osc.stop(now + duration + 0.04);
+    body.stop(now + duration + 0.04);
     sub.stop(now + duration + 0.04);
-    osc.onended = () => { osc.disconnect(); sub.disconnect(); filter.disconnect(); gain.disconnect(); };
+    body.onended = () => {
+      body.disconnect();
+      sub.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
   }
 
-  private wahLead(frequency: number, duration: number, gainValue: number, when = 0, accent = 1) {
+  private velvetChord(frequencies: number[], duration: number, gainValue: number, when = 0, wide = false) {
     const ctx = this.ensure();
     if (!ctx || !this.musicBus) return;
     const now = ctx.currentTime + when;
-    const osc = ctx.createOscillator();
-    const edge = ctx.createOscillator();
+
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
-
-    // An original, vocal-ish digital lead: square/saw harmonics through a fast resonant filter sweep.
-    // This recreates the *kind* of wah articulation we want without reproducing an existing riff.
-    osc.type = "square";
-    edge.type = "sawtooth";
-    osc.frequency.setValueAtTime(frequency, now);
-    edge.frequency.setValueAtTime(frequency * 0.5, now);
-    edge.detune.setValueAtTime(7, now);
     filter.type = "lowpass";
-    filter.Q.setValueAtTime(8.2 + accent * 1.5, now);
-    const open = 1250 + accent * 900;
-    filter.frequency.setValueAtTime(330, now);
-    filter.frequency.exponentialRampToValueAtTime(open, now + duration * 0.32);
-    filter.frequency.exponentialRampToValueAtTime(520, now + duration * 0.92);
+    filter.Q.setValueAtTime(0.7, now);
+    filter.frequency.setValueAtTime(wide ? 2300 : 1750, now);
 
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.006);
-    gain.gain.setValueAtTime(gainValue * 0.9, now + duration * 0.58);
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.028);
+    gain.gain.setValueAtTime(gainValue * 0.84, now + duration * 0.55);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-    osc.connect(filter);
-    edge.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.musicBus);
-    osc.start(now);
-    edge.start(now);
-    osc.stop(now + duration + 0.03);
-    edge.stop(now + duration + 0.03);
-    osc.onended = () => { osc.disconnect(); edge.disconnect(); filter.disconnect(); gain.disconnect(); };
-  }
-
-  private acidBass(frequency: number, duration: number, gainValue: number, when = 0, accent = 1) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
-    const osc = ctx.createOscillator();
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-    osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(frequency, now);
-    filter.type = "lowpass";
-    filter.Q.setValueAtTime(6.4 + accent * 1.4, now);
-    filter.frequency.setValueAtTime(360, now);
-    filter.frequency.exponentialRampToValueAtTime(760 + accent * 420, now + 0.035);
-    filter.frequency.exponentialRampToValueAtTime(235, now + duration);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue * accent, now + 0.005);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.musicBus);
-    osc.start(now);
-    osc.stop(now + duration + 0.03);
-    osc.onended = () => { osc.disconnect(); filter.disconnect(); gain.disconnect(); };
-  }
-
-  private chipHarmony(
-    frequencies: number[],
-    duration: number,
-    gainValue: number,
-    when = 0,
-    bright = false,
-  ) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(bright ? 1850 : 1320, now);
-    filter.Q.setValueAtTime(bright ? 1.9 : 1.35, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.004);
-    gain.gain.setValueAtTime(gainValue * 0.72, now + Math.min(duration * 0.48, 0.11));
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-    const oscillators = frequencies.map((frequency, index) => {
-      const osc = ctx.createOscillator();
-      // Alternating square/triangle voices create a compact 8-bit chord without samples or buffers.
-      osc.type = index % 2 === 0 ? "square" : "triangle";
-      osc.frequency.setValueAtTime(frequency, now);
-      osc.detune.setValueAtTime(index === 1 ? 4 : index === 2 ? -4 : 0, now);
-      osc.connect(filter);
-      osc.start(now);
-      osc.stop(now + duration + 0.025);
-      return osc;
-    });
+    const oscillators: OscillatorNode[] = [];
+    for (const [index, frequency] of frequencies.entries()) {
+      const a = ctx.createOscillator();
+      const b = ctx.createOscillator();
+      a.type = index === 0 ? "triangle" : "sine";
+      b.type = "triangle";
+      a.frequency.setValueAtTime(frequency, now);
+      b.frequency.setValueAtTime(frequency, now);
+      a.detune.setValueAtTime(index % 2 === 0 ? -3 : 3, now);
+      b.detune.setValueAtTime(index % 2 === 0 ? 5 : -5, now);
+      a.connect(filter);
+      b.connect(filter);
+      a.start(now);
+      b.start(now);
+      a.stop(now + duration + 0.05);
+      b.stop(now + duration + 0.05);
+      oscillators.push(a, b);
+    }
 
     filter.connect(gain);
     gain.connect(this.musicBus);
+
     oscillators[0]!.onended = () => {
       for (const osc of oscillators) osc.disconnect();
       filter.disconnect();
@@ -219,41 +168,77 @@ export class ArenaAudioEngine {
     };
   }
 
-  private funkClav(frequency: number, duration: number, gainValue: number, when = 0, accent = 1) {
+  private glassLead(frequency: number, duration: number, gainValue: number, when = 0, bright = false) {
     const ctx = this.ensure();
     if (!ctx || !this.musicBus) return;
     const now = ctx.currentTime + when;
+
+    const core = ctx.createOscillator();
+    const shimmer = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    core.type = "triangle";
+    shimmer.type = "square";
+    core.frequency.setValueAtTime(frequency, now);
+    shimmer.frequency.setValueAtTime(frequency * 2, now);
+    shimmer.detune.setValueAtTime(4, now);
+
+    filter.type = "lowpass";
+    filter.Q.setValueAtTime(1.15, now);
+    filter.frequency.setValueAtTime(bright ? 2950 : 2200, now);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.012);
+    gain.gain.setValueAtTime(gainValue * 0.88, now + duration * 0.5);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    core.connect(filter);
+    shimmer.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.musicBus);
+
+    core.start(now);
+    shimmer.start(now);
+    core.stop(now + duration + 0.04);
+    shimmer.stop(now + duration + 0.04);
+    core.onended = () => {
+      core.disconnect();
+      shimmer.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
+  }
+
+  private mutedPluck(frequency: number, duration: number, gainValue: number, when = 0) {
+    const ctx = this.ensure();
+    if (!ctx || !this.musicBus) return;
+    const now = ctx.currentTime + when;
+
     const osc = ctx.createOscillator();
-    const upper = ctx.createOscillator();
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
 
     osc.type = "square";
-    upper.type = "triangle";
     osc.frequency.setValueAtTime(frequency, now);
-    upper.frequency.setValueAtTime(frequency * 2, now);
-    upper.detune.setValueAtTime(5, now);
-
-    // Short resonant envelope gives a clav/wah-like "talking" attack while staying fully original.
-    filter.type = "bandpass";
-    filter.Q.setValueAtTime(4.8 + accent * 1.4, now);
-    filter.frequency.setValueAtTime(520, now);
-    filter.frequency.exponentialRampToValueAtTime(1450 + accent * 520, now + Math.min(0.055, duration * 0.35));
-    filter.frequency.exponentialRampToValueAtTime(720, now + duration);
+    filter.type = "lowpass";
+    filter.Q.setValueAtTime(0.9, now);
+    filter.frequency.setValueAtTime(1250, now);
 
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.003);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
     osc.connect(filter);
-    upper.connect(filter);
     filter.connect(gain);
     gain.connect(this.musicBus);
     osc.start(now);
-    upper.start(now);
-    osc.stop(now + duration + 0.025);
-    upper.stop(now + duration + 0.025);
-    osc.onended = () => { osc.disconnect(); upper.disconnect(); filter.disconnect(); gain.disconnect(); };
+    osc.stop(now + duration + 0.03);
+    osc.onended = () => {
+      osc.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
   }
 
   private kick(when = 0, strength = 1) {
@@ -262,167 +247,141 @@ export class ArenaAudioEngine {
     const now = ctx.currentTime + when;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
+
     osc.type = "sine";
-    osc.frequency.setValueAtTime(126, now);
-    osc.frequency.exponentialRampToValueAtTime(43, now + 0.12);
+    osc.frequency.setValueAtTime(102, now);
+    osc.frequency.exponentialRampToValueAtTime(44, now + 0.11);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.145 * strength, now + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    gain.gain.exponentialRampToValueAtTime(0.075 * strength, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
     osc.connect(gain);
     gain.connect(this.musicBus);
     osc.start(now);
-    osc.stop(now + 0.2);
-    osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+    osc.stop(now + 0.18);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
   }
 
-  private hat(when = 0, strength = 1, open = false) {
+  private hat(when = 0, strength = 1) {
     const ctx = this.ensure();
     if (!ctx || !this.musicBus || !this.noiseBuffer) return;
     const now = ctx.currentTime + when;
+
     const src = ctx.createBufferSource();
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
+
     src.buffer = this.noiseBuffer;
     filter.type = "highpass";
-    filter.frequency.setValueAtTime(open ? 4800 : 6200, now);
-    const duration = open ? 0.072 : 0.032;
-    gain.gain.setValueAtTime(Math.max(0.0002, 0.016 * strength), now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    filter.frequency.setValueAtTime(6500, now);
+    gain.gain.setValueAtTime(Math.max(0.0002, 0.008 * strength), now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.028);
+
     src.connect(filter);
     filter.connect(gain);
     gain.connect(this.musicBus);
     src.start(now);
-    src.stop(now + duration + 0.01);
-    src.onended = () => { src.disconnect(); filter.disconnect(); gain.disconnect(); };
-  }
-
-  private clap(when = 0, strength = 1) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus || !this.noiseBuffer) return;
-    const now = ctx.currentTime + when;
-    for (const offset of [0, 0.012, 0.025]) {
-      const src = ctx.createBufferSource();
-      const filter = ctx.createBiquadFilter();
-      const gain = ctx.createGain();
-      src.buffer = this.noiseBuffer;
-      filter.type = "bandpass";
-      filter.frequency.value = 1500;
-      filter.Q.value = 0.7;
-      const start = now + offset;
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.018 * strength, start + 0.002);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.052);
-      src.connect(filter);
-      filter.connect(gain);
-      gain.connect(this.musicBus);
-      src.start(start);
-      src.stop(start + 0.06);
-      src.onended = () => { src.disconnect(); filter.disconnect(); gain.disconnect(); };
-    }
+    src.stop(now + 0.04);
+    src.onended = () => {
+      src.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
   }
 
   startMusic() {
     const ctx = this.ensure();
     if (!ctx || this.musicTimer !== null) return;
 
-    // Original Arena theme: melody-first electro-funk with a clear verse/chorus form.
-    // It borrows broad ingredients from classic synth-funk/French-house production
-    // (syncopation, resonant wah articulation, compact digital harmony) without copying a song.
-    const roots = [73.42, 73.42, 65.41, 82.41, 73.42, 87.31, 65.41, 82.41];
-    const verseBass = [0,-99,-99,0, 7,-99,3,-99, 0,-99,10,-99, 7,-99,3,-99];
-    const chorusBass = [0,-99,0,-99, 7,-99,10,-99, 0,3,-99,7, 12,-99,10,-99];
-
-    // Two distinct original melodic identities:
-    // verse = clipped syncopated clav conversation; chorus = singable octave-spanning answer.
-    const verseMelodyA = [-99,7,-99,-99, 10,-99,7,3, -99,7,-99,10, -99,3,5,-99];
-    const verseMelodyB = [-99,3,5,-99, 7,-99,-99,10, 7,-99,5,-99, 3,-99,0,-99];
-    const chorusMelodyA = [12,-99,10,-99, 7,10,-99,12, -99,15,-99,12, 10,-99,7,-99];
-    const chorusMelodyB = [7,-99,10,12, -99,15,-99,17, 15,-99,12,-99, 10,7,-99,-99];
-
-    // Compact three-note voicings. Keeping harmony as intervals makes the whole score tiny in memory.
-    const verseChords = [[0,3,10],[0,5,10],[0,3,7],[0,5,9]];
-    const chorusChords = [[0,3,7],[0,5,10],[0,3,10],[0,5,9]];
+    // Arena Theme: warm electro-funk built to sit behind gameplay instead of fighting it.
+    // 16 bars = 8-bar A section + 8-bar B section. B gets wider/brighter, not dramatically louder.
     const semitone = (n: number) => Math.pow(2, n / 12);
+    const roots = [65.41, 65.41, 73.42, 58.27, 65.41, 82.41, 73.42, 58.27];
+
+    const bassA = [0,-99,7,-99, 10,-99,7,-99, 0,-99,3,-99, 7,-99,10,-99];
+    const bassB = [0,-99,7,10, -99,7,-99,3, 0,-99,10,-99, 7,3,-99,-99];
+
+    const melodyA = [-99,12,-99,10, -99,7,10,-99, 12,-99,-99,7, 5,-99,7,-99];
+    const melodyB = [12,-99,15,-99, 14,12,-99,10, -99,12,-99,7, 10,-99,5,-99];
+    const answerA = [-99,-99,-99,3, -99,-99,5,-99, -99,-99,-99,7, -99,-99,5,-99];
+    const answerB = [-99,-99,7,-99, -99,10,-99,-99, -99,-99,5,-99, -99,7,-99,-99];
+
+    const chordA = [[0,3,7],[0,5,10],[0,3,10],[0,5,9]];
+    const chordB = [[0,3,10],[0,5,10],[0,7,10],[0,5,9]];
 
     const scheduleStep = (globalStep: number, when: number) => {
-      const phraseStep = globalStep % 256; // 16 bars: 8 verse + 8 chorus
+      const phraseStep = globalStep % 256;
       const bar = Math.floor(phraseStep / 16);
       const step16 = phraseStep % 16;
-      const chorus = bar >= 8;
+      const sectionB = bar >= 8;
       const localBar = bar % 8;
       const root = roots[localBar]!;
       const energy = this.intensity;
 
-      if (this.musicFilter) {
-        // Keep the mix warm; endgame opens the top gently instead of just becoming faster.
-        const cutoff = (chorus ? 3600 : 3000) + energy * 900;
-        this.musicFilter.frequency.setTargetAtTime(cutoff, ctx.currentTime + Math.max(0, when), 0.09);
-        this.musicFilter.Q.setTargetAtTime(0.9 + energy * 0.5, ctx.currentTime + Math.max(0, when), 0.09);
+      // Rhythm is deliberately restrained.
+      if (step16 % 4 === 0) this.kick(when, sectionB ? 0.94 : 0.82);
+      if ([2,6,10,14].includes(step16) && (sectionB || step16 === 6 || step16 === 14)) {
+        this.hat(when + 0.008, 0.7 + energy * 0.12);
       }
 
-      // Drums are intentionally subordinate: just enough pulse to hold the pocket.
-      if (step16 % 4 === 0) this.kick(when, chorus ? 0.66 : 0.56);
-      if (step16 === 4 || step16 === 12) this.clap(when, chorus ? 0.48 : 0.38);
-      if (chorus && [6,14].includes(step16)) this.hat(when + 0.008, 0.32, step16 === 14);
-
-      const bassPattern = chorus ? chorusBass : verseBass;
+      const bassPattern = sectionB ? bassB : bassA;
       const bassInterval = bassPattern[step16]!;
       if (bassInterval > -90) {
         const note = root * 0.5 * semitone(bassInterval);
-        const accent = [0,8,12].includes(step16) ? 1.08 : 0.9;
-        this.acidBass(note, chorus ? 0.24 : 0.27, chorus ? 0.066 : 0.061, when, accent);
+        this.warmBass(note, sectionB ? 0.27 : 0.3, sectionB ? 0.055 : 0.052, when, [0,8].includes(step16) ? 1.08 : 0.94);
       }
 
-      // Syncopated chord "answers" give the groove harmonic movement instead of relying on percussion.
-      if ([3,7,11,15].includes(step16)) {
-        const chordSet = chorus ? chorusChords : verseChords;
-        const intervals = chordSet[(localBar + Math.floor(step16 / 4)) % chordSet.length]!;
-        const base = root * (chorus ? 2 : 1);
-        this.chipHarmony(
+      // Long, gentle chords keep the soundtrack harmonic and pleasant.
+      if (step16 === 0 || step16 === 8) {
+        const chordSet = sectionB ? chordB : chordA;
+        const intervals = chordSet[(localBar + (step16 === 8 ? 1 : 0)) % chordSet.length]!;
+        const base = root * 2;
+        this.velvetChord(
           intervals.map(interval => base * semitone(interval)),
-          chorus ? 0.13 : 0.11,
-          chorus ? 0.021 : 0.016,
-          when + 0.012,
-          chorus,
+          0.78,
+          sectionB ? 0.020 : 0.017,
+          when,
+          sectionB,
         );
       }
 
-      const melody = chorus
-        ? (localBar % 2 === 0 ? chorusMelodyA : chorusMelodyB)
-        : (localBar % 2 === 0 ? verseMelodyA : verseMelodyB);
+      const melody = sectionB ? melodyB : melodyA;
       const interval = melody[step16]!;
       if (interval > -90) {
-        const lead = root * 2 * semitone(interval);
-        if (chorus) {
-          // Chorus is wider and more melodic: vocal wah lead + a quiet octave harmony.
-          this.wahLead(lead, 0.20, 0.050, when, 0.9);
-          if ([0,4,8,12].includes(step16)) {
-            this.tone(lead * 0.5, 0.16, 0.013, "triangle", when + 0.008, true, -4);
-          }
-        } else {
-          // Verse uses a clipped funky clav articulation so the chorus has somewhere to lift.
-          this.funkClav(lead, 0.115, 0.035, when, [3,7,11,15].includes(step16) ? 1.0 : 0.72);
-        }
+        const frequency = root * 2 * semitone(interval);
+        this.glassLead(frequency, sectionB ? 0.22 : 0.19, sectionB ? 0.036 : 0.031, when, sectionB);
       }
 
-      // A tiny two-note turnaround announces the chorus and the return to the verse.
-      if ((bar === 7 || bar === 15) && [13,15].includes(step16)) {
-        const turnaround = root * 4 * semitone(step16 === 13 ? 10 : 12);
-        this.tone(turnaround, 0.095, 0.020, "square", when + 0.01, true, step16 === 13 ? -5 : 5);
+      // A quiet second voice answers the melody; this makes it funky without making it busy.
+      const answer = sectionB ? answerB : answerA;
+      const answerInterval = answer[step16]!;
+      if (answerInterval > -90) {
+        this.mutedPluck(root * 2 * semitone(answerInterval), 0.095, 0.014, when + 0.015);
+      }
+
+      // Tiny turnaround so the form feels intentional.
+      if ((bar === 7 || bar === 15) && step16 === 14) {
+        this.glassLead(root * 4 * semitone(10), 0.12, 0.023, when, true);
       }
     };
 
     this.nextMusicStepTime = ctx.currentTime + 0.08;
+
     const pump = () => {
       const audio = this.ensure();
       if (!audio) return;
-      const lookAhead = 0.20;
+      const lookAhead = 0.2;
+
       while (this.nextMusicStepTime < audio.currentTime + lookAhead) {
-        // Hold the groove around 104 BPM; intensity changes timbre more than tempo.
-        const bpm = 104 + this.intensity * 3;
+        // Almost no tempo change: intensity alters energy through brightness/density, not speed.
+        const bpm = 100 + this.intensity * 2;
         const sixteenth = 60 / bpm / 4;
-        const swing = this.step % 2 === 0 ? 1.13 : 0.87;
+        const swing = this.step % 2 === 0 ? 1.12 : 0.88;
         const when = Math.max(0, this.nextMusicStepTime - audio.currentTime);
+
         scheduleStep(this.step, when);
         this.nextMusicStepTime += sixteenth * swing;
         this.step += 1;
@@ -463,7 +422,6 @@ export class ArenaAudioEngine {
   }
 
   blasterShot() {
-    // Intentionally quiet so sustained automatic fire never overwhelms the score.
     this.tone(430, 0.045, 0.0135, "square");
     this.tone(185, 0.07, 0.0075, "triangle", 0.008);
   }
@@ -490,7 +448,6 @@ export class ArenaAudioEngine {
     this.ctx = null;
     this.master = null;
     this.musicBus = null;
-    this.musicFilter = null;
     this.sfxBus = null;
     this.compressor = null;
     this.noiseBuffer = null;
