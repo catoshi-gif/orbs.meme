@@ -26,10 +26,11 @@ export async function GET(request: Request,{params}:{params:Promise<{slug:string
   return NextResponse.json({ok:true,profile},{headers:{"Cache-Control":"private, no-store"}});
 }
 export async function POST(request: Request,{params}:{params:Promise<{slug:string}>}) {
-  const {slug}=await params, body=await request.json().catch(()=>({})) as {wallet?:unknown;color?:unknown};
+  const {slug}=await params, body=await request.json().catch(()=>({})) as {wallet?:unknown;color?:unknown;glow?:unknown};
   const wallet=walletOf(body.wallet); if(!wallet)return NextResponse.json({ok:false,error:"Invalid wallet"},{status:400});
   const auth=await authorize(slug,wallet); if("error" in auth)return auth.error;
   const color=typeof body.color==="string"?body.color:null;
-  const profile=await assignArenaEntrantProfile(slug,wallet,auth.x.user,color);
+  const glow=typeof body.glow==="string"?body.glow:null;
+  const profile=await assignArenaEntrantProfile(slug,wallet,auth.x.user,color,glow);
   return NextResponse.json({ok:true,profile},{headers:{"Cache-Control":"private, no-store"}});
 }

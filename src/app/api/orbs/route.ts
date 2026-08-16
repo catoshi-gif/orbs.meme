@@ -14,6 +14,7 @@ import { listWalletOrbActivity } from "@/lib/orbActivity";
 import { isAdminWallet } from "@/lib/orbLifecycle";
 import { consumeHostAuthorization } from "@/lib/hostAuthorization";
 import { verifyFundedOrbOnChain } from "@/lib/orbsProgram";
+import { arenaRuntimeConfigured } from "@/lib/arenaRuntime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,8 +98,8 @@ export async function POST(request: Request) {
   const prizeQuoteToken = typeof body.prizeQuoteToken === "string" ? body.prizeQuoteToken.trim() : "";
   const startsAt = Number(body.startsAt);
   const gameType: OrbGameType = body.gameType === "arena" ? "arena" : "maze";
-  if (gameType === "arena") {
-    return NextResponse.json({ ok: false, error: "Arena creation is staged but remains locked until the authoritative realtime Arena service is connected. Maze creation is unchanged." }, { status: 503 });
+  if (gameType === "arena" && !arenaRuntimeConfigured()) {
+    return NextResponse.json({ ok: false, error: "Arena creation requires the authoritative realtime Arena service to be configured." }, { status: 503 });
   }
   const style: GameStyle = {
     marble: safeColor(typeof body.style?.marble === "string" ? body.style.marble : undefined, DEFAULT_GAME_STYLE.marble),

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import GlassRoller from "./GlassRoller";
+import ArenaLiveGame from "./ArenaLiveGame";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
 import { normalizeDifficulty } from "@/game/maze";
 import { safeColor } from "@/game/theme";
@@ -30,6 +31,8 @@ type PublicOrb = {
   hostX: { username: string };
   gameType?: "maze" | "arena";
 };
+
+type ArenaSessionPayload = { ok?:boolean; error?:string; realtimeUrl?:string; token?:string; startsAt?:number; endsAt?:number };
 
 type SessionPayload = {
   ok?: boolean;
@@ -75,6 +78,8 @@ export default function GameRouteClient(props: Props) {
   const [competitiveSession, setCompetitiveSession] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
+  const [arenaSession, setArenaSession] = useState<{realtimeUrl:string;token:string}|null>(null);
+  const [arenaLoading, setArenaLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
   const runStartReportedRef = useRef(false);
 
@@ -139,6 +144,25 @@ export default function GameRouteClient(props: Props) {
     void requestSession();
   }, [competitiveSession, now, orb, requestSession, sessionLoading]);
 
+  const requestArenaSession = useCallback(async () => {
+    if (!orb || orb.gameType !== "arena" || !props.wallet || Date.now() < orb.startsAt - 60_000 || arenaLoading || arenaSession) return;
+    setArenaLoading(true); setSessionError(null);
+    try {
+      const response = await fetch(`/api/orbs/${encodeURIComponent(props.slug)}/arena-session`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wallet: props.wallet }), cache: "no-store",
+      });
+      const payload = await response.json() as ArenaSessionPayload;
+      if (!response.ok || !payload.ok || !payload.realtimeUrl || !payload.token) throw new Error(payload.error || "Could not enter the Arena");
+      setArenaSession({ realtimeUrl: payload.realtimeUrl, token: payload.token });
+    } catch (error) { setSessionError(error instanceof Error ? error.message : "Could not enter the Arena"); }
+    finally { setArenaLoading(false); }
+  }, [arenaLoading, arenaSession, orb, props.slug, props.wallet]);
+
+  useEffect(() => {
+    if (!orb || orb.gameType !== "arena" || !props.wallet || now < orb.startsAt - 60_000 || arenaSession || arenaLoading) return;
+    void requestArenaSession();
+  }, [arenaLoading, arenaSession, now, orb, props.wallet, requestArenaSession]);
+
   const applyLab = () => {
     setDifficulty(draftDifficulty);
     setStyle({ ...draftStyle });
@@ -154,8 +178,11 @@ export default function GameRouteClient(props: Props) {
   if (orb) {
     if (orb.gameType === "arena") {
       if (!props.wallet) return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA</span><h1>Enter through the lobby.</h1><p>Your qualified wallet and Arena Orb identity must be bound before live multiplayer begins.</p><Link className="btn-primary" href={`/orb/${props.slug}`}>Return to Orb →</Link></div>;
-      if (now < orb.startsAt) return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA</span><h1>{formatCountdown(orb.startsAt - now)}</h1><p>The Arena opens for everyone at the same scheduled launch.</p><div className="sealed-orb game-jit-commitment"><span>GAME COMMITMENT</span><code>{orb.commitment}</code></div></div>;
-      return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA · LIVE TESTING</span><h1>Authoritative multiplayer is not connected yet.</h1><p>This build intentionally fails closed instead of trusting browser physics with a real prize. Your registration and Orb color are saved; Arena unlocks here once the realtime authority is connected.</p><Link className="btn-primary" href={`/orb/${props.slug}`}>Return to waiting room →</Link></div>;
+      if (now >= orb.endsAt) return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA</span><h1>This Arena has closed.</h1><Link className="btn-primary" href={`/orb/${props.slug}/results`}>View result →</Link></div>;
+      if (now < orb.startsAt - 60_000) return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA</span><h1>{formatCountdown(orb.startsAt - now)}</h1><p>Come back in the final minute so your Orb can synchronize with the live Arena.</p><div className="sealed-orb game-jit-commitment"><span>GAME COMMITMENT</span><code>{orb.commitment}</code></div></div>;
+      if (sessionError === "ORB_CLOSED") return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA</span><h1>This Arena is complete.</h1><p>The authoritative result has already been recorded.</p><Link className="btn-primary" href={`/orb/${props.slug}/results`}>View result →</Link></div>;
+      if (!arenaSession) return <div className="game-route-shell game-jit-state"><div className="game-loader-orb"/><span className="eyebrow">ARENA</span><h1>{arenaLoading ? "Joining the authoritative Arena…" : "Preparing your Arena session…"}</h1><p>{sessionError || "Binding your registered wallet, X identity, Orb colors and live game authority."}</p>{sessionError?<div className="game-ready-actions"><button className="btn-primary" onClick={()=>void requestArenaSession()}>Retry Arena entry</button><Link className="btn-secondary" href={`/orb/${props.slug}`}>Waiting room</Link></div>:null}</div>;
+      return <ArenaLiveGame slug={props.slug} wallet={props.wallet} realtimeUrl={arenaSession.realtimeUrl} token={arenaSession.token} style={orb.style} seed={orb.commitment}/>;
     }
     if (!props.wallet) return <div className="game-route-shell game-jit-state"><span className="eyebrow">Competitive Orb</span><h1>Enter through the lobby.</h1><p>Your qualified wallet must be bound to the competitive session before the maze can load.</p><Link className="btn-primary" href={`/orb/${props.slug}`}>Return to Orb →</Link></div>;
     if (now < orb.startsAt) return <div className="game-route-shell game-jit-state"><span className="eyebrow">Maze sealed</span><h1>{formatCountdown(orb.startsAt - now)}</h1><p>The seed, path, walls and checkpoints remain unavailable until the host&apos;s launch time.</p><div className="sealed-orb game-jit-commitment"><span>GAME COMMITMENT</span><code>{orb.commitment}</code></div></div>;

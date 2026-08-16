@@ -10,6 +10,7 @@ export type ArenaEntrantProfile = {
   username: string;
   profileImageUrl?: string | null;
   orbColor: string;
+  orbGlow: string;
   updatedAt: number;
 };
 
@@ -31,30 +32,44 @@ function hslToHex(h: number, s = 90, l = 60) {
 function palette(seed: string) {
   const start = createHash("sha256").update(seed).digest().readUInt16BE(0) % 360;
   const out: string[] = [];
-  for (let i=0;i<120;i++) out.push(hslToHex((start + i * 137.508) % 360, i % 3 === 0 ? 96 : 88, i % 4 === 0 ? 66 : 58));
+  for (let i=0;i<720;i++) out.push(hslToHex((start + i * 137.508) % 360, i % 3 === 0 ? 96 : 88, 54 + (i % 5) * 4));
   return out;
 }
 
 export async function getArenaEntrantProfile(slug: string, wallet: string) {
-  try { return await redisGetJson<ArenaEntrantProfile>(profileKey(slug, normalizeWallet(wallet))); }
-  catch { return null; }
+  try {
+    const profile = await redisGetJson<ArenaEntrantProfile>(profileKey(slug, normalizeWallet(wallet)));
+    if (!profile) return null;
+    if (!profile.orbGlow) profile.orbGlow = hslToHex((parseInt(profile.orbColor.slice(1, 3), 16) * 7 + parseInt(profile.orbColor.slice(3, 5), 16) * 3 + parseInt(profile.orbColor.slice(5, 7), 16) * 11) % 360, 96, 72);
+    return profile;
+  } catch { return null; }
 }
 
-export async function assignArenaEntrantProfile(slug: string, walletInput: string, x: XProfile, requestedColor?: string | null) {
+export async function assignArenaEntrantProfile(slug: string, walletInput: string, x: XProfile, requestedColor?: string | null, requestedGlow?: string | null) {
   const wallet = normalizeWallet(walletInput);
   const existing = await getArenaEntrantProfile(slug, wallet);
   const used = (await redisCommand<string[]>(["HVALS", colorsKey(slug)]) || []).map((v) => v.toUpperCase());
   const usedByOthers = used.filter((color) => color !== existing?.orbColor?.toUpperCase());
-  const distinct = (candidate:string) => usedByOthers.every((usedColor) => colorDistance(candidate, usedColor) >= 34);
+  const distinctAt = (candidate:string, minimum:number) => usedByOthers.every((usedColor) => colorDistance(candidate, usedColor) >= minimum);
   const requested = requestedColor ? cleanHex(requestedColor) : null;
-  let color = requested && distinct(requested) ? requested : null;
-  if (!color) color = palette(`${slug}:${wallet}:${requested || "auto"}`).find(distinct) || palette(`${slug}:${wallet}:fallback`)[0] || "#72F7FF";
+  let color = requested && distinctAt(requested, 24) ? requested : null;
+  const candidates = palette(`${slug}:${wallet}:${requested || "auto"}`);
+  if (!color) {
+    for (const minimum of [34, 24, 16, 8, 1]) {
+      color = candidates.find((candidate) => distinctAt(candidate, minimum)) || null;
+      if (color) break;
+    }
+  }
+  if (!color) color = candidates[0] || "#72F7FF";
+  const requestedGlowHex = requestedGlow ? cleanHex(requestedGlow) : null;
+  const glow = requestedGlowHex || hslToHex((parseInt(color.slice(1, 3), 16) * 7 + parseInt(color.slice(3, 5), 16) * 3 + parseInt(color.slice(5, 7), 16) * 11) % 360, 96, 72);
   const profile: ArenaEntrantProfile = {
     wallet,
     xUserId: x.id,
     username: x.username,
     profileImageUrl: x.profileImageUrl || null,
     orbColor: color,
+    orbGlow: glow,
     updatedAt: Date.now(),
   };
   const ttl = Math.max(ORB_HISTORY_TTL_SECONDS, 60 * 60 * 24 * 35);
