@@ -14,32 +14,27 @@ export class ArenaAudioEngine {
     if (typeof window === "undefined") return null;
     if (!this.ctx) {
       this.ctx = new AudioContext();
-
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.122;
+      this.master.gain.value = 0.125;
 
       this.compressor = this.ctx.createDynamicsCompressor();
-      this.compressor.threshold.value = -13;
-      this.compressor.knee.value = 18;
-      this.compressor.ratio.value = 2.2;
-      this.compressor.attack.value = 0.012;
-      this.compressor.release.value = 0.26;
+      this.compressor.threshold.value = -12;
+      this.compressor.knee.value = 14;
+      this.compressor.ratio.value = 2.4;
+      this.compressor.attack.value = 0.01;
+      this.compressor.release.value = 0.2;
       this.master.connect(this.compressor);
       this.compressor.connect(this.ctx.destination);
 
       this.musicBus = this.ctx.createGain();
-      this.musicBus.gain.value = 1.24;
+      this.musicBus.gain.value = 1.3;
       this.musicBus.connect(this.master);
 
       this.sfxBus = this.ctx.createGain();
       this.sfxBus.gain.value = 0.9;
       this.sfxBus.connect(this.master);
 
-      this.noiseBuffer = this.ctx.createBuffer(
-        1,
-        Math.max(1, Math.floor(this.ctx.sampleRate * 0.08)),
-        this.ctx.sampleRate,
-      );
+      this.noiseBuffer = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * 0.06), this.ctx.sampleRate);
       const data = this.noiseBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
     }
@@ -47,198 +42,95 @@ export class ArenaAudioEngine {
     return this.ctx;
   }
 
-  private tone(
+  private chip(
     frequency: number,
     duration: number,
     gainValue: number,
-    type: OscillatorType = "sine",
     when = 0,
-    music = false,
-    detune = 0,
+    type: OscillatorType = "square",
+    octaveSparkle = false,
   ) {
     const ctx = this.ensure();
-    const destination = music ? this.musicBus : this.sfxBus;
-    if (!ctx || !destination) return;
+    if (!ctx || !this.musicBus) return;
     const now = ctx.currentTime + when;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-
     osc.type = type;
     osc.frequency.setValueAtTime(frequency, now);
-    osc.detune.setValueAtTime(detune, now);
-
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, gainValue), now + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.03, duration));
-
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.003);
+    gain.gain.setValueAtTime(gainValue * 0.82, now + Math.min(0.055, duration * 0.45));
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     osc.connect(gain);
-    gain.connect(destination);
+    gain.connect(this.musicBus);
     osc.start(now);
-    osc.stop(now + duration + 0.04);
+    osc.stop(now + duration + 0.02);
+
+    let sparkle: OscillatorNode | null = null;
+    let sparkleGain: GainNode | null = null;
+    if (octaveSparkle) {
+      sparkle = ctx.createOscillator();
+      sparkleGain = ctx.createGain();
+      sparkle.type = "square";
+      sparkle.frequency.setValueAtTime(frequency * 2, now);
+      sparkleGain.gain.setValueAtTime(gainValue * 0.13, now);
+      sparkleGain.gain.exponentialRampToValueAtTime(0.0001, now + duration * 0.72);
+      sparkle.connect(sparkleGain);
+      sparkleGain.connect(this.musicBus);
+      sparkle.start(now);
+      sparkle.stop(now + duration + 0.02);
+    }
+
     osc.onended = () => {
       osc.disconnect();
       gain.disconnect();
+      sparkle?.disconnect();
+      sparkleGain?.disconnect();
     };
   }
 
-  private warmBass(frequency: number, duration: number, gainValue: number, when = 0, accent = 1) {
+  private chipBass(frequency: number, duration: number, gainValue: number, when = 0) {
     const ctx = this.ensure();
     if (!ctx || !this.musicBus) return;
     const now = ctx.currentTime + when;
-
-    const body = ctx.createOscillator();
-    const sub = ctx.createOscillator();
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-
-    body.type = "triangle";
-    sub.type = "sine";
-    body.frequency.setValueAtTime(frequency, now);
-    sub.frequency.setValueAtTime(frequency * 0.5, now);
-
-    filter.type = "lowpass";
-    filter.Q.setValueAtTime(1.4, now);
-    filter.frequency.setValueAtTime(720 + accent * 180, now);
-    filter.frequency.exponentialRampToValueAtTime(300, now + duration);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue * accent, now + 0.009);
-    gain.gain.setValueAtTime(gainValue * 0.82, now + Math.min(0.12, duration * 0.45));
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-    body.connect(filter);
-    filter.connect(gain);
-    sub.connect(gain);
-    gain.connect(this.musicBus);
-
-    body.start(now);
-    sub.start(now);
-    body.stop(now + duration + 0.04);
-    sub.stop(now + duration + 0.04);
-    body.onended = () => {
-      body.disconnect();
-      sub.disconnect();
-      filter.disconnect();
-      gain.disconnect();
-    };
-  }
-
-  private velvetChord(frequencies: number[], duration: number, gainValue: number, when = 0, wide = false) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
-
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-    filter.type = "lowpass";
-    filter.Q.setValueAtTime(0.7, now);
-    filter.frequency.setValueAtTime(wide ? 2300 : 1750, now);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.028);
-    gain.gain.setValueAtTime(gainValue * 0.84, now + duration * 0.55);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-    const oscillators: OscillatorNode[] = [];
-    for (const [index, frequency] of frequencies.entries()) {
-      const a = ctx.createOscillator();
-      const b = ctx.createOscillator();
-      a.type = index === 0 ? "triangle" : "sine";
-      b.type = "triangle";
-      a.frequency.setValueAtTime(frequency, now);
-      b.frequency.setValueAtTime(frequency, now);
-      a.detune.setValueAtTime(index % 2 === 0 ? -3 : 3, now);
-      b.detune.setValueAtTime(index % 2 === 0 ? 5 : -5, now);
-      a.connect(filter);
-      b.connect(filter);
-      a.start(now);
-      b.start(now);
-      a.stop(now + duration + 0.05);
-      b.stop(now + duration + 0.05);
-      oscillators.push(a, b);
-    }
-
-    filter.connect(gain);
-    gain.connect(this.musicBus);
-
-    oscillators[0]!.onended = () => {
-      for (const osc of oscillators) osc.disconnect();
-      filter.disconnect();
-      gain.disconnect();
-    };
-  }
-
-  private glassLead(frequency: number, duration: number, gainValue: number, when = 0, bright = false) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
-
-    const core = ctx.createOscillator();
-    const shimmer = ctx.createOscillator();
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-
-    core.type = "triangle";
-    shimmer.type = "square";
-    core.frequency.setValueAtTime(frequency, now);
-    shimmer.frequency.setValueAtTime(frequency * 2, now);
-    shimmer.detune.setValueAtTime(4, now);
-
-    filter.type = "lowpass";
-    filter.Q.setValueAtTime(1.15, now);
-    filter.frequency.setValueAtTime(bright ? 2950 : 2200, now);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.012);
-    gain.gain.setValueAtTime(gainValue * 0.88, now + duration * 0.5);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-    core.connect(filter);
-    shimmer.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.musicBus);
-
-    core.start(now);
-    shimmer.start(now);
-    core.stop(now + duration + 0.04);
-    shimmer.stop(now + duration + 0.04);
-    core.onended = () => {
-      core.disconnect();
-      shimmer.disconnect();
-      filter.disconnect();
-      gain.disconnect();
-    };
-  }
-
-  private mutedPluck(frequency: number, duration: number, gainValue: number, when = 0) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
-
     const osc = ctx.createOscillator();
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
-
     osc.type = "square";
     osc.frequency.setValueAtTime(frequency, now);
     filter.type = "lowpass";
-    filter.Q.setValueAtTime(0.9, now);
-    filter.frequency.setValueAtTime(1250, now);
-
+    filter.frequency.setValueAtTime(780, now);
+    filter.Q.setValueAtTime(0.7, now);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.003);
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.004);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(this.musicBus);
     osc.start(now);
-    osc.stop(now + duration + 0.03);
-    osc.onended = () => {
-      osc.disconnect();
-      filter.disconnect();
-      gain.disconnect();
-    };
+    osc.stop(now + duration + 0.02);
+    osc.onended = () => { osc.disconnect(); filter.disconnect(); gain.disconnect(); };
+  }
+
+  private arpeggio(frequencies: number[], duration: number, gainValue: number, when = 0) {
+    const ctx = this.ensure();
+    if (!ctx || !this.musicBus) return;
+    const slice = duration / frequencies.length;
+    frequencies.forEach((frequency, index) => {
+      const now = ctx.currentTime + when + index * slice;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(frequency, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + slice * 0.88);
+      osc.connect(gain);
+      gain.connect(this.musicBus!);
+      osc.start(now);
+      osc.stop(now + slice);
+      osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+    });
   }
 
   private kick(when = 0, strength = 1) {
@@ -247,143 +139,141 @@ export class ArenaAudioEngine {
     const now = ctx.currentTime + when;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-
     osc.type = "sine";
-    osc.frequency.setValueAtTime(102, now);
-    osc.frequency.exponentialRampToValueAtTime(44, now + 0.11);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.075 * strength, now + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
-
+    osc.frequency.setValueAtTime(105, now);
+    osc.frequency.exponentialRampToValueAtTime(47, now + 0.085);
+    gain.gain.setValueAtTime(0.055 * strength, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
     osc.connect(gain);
     gain.connect(this.musicBus);
     osc.start(now);
-    osc.stop(now + 0.18);
-    osc.onended = () => {
-      osc.disconnect();
-      gain.disconnect();
-    };
+    osc.stop(now + 0.12);
+    osc.onended = () => { osc.disconnect(); gain.disconnect(); };
   }
 
-  private hat(when = 0, strength = 1) {
+  private tick(when = 0, strength = 1) {
     const ctx = this.ensure();
     if (!ctx || !this.musicBus || !this.noiseBuffer) return;
     const now = ctx.currentTime + when;
-
     const src = ctx.createBufferSource();
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
-
     src.buffer = this.noiseBuffer;
     filter.type = "highpass";
-    filter.frequency.setValueAtTime(6500, now);
-    gain.gain.setValueAtTime(Math.max(0.0002, 0.008 * strength), now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.028);
-
+    filter.frequency.setValueAtTime(5600, now);
+    gain.gain.setValueAtTime(0.006 * strength, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.022);
     src.connect(filter);
     filter.connect(gain);
     gain.connect(this.musicBus);
     src.start(now);
-    src.stop(now + 0.04);
-    src.onended = () => {
-      src.disconnect();
-      filter.disconnect();
-      gain.disconnect();
-    };
+    src.stop(now + 0.028);
+    src.onended = () => { src.disconnect(); filter.disconnect(); gain.disconnect(); };
+  }
+
+  private sfxTone(
+    frequency: number,
+    duration: number,
+    gainValue: number,
+    type: OscillatorType = "sine",
+    when = 0,
+  ) {
+    const ctx = this.ensure();
+    if (!ctx || !this.sfxBus) return;
+    const now = ctx.currentTime + when;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(frequency, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+    osc.onended = () => { osc.disconnect(); gain.disconnect(); };
   }
 
   startMusic() {
     const ctx = this.ensure();
     if (!ctx || this.musicTimer !== null) return;
 
-    // Arena Theme: warm electro-funk built to sit behind gameplay instead of fighting it.
-    // 16 bars = 8-bar A section + 8-bar B section. B gets wider/brighter, not dramatically louder.
-    const semitone = (n: number) => Math.pow(2, n / 12);
-    const roots = [65.41, 65.41, 73.42, 58.27, 65.41, 82.41, 73.42, 58.27];
+    // Original arcade-chiptune Arena theme. Bright, playful and melodic,
+    // inspired only by the broad 8-bit platform-game vocabulary.
+    const semi = (n: number) => Math.pow(2, n / 12);
+    const roots = [130.81, 146.83, 164.81, 146.83, 130.81, 174.61, 164.81, 146.83];
 
-    const bassA = [0,-99,7,-99, 10,-99,7,-99, 0,-99,3,-99, 7,-99,10,-99];
-    const bassB = [0,-99,7,10, -99,7,-99,3, 0,-99,10,-99, 7,3,-99,-99];
+    // 8 bars A + 8 bars B. Sentinel -99 = rest.
+    const melodyA = [
+      0,4,7,-99, 12,7,4,-99, 2,5,9,-99, 7,5,2,-99,
+      4,7,11,-99, 14,11,7,-99, 5,9,12,-99, 11,9,5,-99,
+    ];
+    const melodyB = [
+      12,-99,9,7, 5,7,9,-99, 14,-99,11,9, 7,9,11,-99,
+      16,14,12,-99, 9,12,14,-99, 11,9,7,5, 7,-99,12,-99,
+    ];
+    const bass = [0,-99,0,7, -99,0,5,-99, 0,-99,7,-99, 5,7,-99,0];
+    const chordSets = [[0,4,7], [0,3,7], [0,5,9], [0,4,9]];
 
-    const melodyA = [-99,12,-99,10, -99,7,10,-99, 12,-99,-99,7, 5,-99,7,-99];
-    const melodyB = [12,-99,15,-99, 14,12,-99,10, -99,12,-99,7, 10,-99,5,-99];
-    const answerA = [-99,-99,-99,3, -99,-99,5,-99, -99,-99,-99,7, -99,-99,5,-99];
-    const answerB = [-99,-99,7,-99, -99,10,-99,-99, -99,-99,5,-99, -99,7,-99,-99];
-
-    const chordA = [[0,3,7],[0,5,10],[0,3,10],[0,5,9]];
-    const chordB = [[0,3,10],[0,5,10],[0,7,10],[0,5,9]];
-
-    const scheduleStep = (globalStep: number, when: number) => {
-      const phraseStep = globalStep % 256;
-      const bar = Math.floor(phraseStep / 16);
-      const step16 = phraseStep % 16;
+    const schedule = (globalStep: number, when: number) => {
+      const phrase = globalStep % 256;
+      const bar = Math.floor(phrase / 16);
+      const s = phrase % 16;
       const sectionB = bar >= 8;
       const localBar = bar % 8;
       const root = roots[localBar]!;
-      const energy = this.intensity;
+      const melody = sectionB ? melodyB : melodyA;
+      const melodicIndex = (localBar % 2) * 16 + s;
+      const interval = melody[melodicIndex]!;
 
-      // Rhythm is deliberately restrained.
-      if (step16 % 4 === 0) this.kick(when, sectionB ? 0.94 : 0.82);
-      if ([2,6,10,14].includes(step16) && (sectionB || step16 === 6 || step16 === 14)) {
-        this.hat(when + 0.008, 0.7 + energy * 0.12);
-      }
+      if (s % 4 === 0) this.kick(when, sectionB ? 0.85 : 0.72);
+      if ([2,6,10,14].includes(s)) this.tick(when + 0.006, sectionB ? 0.9 : 0.68);
 
-      const bassPattern = sectionB ? bassB : bassA;
-      const bassInterval = bassPattern[step16]!;
+      const bassInterval = bass[s]!;
       if (bassInterval > -90) {
-        const note = root * 0.5 * semitone(bassInterval);
-        this.warmBass(note, sectionB ? 0.27 : 0.3, sectionB ? 0.055 : 0.052, when, [0,8].includes(step16) ? 1.08 : 0.94);
+        this.chipBass(root * 0.5 * semi(bassInterval), 0.105, 0.042, when);
       }
 
-      // Long, gentle chords keep the soundtrack harmonic and pleasant.
-      if (step16 === 0 || step16 === 8) {
-        const chordSet = sectionB ? chordB : chordA;
-        const intervals = chordSet[(localBar + (step16 === 8 ? 1 : 0)) % chordSet.length]!;
-        const base = root * 2;
-        this.velvetChord(
-          intervals.map(interval => base * semitone(interval)),
-          0.78,
-          sectionB ? 0.020 : 0.017,
-          when,
-          sectionB,
+      // Fast broken chords are the harmonic "engine" and stay quieter than the tune.
+      if (s === 0 || s === 8) {
+        const intervals = chordSets[(localBar + (s === 8 ? 1 : 0)) % chordSets.length]!;
+        const base = root;
+        this.arpeggio(
+          [base * semi(intervals[0]!), base * semi(intervals[1]!), base * semi(intervals[2]!), base * semi(intervals[1]!)],
+          0.31,
+          sectionB ? 0.012 : 0.010,
+          when + 0.012,
         );
       }
 
-      const melody = sectionB ? melodyB : melodyA;
-      const interval = melody[step16]!;
       if (interval > -90) {
-        const frequency = root * 2 * semitone(interval);
-        this.glassLead(frequency, sectionB ? 0.22 : 0.19, sectionB ? 0.036 : 0.031, when, sectionB);
+        const frequency = root * 2 * semi(interval);
+        this.chip(frequency, sectionB ? 0.105 : 0.115, sectionB ? 0.036 : 0.032, when, "square", sectionB);
+        // B-section gets harmony, not a volume jump.
+        if (sectionB && [0,4,8,12].includes(s)) {
+          this.chip(frequency * semi(-5), 0.09, 0.011, when + 0.008, "triangle");
+        }
       }
 
-      // A quiet second voice answers the melody; this makes it funky without making it busy.
-      const answer = sectionB ? answerB : answerA;
-      const answerInterval = answer[step16]!;
-      if (answerInterval > -90) {
-        this.mutedPluck(root * 2 * semitone(answerInterval), 0.095, 0.014, when + 0.015);
-      }
-
-      // Tiny turnaround so the form feels intentional.
-      if ((bar === 7 || bar === 15) && step16 === 14) {
-        this.glassLead(root * 4 * semitone(10), 0.12, 0.023, when, true);
+      // Little end-of-section sparkle makes the form obvious without becoming noisy.
+      if ((bar === 7 || bar === 15) && [12,14,15].includes(s)) {
+        const lift = [12,16,19][[12,14,15].indexOf(s)]!;
+        this.chip(root * 2 * semi(lift), 0.08, 0.022, when, "square", true);
       }
     };
 
     this.nextMusicStepTime = ctx.currentTime + 0.08;
-
     const pump = () => {
       const audio = this.ensure();
       if (!audio) return;
       const lookAhead = 0.2;
-
       while (this.nextMusicStepTime < audio.currentTime + lookAhead) {
-        // Almost no tempo change: intensity alters energy through brightness/density, not speed.
-        const bpm = 100 + this.intensity * 2;
+        const bpm = 116 + this.intensity * 3;
         const sixteenth = 60 / bpm / 4;
-        const swing = this.step % 2 === 0 ? 1.12 : 0.88;
         const when = Math.max(0, this.nextMusicStepTime - audio.currentTime);
-
-        scheduleStep(this.step, when);
-        this.nextMusicStepTime += sixteenth * swing;
+        schedule(this.step, when);
+        this.nextMusicStepTime += sixteenth;
         this.step += 1;
       }
     };
@@ -397,48 +287,48 @@ export class ArenaAudioEngine {
   }
 
   bump(power = 0.6) {
-    this.tone(58 + power * 48, 0.11, 0.105, "sine");
-    this.tone(145 + power * 110, 0.07, 0.055, "triangle", 0.012);
-    if (power > 0.62) this.tone(46, 0.16, 0.07, "square", 0.018);
+    this.sfxTone(58 + power * 48, 0.11, 0.105, "sine");
+    this.sfxTone(145 + power * 110, 0.07, 0.055, "triangle", 0.012);
+    if (power > 0.62) this.sfxTone(46, 0.16, 0.07, "square", 0.018);
   }
 
   jump() {
-    this.tone(118, 0.075, 0.07, "sine");
-    this.tone(248, 0.12, 0.04, "triangle", 0.018);
-    this.tone(420, 0.065, 0.024, "sine", 0.045);
+    this.sfxTone(118, 0.075, 0.07, "sine");
+    this.sfxTone(248, 0.12, 0.04, "triangle", 0.018);
+    this.sfxTone(420, 0.065, 0.024, "sine", 0.045);
   }
 
   powerPickup(kind: "superjump" | "blaster" | "superspeed" | "recovery") {
     const base = kind === "superjump" ? 285 : kind === "blaster" ? 205 : kind === "superspeed" ? 410 : 330;
-    this.tone(base, 0.09, 0.06, "triangle");
-    this.tone(base * 1.5, 0.16, 0.05, "sine", 0.045);
-    this.tone(base * 2, 0.2, 0.035, "triangle", 0.09);
+    this.sfxTone(base, 0.09, 0.06, "triangle");
+    this.sfxTone(base * 1.5, 0.16, 0.05, "sine", 0.045);
+    this.sfxTone(base * 2, 0.2, 0.035, "triangle", 0.09);
   }
 
   powerUse(kind: "superjump" | "blaster" | "superspeed") {
     const base = kind === "superjump" ? 240 : kind === "blaster" ? 310 : 520;
-    this.tone(base, 0.14, 0.09, kind === "superspeed" ? "triangle" : "sawtooth");
-    this.tone(base * 2.2, 0.09, 0.05, "triangle", 0.012);
+    this.sfxTone(base, 0.14, 0.09, kind === "superspeed" ? "triangle" : "sawtooth");
+    this.sfxTone(base * 2.2, 0.09, 0.05, "triangle", 0.012);
   }
 
   blasterShot() {
-    this.tone(430, 0.045, 0.0135, "square");
-    this.tone(185, 0.07, 0.0075, "triangle", 0.008);
+    this.sfxTone(430, 0.045, 0.0135, "square");
+    this.sfxTone(185, 0.07, 0.0075, "triangle", 0.008);
   }
 
   recover() {
-    this.tone(330, 0.1, 0.05, "sine");
-    this.tone(440, 0.14, 0.045, "triangle", 0.06);
-    this.tone(660, 0.18, 0.04, "sine", 0.12);
+    this.sfxTone(330, 0.1, 0.05, "sine");
+    this.sfxTone(440, 0.14, 0.045, "triangle", 0.06);
+    this.sfxTone(660, 0.18, 0.04, "sine", 0.12);
   }
 
   eliminated() {
-    this.tone(180, 0.18, 0.08, "sawtooth");
-    this.tone(118, 0.28, 0.07, "triangle", 0.09);
+    this.sfxTone(180, 0.18, 0.08, "sawtooth");
+    this.sfxTone(118, 0.28, 0.07, "triangle", 0.09);
   }
 
   victory() {
-    [261.63, 329.63, 392, 523.25].forEach((f, i) => this.tone(f, 0.45, 0.08, "triangle", i * 0.11));
+    [261.63, 329.63, 392, 523.25].forEach((f, i) => this.sfxTone(f, 0.45, 0.08, "triangle", i * 0.11));
   }
 
   stop() {
