@@ -14,7 +14,7 @@ export default function SiteFooter() {
       <div className="footer-inner">
         <div className="footer-brand">
           <Logo />
-          <p>Grow your community. Share the love. Join the movement.</p>
+          <p>Where online communities play for their tokens.</p>
           <SocialLinks />
         </div>
         <div className="footer-links">

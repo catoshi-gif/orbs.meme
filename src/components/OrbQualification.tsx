@@ -154,7 +154,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
 
     const postText = gameType === "arena"
       ? `${line}\n\nI’m entering @${hostUsername}’s ARENA for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). #contest`
-      : `${line}\n\nI’m racing @${hostUsername} for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
+      : `${line}\n\nI’m entering @${hostUsername}’s MAZE for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
     const params = new URLSearchParams({ text: postText, url: orbShareUrl });
     const composeUrl = `https://x.com/intent/post?${params.toString()}`;
 
@@ -274,7 +274,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   const entryOpen = gameType === "arena" ? arenaSyncOpen : live;
   const closed = now >= endsAt;
 
-  if (closed) return <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>This Orb has expired.</h3><p className="muted">The six-hour race window ended. New qualification and entry are closed.</p><a className="btn-primary" href={`/orb/${slug}/results`}>View result →</a></aside>;
+  if (closed) return <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>This Orb has expired.</h3><p className="muted">The competition window ended. New registration and competitive entry are closed.</p><a className="btn-primary" href={`/orb/${slug}/results`}>View result →</a></aside>;
 
   return <aside id="qualify" className="card qualify">
     <span className="eyebrow">Before you play</span><h3>Register for this Orb.</h3>

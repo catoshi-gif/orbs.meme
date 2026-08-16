@@ -92,7 +92,7 @@ export default function WaitingRoomPresence({ slug, gameType = "maze", details }
     if (!wallet) return "Connect and register to join the chat.";
     if (!canChat) return "Finish registration to join the chat.";
     if (cooldown > 0) return `You can send again in ${cooldown}s.`;
-    return "Public chat. Registered racers can send one message every 30 seconds.";
+    return "Public chat. Registered players can send one message every 30 seconds.";
   }, [wallet, canChat, cooldown]);
 
   const send = async () => {
@@ -133,7 +133,7 @@ export default function WaitingRoomPresence({ slug, gameType = "maze", details }
         {messages.length ? messages.map((message) => <div className="waiting-chat-message" key={message.id}>
           {message.profileImageUrl ? <img src={message.profileImageUrl} alt="" referrerPolicy="no-referrer" /> : <span className="waiting-chat-avatar">𝕏</span>}
           <div><div className="waiting-chat-meta"><strong>@{message.username}</strong><span>{relativeTime(message.sentAt)}</span></div><p>{message.text}</p></div>
-        </div>) : <p>No messages yet. Registered racers can start the room.</p>}
+        </div>) : <p>No messages yet. Registered players can start the room.</p>}
       </div>
       <div className="waiting-chat-compose">
         <input value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 180))} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={canChat ? "Say something…" : "Register to chat"} disabled={!canChat || sending} maxLength={180} aria-label="Waiting room chat message" />

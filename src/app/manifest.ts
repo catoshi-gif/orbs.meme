@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Orbs — Play. Win. Grow.",
+    name: "Orbs — Where communities play for their tokens",
     short_name: "Orbs",
-    description: "Live skill games powered by Solana rewards.",
+    description: "MAZE and ARENA. Where online communities play for their tokens.",
     start_url: "/",
     scope: "/",
     display: "standalone",

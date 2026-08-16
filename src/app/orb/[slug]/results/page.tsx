@@ -22,21 +22,50 @@ export default async function Page({params}:{params:Promise<{slug:string}>}) {
   const {slug}=await params;
   const orb = await getPublicOrb(slug);
   const winner = orb ? await getWinner(orb.id) : await getWinner(slug);
+  const gameType = orb ? orbGameType(orb) : "maze";
   const expired = Boolean(orb && Date.now() >= orb.endsAt);
   const prize = orb ? `${amount(orb.prizeTokenAmount)} ${orb.token.symbol}` : "Prize";
   const claimed = Boolean(winner?.claimTxSignature);
+  const winnerIdentity = winner?.xUsername
+    ? <><strong>@{winner.xUsername}</strong> · </>
+    : winner?.wallet
+      ? <><code>{winner.wallet.slice(0,3)}…</code> · </>
+      : null;
+
+  const eyebrow = claimed ? "Prize claimed" : winner ? `${gameType.toUpperCase()} winner verified` : expired ? "Orb expired" : "Orb result";
+  const headline = claimed
+    ? (gameType === "arena" ? "The Arena has its winner." : "The prize found its winner.")
+    : winner
+      ? (gameType === "arena" ? "The Arena has a winner." : "The first light was found.")
+      : expired
+        ? "This Orb closed without a winner."
+        : "This Orb is still live.";
+
+  const description = winner
+    ? gameType === "arena"
+      ? <>{winnerIdentity}winner verified by the authoritative Arena service.</>
+      : <>{winnerIdentity}server-verified MAZE finish.</>
+    : expired
+      ? <>No verified winner was locked before this Orb&apos;s expiry. The on-chain refund path returns refundable prize funds only to the original host.</>
+      : <>Winner state for <strong>{slug}</strong>. The prize remains in its isolated Anchor vault until Orbs locks one verified game winner.</>;
+
   return <div className="page"><div className="container"><div className="result">
     <Image src="/orbs-logo-256.png" width={256} height={256} alt=""/>
-    <span className="eyebrow">{claimed ? "Prize claimed" : winner ? "Orb cleared" : expired ? "Orb expired" : "Orb result"}</span>
-    <h1>{claimed ? "The prize found its winner." : winner ? "The first light was found." : expired ? "The race window closed." : "The race is still open."}</h1>
-    <p className="muted">{winner ? <>{winner.xUsername ? <><strong>@{winner.xUsername}</strong> · </> : winner.wallet ? <><code>{winner.wallet.slice(0,3)}…</code> · </> : null}server-verified deterministic finish.</> : expired ? <>No verified player finished before this Orb&apos;s expiry. The on-chain refund path returns the escrow only to the original host.</> : <>Winner state for <strong>{slug}</strong>. The prize remains in its isolated Anchor vault until there is one server-verified first finish.</>}</p>
+    <span className="eyebrow">{eyebrow}</span>
+    <h1>{headline}</h1>
+    <p className="muted">{description}</p>
     <div className="result-prize gradient-text">{prize}</div>
     {orb && winner?.wallet && (!expired || claimed) ? <ClaimPrizeButton slug={slug} winnerWallet={winner.wallet} hostWallet={orb.hostWallet} mint={orb.token.mint} orbId={orb.id} claimed={claimed} isNativeSol={orb.token.isNativeSol === true} /> : null}
     {orb && expired && !claimed ? <RefundPrizeButton slug={slug} /> : null}
     {!winner && !expired ? <button className="btn-primary" disabled>Waiting for a verified winner</button> : null}
-    <div className="metrics"><div className="metric"><span>Finish time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Replay proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div><div className="metric"><span>Status</span><strong>{claimed ? "Claimed on-chain" : winner && !expired ? "Winner verified / claimable" : expired ? "Refund available" : "Live / pending"}</strong></div></div>
+    <div className="metrics">
+      {gameType === "arena"
+        ? <><div className="metric"><span>Game</span><strong>ARENA</strong></div><div className="metric"><span>Match time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Result proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div></>
+        : <><div className="metric"><span>Finish time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Replay proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div><div className="metric"><span>Game</span><strong>MAZE</strong></div></>}
+      <div className="metric"><span>Status</span><strong>{claimed ? "Claimed on-chain" : winner && !expired ? "Winner verified / claimable" : expired ? "Refund available" : "Live / pending"}</strong></div>
+    </div>
     {winner?.claimTxSignature ? <p className="muted"><code>{winner.claimTxSignature.slice(0,12)}…{winner.claimTxSignature.slice(-12)}</code></p> : null}
-    {orb && claimed && winner?.wallet ? <WinnerShareCard slug={slug} prize={prize} finishTime={formatTime(winner?.verifiedElapsedMs)} xUsername={winner?.xUsername} winnerWallet={winner.wallet} gameType={orbGameType(orb)} /> : null}
+    {orb && claimed && winner?.wallet ? <WinnerShareCard slug={slug} prize={prize} finishTime={formatTime(winner?.verifiedElapsedMs)} xUsername={winner?.xUsername} winnerWallet={winner.wallet} gameType={gameType} /> : null}
     <div className="hero-actions" style={{justifyContent:"center"}}><Link className="btn-secondary" href="/create">Create an Orb</Link><Link className="btn-ghost" href={`/orb/${slug}`}>Back to Orb →</Link></div>
   </div></div></div>;
 }

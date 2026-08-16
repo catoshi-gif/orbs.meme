@@ -345,7 +345,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
         const response = await fetch(`/api/game/status?slug=${encodeURIComponent(slug)}&wallet=${encodeURIComponent(wallet)}`, { cache: "no-store" });
         const payload = await response.json() as { closed?: boolean; phase?: string; winnerIsRequester?: boolean; winner?: { xUsername?: string } | null };
         if (cancelled || !payload.closed || payload.winnerIsRequester) return;
-        setVerificationMessage(payload.winner?.xUsername ? `@${payload.winner.xUsername} secured the first verified finish. Your exact run is paused where it is.` : payload.winner ? "Another player secured the first verified finish. Your exact run is paused where it is." : "The Orb's race window expired. Your run is paused where it is.");
+        setVerificationMessage(payload.winner?.xUsername ? `@${payload.winner.xUsername} secured the first verified finish. Your exact run is paused where it is.` : payload.winner ? "Another player secured the first verified finish. Your exact run is paused where it is." : "The MAZE competition window expired. Your run is paused where it is.");
         audioRef.current?.setRollingSpeed(0);
         audioRef.current?.stopMusic();
         changePhase("lost");

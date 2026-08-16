@@ -77,13 +77,13 @@ export default async function WinnerPage({ params }: { params: Promise<{ slug: s
   const prize = `${amount(orb.prizeTokenAmount)} ${orb.token.symbol}`;
   return <div className="page"><div className="container"><div className="result">
     <Image src="/orbs-logo-256.png" width={180} height={180} alt="Orbs" />
-    <span className="eyebrow">Verified Contest Winner</span>
+    <span className="eyebrow">Verified Orbs Winner</span>
     <h1>{winner.xUsername ? `@${winner.xUsername} won the ${orbGameType(orb).toUpperCase()}.` : `The ${orbGameType(orb).toUpperCase()} has a verified winner.`}</h1>
-    <p className="muted">This skill-competition result was server verified and the prize was claimed onchain.</p>
+    <p className="muted">Verified by Orbs. Prize claimed onchain.</p>
     <div className="result-prize gradient-text">{prize}</div>
     <div className="metrics">
       <div className="metric"><span>Winner</span><strong>{winner.xUsername ? `@${winner.xUsername}` : "Verified winner"}</strong></div>
-      <div className="metric"><span>Verified finish</span><strong>{formatTime(winner.verifiedElapsedMs)}</strong></div>
+      <div className="metric"><span>{orbGameType(orb) === "arena" ? "Match time" : "Verified finish"}</span><strong>{formatTime(winner.verifiedElapsedMs)}</strong></div>
       <div className="metric"><span>Status</span><strong>Prize claimed onchain</strong></div>
     </div>
     <div className="hero-actions" style={{ justifyContent: "center" }}>

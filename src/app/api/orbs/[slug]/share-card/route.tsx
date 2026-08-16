@@ -88,11 +88,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
             <img src={brandLogo} alt="" width={58} height={58} style={{ width: 58, height: 58, objectFit: "contain", filter: "drop-shadow(0 0 0 #00000000)" }} />
             <div style={{ display: "flex", fontSize: 31, fontWeight: 900, letterSpacing: -1.2 }}>orbs<span style={{ color: "#8D70FF" }}>.meme</span></div>
           </div>
-          <div style={{ display: "flex", color: "#D9DDF5", fontSize: 15, fontWeight: 800, letterSpacing: 3 }}>PLAY / WIN / GROW</div>
+          <div style={{ display: "flex", color: "#D9DDF5", fontSize: 15, fontWeight: 800, letterSpacing: 3 }}>WHERE COMMUNITIES PLAY</div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", width: 720, marginTop: 68 }}>
-          <div style={{ display: "flex", color: "#76F4EA", fontSize: 16, fontWeight: 900, letterSpacing: 2.4, marginBottom: 13 }}>{gameType === "arena" ? "LIVE SOLANA ARENA" : "SEALED SOLANA REWARD RACE"}</div>
+          <div style={{ display: "flex", color: "#76F4EA", fontSize: 16, fontWeight: 900, letterSpacing: 2.4, marginBottom: 13 }}>{gameType === "arena" ? "LIVE SOLANA ARENA" : "LIVE SOLANA MAZE"}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
             <div style={{ width: 100, height: 100, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", background: `radial-gradient(circle at 35% 30%, #fff, ${orb.style.marbleSecondary} 18%, ${orb.style.marble} 62%, ${orb.style.floor})`, border: "3px solid #FFFFFF55", boxShadow: `0 0 44px ${orb.style.marble}99` }}>
               {tokenLogo ? <img src={tokenLogo} alt="" width={100} height={100} style={{ width: 100, height: 100, objectFit: "cover" }} /> : <span style={{ fontSize: 38, fontWeight: 900 }}>{tokenSymbol.slice(0, 2)}</span>}
