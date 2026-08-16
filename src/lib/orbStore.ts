@@ -11,12 +11,10 @@ import type { XProfile } from "@/lib/xAuth";
 import { redisCommand, redisGetJson, upstashConfigured } from "@/lib/upstash";
 import { activeHostedOrbKey, enteredOrbsKey, isAdminWallet, ORB_COMPETITION_WINDOW_MS, ORB_CREATION_MIN_LEAD_MS, ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
 import { recordFundedOrbAnalytics, recordHostSharePostAnalytics } from "@/lib/durableAnalytics";
+import { orbGameType, type OrbGameType } from "@/lib/orbGameType";
 
-export type OrbGameType = "maze" | "arena";
-
-export function orbGameType(orb: { gameType?: OrbGameType | null }): OrbGameType {
-  return orb.gameType === "arena" ? "arena" : "maze";
-}
+export { orbGameType };
+export type { OrbGameType };
 
 export type OrbTokenSnapshot = Pick<WalletSplToken, "mint" | "symbol" | "name" | "decimals" | "logoURI" | "usdPrice" | "isNativeSol">;
 

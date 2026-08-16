@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { orbGameType, type PublicOrbRecord } from "@/lib/orbStore";
+import type { PublicOrbRecord } from "@/lib/orbStore";
+import { orbGameType } from "@/lib/orbGameType";
 import WaitingRoomPresence from "@/components/WaitingRoomPresence";
 import OrbShowcase from "@/components/OrbShowcase";
 
