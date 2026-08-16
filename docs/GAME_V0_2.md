@@ -7,10 +7,9 @@ This repository now contains the first real deterministic Glass Roller vertical 
 - Three.js 0.185.1 rendering loaded only by the live `/orb/[slug]/play` route.
 - Rapier 3D compat 0.20.0 deterministic WASM physics.
 - Fixed 60 Hz physics step; rendering runs independently.
-- Board tilt is physical: input rotates the gravity vector. The marble is never translated by controls.
+- Steering is direct and deterministic: keyboard or joystick input converges the marble toward a bounded planar velocity while Rapier owns rolling, collisions, and obstacle impulses.
 - Arrow keys and WASD on desktop.
-- Device Orientation tilt on mobile with calibration and screen-orientation normalization.
-- Touch tilt-pad fallback.
+- Mobile uses the always-on onscreen joystick as its only movement control.
 - Seeded deterministic maze generator with three initial solve-time profiles.
 - Candidate-search difficulty shaping around target main-path lengths.
 - Long collinear maze walls merged before rendering and physics creation.
@@ -63,7 +62,7 @@ The renderer uses two instanced draw calls for all static maze walls (glass body
 Do not add backend frame streaming. Next game work should be:
 
 1. Playtest physics feel on real desktop + iPhone/Android hardware.
-2. Tune terminal speed, damping, tilt smoothing, gate speed and camera distance.
+2. Tune terminal speed, damping, steering response, gate speed and camera distance.
 3. Collect human solve-time samples across at least 20-30 seeds per profile.
 4. Add production JIT manifest/replay boundaries without changing the local physics rules.
 

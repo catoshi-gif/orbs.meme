@@ -124,11 +124,10 @@ export default function Page() {
             <article className="gameplay-control-card mobile">
               <div className="gameplay-device-heading">
                 <span className="gameplay-device-icon phone" aria-hidden="true">▯</span>
-                <div><span>Mobile</span><h3>Tilt or touch.</h3></div>
+                <div><span>Mobile</span><h3>Joystick control.</h3></div>
               </div>
               <div className="gameplay-control-list">
-                <div><span className="control-pictogram">↗</span><p><strong>Tilt to roll.</strong><br/>Enable motion controls and steer by tilting your phone.</p></div>
-                <div><span className="control-pictogram">●</span><p><strong>Prefer touch?</strong><br/>Switch to the on-screen joystick at any time.</p></div>
+                <div><span className="control-pictogram">●</span><p><strong>Steer with the joystick.</strong><br/>The on-screen joystick is always available during mobile play.</p></div>
                 <div><span className="control-pictogram">⇱</span><p><strong>Pinch to zoom.</strong><br/>Reveal the full board without giving up steering.</p></div>
               </div>
             </article>

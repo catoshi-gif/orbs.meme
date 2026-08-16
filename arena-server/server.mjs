@@ -94,7 +94,8 @@ class Room {
   send(ws,msg){if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(msg))}
   broadcast(msg){const raw=JSON.stringify(msg);for(const ws of this.clients.values())if(ws.readyState===WebSocket.OPEN)ws.send(raw)}
   broadcastRoster(){this.broadcast({t:"roster",players:[...this.players.values()].map(p=>({id:p.id,wallet:p.wallet,username:p.username,profileImageUrl:p.profileImageUrl,color:p.color,glow:p.glow,connected:p.connected}))})}
-  input(player,msg){if(!player.alive)return;const seq=Math.trunc(Number(msg.seq)||0);if(seq<=player.lastSeq)return;player.lastSeq=seq;player.input=normalizeInput(msg.x,msg.z);player.profile=msg.profile==="mobile"?"mobile":"desktop"}
+  input(player,msg){if(!player.alive)return;const seq=Math.trunc(Number(msg.seq)||0);if(seq<=player.lastSeq)return;player.lastSeq=seq;player.input=normalizeInput(msg.x,msg.z);// Mobile means normalized onscreen-joystick input; the authority accepts planar input only.
+    player.profile=msg.profile==="mobile"?"mobile":"desktop"}
   action(player){if(this.phase!=="live"||!player.alive||!player.body)return;const now=Date.now();if(player.powerKind&&now>=player.powerExpiresAt)this.clearPower(player);const kind=player.powerKind;if(!kind){this.normalJump(player);return}
     if(kind==="superjump"){
       if(this.grounded(player)){if(this.normalJump(player,1.18))player.doubleJumpArmed=true}

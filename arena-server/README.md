@@ -23,7 +23,7 @@ The server has a `GET /health` endpoint and accepts WebSocket connections at `/a
 
 ## Security boundary
 
-Clients submit only steering/action inputs. The authority owns Rapier physics, health, pickups, powers, projectiles, eliminations, and winner selection. It HMAC-signs the final result back to `/api/arena/runtime/result`; the web app validates that result and uses the existing atomic winner lock / settlement path.
+Clients submit only steering/action inputs. Desktop input comes from keyboard controls; mobile input comes from the onscreen joystick. The authority receives normalized planar input only and never depends on a browser movement mode. The authority owns Rapier physics, health, pickups, powers, projectiles, eliminations, and winner selection. It HMAC-signs the final result back to `/api/arena/runtime/result`; the web app validates that result and uses the existing atomic winner lock / settlement path.
 
 The Arena service must **not** receive Solana, Turnkey, treasury, relayer, or vault keys. Its only trusted capability is attesting the winner of a specific registered Arena match.
 

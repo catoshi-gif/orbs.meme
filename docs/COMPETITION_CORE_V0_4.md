@@ -8,7 +8,7 @@ This pass freezes the validated V1 control contract and adds the first server-au
 - Rapier `0.20.0`
 - Quick/Easy generator geometry remains unchanged after the 04:17 human calibration run.
 - Desktop uses the validated precision steering profile.
-- Mobile device tilt/touch uses the validated mobile steering profile.
+- Mobile onscreen joystick is the only mobile movement input and uses the validated mobile steering profile.
 
 Changing any of those rules for a funded Orb requires a new version string.
 

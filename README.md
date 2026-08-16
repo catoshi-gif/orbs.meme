@@ -2,7 +2,7 @@
 
 **Play. Win. Grow.**
 
-Orbs is a gamified community-growth protocol built around the **Glass Roller**: a deterministic 3D tilt-maze for desktop and mobile. Hosts will fund timed SPL-token prize games and share one unique Orb URL; every qualified player receives the exact same live challenge.
+Orbs is a gamified community-growth protocol built around the **Glass Roller**: a deterministic 3D MAZE for desktop and mobile. Hosts will fund timed SPL-token prize games and share one unique Orb URL; every qualified player receives the exact same live challenge.
 
 ## Current repository milestone — V0.2
 
@@ -19,9 +19,8 @@ Orbs is a gamified community-growth protocol built around the **Glass Roller**: 
 - Three.js renderer loaded only on `/orb/[slug]/play`
 - Rapier deterministic 3D WASM physics
 - Fixed 60 Hz physics step
-- Arrow/WASD tilt on desktop
-- Device-orientation tilt + calibration on mobile
-- Touch tilt-pad fallback
+- Arrow/WASD direct steering on desktop
+- Always-on onscreen joystick steering on mobile
 - Seeded deterministic maze generation
 - Quick / Classic / Brutal initial difficulty calibration targets (~5 / 10 / 15 min)
 - Controlled loops, dead ends, candidate scoring, ordered checkpoints

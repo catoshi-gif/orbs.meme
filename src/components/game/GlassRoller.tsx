@@ -32,7 +32,7 @@ type Props = {
 };
 
 type Phase = "loading" | "ready" | "countdown" | "playing" | "verifying" | "won" | "lost" | "fun" | "fun-finished" | "verify-error";
-type ControlMode = "keys" | "sensor" | "touch";
+type ControlMode = "keys" | "touch";
 
 
 function makeMountainRing(THREE: typeof import("three"), radius: number, seed: number, y: number, color: string) {
@@ -251,7 +251,6 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
   const mountRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<Phase>("loading");
   const controlsRef = useRef({ up: false, down: false, left: false, right: false, touchX: 0, touchY: 0 });
-  const sensorRef = useRef({ active: false, neutralBeta: 0, neutralGamma: 0, beta: 0, gamma: 0 });
   const resetRef = useRef<(() => void) | null>(null);
   const startRef = useRef<(() => void) | null>(null);
   const cameraToggleRef = useRef<(() => void) | null>(null);
@@ -266,8 +265,6 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
   const [speed, setSpeed] = useState(0);
   const [checkpoint, setCheckpoint] = useState(0);
   const [resets, setResets] = useState(0);
-  const [sensorAvailable, setSensorAvailable] = useState(false);
-  const [sensorMessage, setSensorMessage] = useState<string | null>(null);
   const [loadingLabel, setLoadingLabel] = useState("Warming the glass world…");
   const [audioMuted, setAudioMuted] = useState(false);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
@@ -283,7 +280,6 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
   }, []);
 
   useEffect(() => {
-    setSensorAvailable(typeof window !== "undefined" && "DeviceOrientationEvent" in window);
     if (window.matchMedia("(pointer: coarse)").matches) setControlMode("touch");
   }, [setControlMode]);
 
@@ -358,45 +354,6 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [changePhase, competitiveSession, phase, slug, wallet]);
 
-  const requestMotion = useCallback(async () => {
-    await audioRef.current?.unlock();
-    if (!("DeviceOrientationEvent" in window)) {
-      setControlMode("touch");
-      setSensorMessage("Motion sensors are unavailable here. Touch tilt is ready instead.");
-      return;
-    }
-    try {
-      const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<"granted" | "denied"> };
-      if (typeof orientation.requestPermission === "function") {
-        const result = await orientation.requestPermission();
-        if (result !== "granted") throw new Error("Motion permission denied");
-      }
-      sensorRef.current.active = true;
-      sensorRef.current.neutralBeta = sensorRef.current.beta;
-      sensorRef.current.neutralGamma = sensorRef.current.gamma;
-      setControlMode("sensor");
-      setSensorMessage("Device tilt calibrated. Hold the phone naturally and roll.");
-    } catch {
-      sensorRef.current.active = false;
-      setControlMode("touch");
-      setSensorMessage("Motion permission was not granted. Touch tilt is enabled.");
-    }
-  }, []);
-
-  const recalibrate = useCallback(() => {
-    sensorRef.current.neutralBeta = sensorRef.current.beta;
-    sensorRef.current.neutralGamma = sensorRef.current.gamma;
-    setSensorMessage("Tilt center recalibrated.");
-  }, []);
-
-  useEffect(() => {
-    const onOrientation = (event: DeviceOrientationEvent) => {
-      sensorRef.current.beta = event.beta ?? 0;
-      sensorRef.current.gamma = event.gamma ?? 0;
-    };
-    window.addEventListener("deviceorientation", onOrientation, true);
-    return () => window.removeEventListener("deviceorientation", onOrientation, true);
-  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent, down: boolean) => {
@@ -961,25 +918,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
               let inputX = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
               let inputY = (keys.up ? 1 : 0) - (keys.down ? 1 : 0);
 
-              if (sensorRef.current.active && controlModeRef.current === "sensor") {
-                const gammaDelta = sensorRef.current.gamma - sensorRef.current.neutralGamma;
-                const betaDelta = sensorRef.current.beta - sensorRef.current.neutralBeta;
-                const legacyAngle = (window as Window & { orientation?: number }).orientation;
-                const angleDegrees = window.screen.orientation?.angle ?? (typeof legacyAngle === "number" ? legacyAngle : 0);
-                const screenAngle = (angleDegrees * Math.PI) / 180;
-                const portraitX = gammaDelta;
-                const portraitY = -betaDelta;
-                const rotatedX = portraitX * Math.cos(screenAngle) + portraitY * Math.sin(screenAngle);
-                const rotatedY = -portraitX * Math.sin(screenAngle) + portraitY * Math.cos(screenAngle);
-                const mapTiltAxis = (degrees: number) => {
-                  const magnitude = Math.abs(degrees);
-                  if (magnitude <= PHYSICS.sensorDeadzoneDeg) return 0;
-                  const normalized = (magnitude - PHYSICS.sensorDeadzoneDeg) / (PHYSICS.sensorFullScaleDeg - PHYSICS.sensorDeadzoneDeg);
-                  return Math.sign(degrees) * clamp(normalized, 0, 1);
-                };
-                inputX = mapTiltAxis(rotatedX);
-                inputY = mapTiltAxis(rotatedY);
-              } else if (controlModeRef.current === "touch") {
+              if (controlModeRef.current === "touch") {
                 inputX = keys.touchX;
                 inputY = keys.touchY;
               }
@@ -992,20 +931,19 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
             }
 
             const directDesktop = controlModeRef.current === "keys";
-            const alpha = 1 - Math.exp(-PHYSICS.fixedStep / PHYSICS.tiltSmoothSeconds);
+            const alpha = 1 - Math.exp(-PHYSICS.fixedStep / PHYSICS.steeringVisualSmoothSeconds);
 
-            // Keep real gravity vertical for every input device. Desktop arrows and mobile
-            // device tilt both steer the same physical marble toward a bounded desired planar
-            // velocity. This removes the "boat inertia" from hairpins while collisions,
-            // rolling and obstacle impulses remain fully owned by Rapier.
+            // Keep real gravity vertical for every input device. Desktop keys and the mobile
+            // joystick steer the same physical marble toward a bounded desired planar velocity.
+            // Collisions, rolling and obstacle impulses remain fully owned by Rapier.
             world.gravity.x = 0;
             world.gravity.y = -PHYSICS.gravity;
             world.gravity.z = 0;
             ballBody.setLinearDamping(PHYSICS.linearDamping);
 
-            const visualTilt = rad(PHYSICS.mobileVisualTiltDeg);
-            const targetPitch = directDesktop ? 0 : sampledInputY * visualTilt;
-            const targetRoll = directDesktop ? 0 : -sampledInputX * visualTilt;
+            const visualLean = rad(PHYSICS.mobileVisualLeanDeg);
+            const targetPitch = directDesktop ? 0 : sampledInputY * visualLean;
+            const targetRoll = directDesktop ? 0 : -sampledInputX * visualLean;
             currentPitch += (targetPitch - currentPitch) * alpha;
             currentRoll += (targetRoll - currentRoll) * alpha;
             if (directDesktop) boardQuat.identity();
@@ -1323,24 +1261,22 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
           <span className="game-kicker">{sandboxMode ? `MARKETING SANDBOX · ${manifest.profile.subtitle}` : manifest.profile.subtitle}</span>
           <h1>{sandboxMode ? "Roll the demo." : "Enter the Orb."}</h1>
           <p>
-            Roll a luminous glass marble through a unique deterministic maze. Cross every glowing ring in order before the finish opens. Desktop gets precision steering; mobile maps physical device tilt into the same responsive steering model while the crystal board moves with you.
+            Roll a luminous glass marble through a unique deterministic maze. Cross every glowing ring in order before the finish opens. Desktop uses precise keyboard steering; mobile uses the on-screen joystick with the same responsive steering model.
           </p>
           <div className="game-ready-stats">
             <div><span>PATH</span><strong>{manifest.path.length} cells</strong></div>
             <div><span>MODULES</span><strong>{manifest.gates.length + manifest.bumpers.length}</strong></div>
-            <div><span>CONTROL</span><strong>Precision / tilt</strong></div>
+            <div><span>CONTROL</span><strong>Keyboard / joystick</strong></div>
           </div>
           <div className="game-ready-actions">
             <button className="btn-primary" onClick={begin}>Start run</button>
-            {sensorAvailable ? <button className="btn-secondary" onClick={requestMotion}>Enable device tilt</button> : null}
           </div>
           <div className="game-controls-hint">
             <span>Desktop · ↑ ↓ ← → directly roll the marble</span>
             <span>Desktop camera · Space toggles overview once live</span>
-            <span>Mobile · tilt to steer · pinch to zoom</span>
+            <span>Mobile · on-screen joystick · pinch to zoom</span>
             <span>R · recover</span>
           </div>
-          {sensorMessage ? <small className="game-sensor-message">{sensorMessage}</small> : null}
         </div>
       ) : null}
 
@@ -1422,7 +1358,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
           aria-label="Touch marble steering control"
         >
           <div className="game-touch-knob" />
-          <span>TILT</span>
+          <span>ROLL</span>
         </div>
       ) : null}
 
@@ -1433,15 +1369,6 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
         </div>
       ) : null}
 
-      {(phase === "playing" || phase === "fun") && sensorAvailable ? (
-        <div className="game-control-switcher">
-          {controlMode === "sensor" ? (
-            <><button onClick={recalibrate}>Recalibrate</button><button onClick={() => setControlMode("touch")}>Touch control</button></>
-          ) : (
-            <button onClick={requestMotion}>Device tilt</button>
-          )}
-        </div>
-      ) : null}
 
       <div className="game-corner-brand"><span className="game-brand-dot" /> orbs.meme</div>
     </section>

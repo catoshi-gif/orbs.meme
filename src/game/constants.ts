@@ -103,18 +103,16 @@ export const PHYSICS = {
   desktopReverseResponse: 10.5,
   desktopCoastResponse: 4.2,
 
-  // Device tilt/touch uses the same steering model as desktop so mobile does not depend
-  // on slowly accumulating gravity momentum. The board still tilts visually for feel.
+  // The mobile joystick uses the same steering model as desktop so controls remain
+  // direct and predictable. A small visual board lean follows joystick input for feel.
   mobileMaxSpeed: 4.55,
   mobileResponse: 4.8,
   mobileReverseResponse: 8.6,
   mobileCoastResponse: 3.5,
-  mobileVisualTiltDeg: 5.5,
-  sensorFullScaleDeg: 19,
-  sensorDeadzoneDeg: 1.6,
+  mobileVisualLeanDeg: 5.5,
 
   friction: 0.44,
   restitution: 0.055,
   maxSpeed: 5.1,
-  tiltSmoothSeconds: 0.105,
+  steeringVisualSmoothSeconds: 0.105,
 } as const;

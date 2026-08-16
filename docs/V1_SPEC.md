@@ -2,7 +2,7 @@
 
 **Tagline:** Grow your community. Share the love. Join the movement.
 
-**V1 definition:** A host creates a timed 3D marble-tilt challenge, funds a prize using a standard SPL token, and shares a unique Orb URL. Players qualify by connecting X, completing the host-follow step, connecting a Solana wallet, passing anti-automation checks, and publishing one original entry post containing the Orb link. At launch, everyone races through the same committed game. The first server-validated finish wins the escrowed prize.
+**V1 definition:** A host creates a timed 3D marble challenge, funds a prize using a standard SPL token, and shares a unique Orb URL. Players qualify by connecting X, completing the host-follow step, connecting a Solana wallet, passing anti-automation checks, and publishing one original entry post containing the Orb link. At launch, everyone races through the same committed game. The first server-validated finish wins the escrowed prize.
 
 **V1 token policy:** Standard SPL Token Program only. Token-2022 is out of scope.
 
@@ -72,9 +72,9 @@ Qualification:
 At T-10 seconds enter full-screen launch state. At T0 reveal the maze seed and enter the game.
 
 ## Live game
-Desktop: pointer tilt or WASD/arrow fallback. Mobile: device orientation after permission, with touch joystick fallback.
+Desktop: WASD/arrow direct steering. Mobile: always-on onscreen joystick steering. There is no alternate mobile movement mode.
 
-Use a regional persistent WebSocket service with fixed-timestep authoritative physics. Browser predicts/renders; server receives ordered tilt inputs and determines checkpoints/finish. Client never declares the winner.
+Use a regional persistent WebSocket service with fixed-timestep authoritative physics. Browser predicts/renders; server receives ordered normalized steering inputs and determines checkpoints/finish. Client never declares the winner.
 
 The challenge should use physics obstacles and timed/moving elements so it is not a trivial static-maze graph-solving problem.
 
