@@ -18,7 +18,7 @@ export class ArenaAudioEngine {
 
       this.master = this.ctx.createGain();
       // Slightly louder than V2, but with extra headroom so the score stays clean during firefights.
-      this.master.gain.value = 0.116;
+      this.master.gain.value = 0.128;
 
       this.compressor = this.ctx.createDynamicsCompressor();
       this.compressor.threshold.value = -10;
@@ -31,7 +31,7 @@ export class ArenaAudioEngine {
 
       this.musicBus = this.ctx.createGain();
       // Forward enough to feel like a real soundtrack, while the compressor keeps weapon SFX readable.
-      this.musicBus.gain.value = 1.28;
+      this.musicBus.gain.value = 1.36;
       this.musicFilter = this.ctx.createBiquadFilter();
       this.musicFilter.type = "lowpass";
       this.musicFilter.frequency.value = 2050;
@@ -177,6 +177,85 @@ export class ArenaAudioEngine {
     osc.onended = () => { osc.disconnect(); filter.disconnect(); gain.disconnect(); };
   }
 
+  private chipHarmony(
+    frequencies: number[],
+    duration: number,
+    gainValue: number,
+    when = 0,
+    bright = false,
+  ) {
+    const ctx = this.ensure();
+    if (!ctx || !this.musicBus) return;
+    const now = ctx.currentTime + when;
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(bright ? 1850 : 1320, now);
+    filter.Q.setValueAtTime(bright ? 1.9 : 1.35, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.004);
+    gain.gain.setValueAtTime(gainValue * 0.72, now + Math.min(duration * 0.48, 0.11));
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    const oscillators = frequencies.map((frequency, index) => {
+      const osc = ctx.createOscillator();
+      // Alternating square/triangle voices create a compact 8-bit chord without samples or buffers.
+      osc.type = index % 2 === 0 ? "square" : "triangle";
+      osc.frequency.setValueAtTime(frequency, now);
+      osc.detune.setValueAtTime(index === 1 ? 4 : index === 2 ? -4 : 0, now);
+      osc.connect(filter);
+      osc.start(now);
+      osc.stop(now + duration + 0.025);
+      return osc;
+    });
+
+    filter.connect(gain);
+    gain.connect(this.musicBus);
+    oscillators[0]!.onended = () => {
+      for (const osc of oscillators) osc.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
+  }
+
+  private funkClav(frequency: number, duration: number, gainValue: number, when = 0, accent = 1) {
+    const ctx = this.ensure();
+    if (!ctx || !this.musicBus) return;
+    const now = ctx.currentTime + when;
+    const osc = ctx.createOscillator();
+    const upper = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = "square";
+    upper.type = "triangle";
+    osc.frequency.setValueAtTime(frequency, now);
+    upper.frequency.setValueAtTime(frequency * 2, now);
+    upper.detune.setValueAtTime(5, now);
+
+    // Short resonant envelope gives a clav/wah-like "talking" attack while staying fully original.
+    filter.type = "bandpass";
+    filter.Q.setValueAtTime(4.8 + accent * 1.4, now);
+    filter.frequency.setValueAtTime(520, now);
+    filter.frequency.exponentialRampToValueAtTime(1450 + accent * 520, now + Math.min(0.055, duration * 0.35));
+    filter.frequency.exponentialRampToValueAtTime(720, now + duration);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    osc.connect(filter);
+    upper.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.musicBus);
+    osc.start(now);
+    upper.start(now);
+    osc.stop(now + duration + 0.025);
+    upper.stop(now + duration + 0.025);
+    osc.onended = () => { osc.disconnect(); upper.disconnect(); filter.disconnect(); gain.disconnect(); };
+  }
+
   private kick(when = 0, strength = 1) {
     const ctx = this.ensure();
     if (!ctx || !this.musicBus) return;
@@ -246,18 +325,27 @@ export class ArenaAudioEngine {
     const ctx = this.ensure();
     if (!ctx || this.musicTimer !== null) return;
 
-    // Original Arena score with real sections: an 8-bar verse and an 8-bar chorus.
-    // The hook uses a resonant filter envelope to create a vocal "wah" articulation, while
-    // the arrangement stays intentionally slower and roomier than the previous chiptune loop.
-    const roots = [73.42, 73.42, 65.41, 82.41, 73.42, 73.42, 87.31, 82.41]; // original D/C/E/F-centered cycle
+    // Original Arena theme: melody-first electro-funk with a clear verse/chorus form.
+    // It borrows broad ingredients from classic synth-funk/French-house production
+    // (syncopation, resonant wah articulation, compact digital harmony) without copying a song.
+    const roots = [73.42, 73.42, 65.41, 82.41, 73.42, 87.31, 65.41, 82.41];
     const verseBass = [0,-99,-99,0, 7,-99,3,-99, 0,-99,10,-99, 7,-99,3,-99];
     const chorusBass = [0,-99,0,-99, 7,-99,10,-99, 0,3,-99,7, 12,-99,10,-99];
-    const wahA = [-99,-99,12,-99, 15,-99,10,-99, -99,7,-99,10, 12,-99,-99,-99];
-    const wahB = [-99,10,-99,12, -99,7,-99,-99, 15,-99,12,-99, 10,-99,7,-99];
+
+    // Two distinct original melodic identities:
+    // verse = clipped syncopated clav conversation; chorus = singable octave-spanning answer.
+    const verseMelodyA = [-99,7,-99,-99, 10,-99,7,3, -99,7,-99,10, -99,3,5,-99];
+    const verseMelodyB = [-99,3,5,-99, 7,-99,-99,10, 7,-99,5,-99, 3,-99,0,-99];
+    const chorusMelodyA = [12,-99,10,-99, 7,10,-99,12, -99,15,-99,12, 10,-99,7,-99];
+    const chorusMelodyB = [7,-99,10,12, -99,15,-99,17, 15,-99,12,-99, 10,7,-99,-99];
+
+    // Compact three-note voicings. Keeping harmony as intervals makes the whole score tiny in memory.
+    const verseChords = [[0,3,10],[0,5,10],[0,3,7],[0,5,9]];
+    const chorusChords = [[0,3,7],[0,5,10],[0,3,10],[0,5,9]];
     const semitone = (n: number) => Math.pow(2, n / 12);
 
     const scheduleStep = (globalStep: number, when: number) => {
-      const phraseStep = globalStep % 256; // sixteen bars
+      const phraseStep = globalStep % 256; // 16 bars: 8 verse + 8 chorus
       const bar = Math.floor(phraseStep / 16);
       const step16 = phraseStep % 16;
       const chorus = bar >= 8;
@@ -266,40 +354,61 @@ export class ArenaAudioEngine {
       const energy = this.intensity;
 
       if (this.musicFilter) {
-        const cutoff = (chorus ? 3100 : 2450) + energy * 1250;
-        this.musicFilter.frequency.setTargetAtTime(cutoff, ctx.currentTime + Math.max(0, when), 0.08);
-        this.musicFilter.Q.setTargetAtTime(1.05 + energy * 0.75, ctx.currentTime + Math.max(0, when), 0.08);
+        // Keep the mix warm; endgame opens the top gently instead of just becoming faster.
+        const cutoff = (chorus ? 3600 : 3000) + energy * 900;
+        this.musicFilter.frequency.setTargetAtTime(cutoff, ctx.currentTime + Math.max(0, when), 0.09);
+        this.musicFilter.Q.setTargetAtTime(0.9 + energy * 0.5, ctx.currentTime + Math.max(0, when), 0.09);
       }
 
-      // Slow four-on-the-floor pocket. Chorus gains an extra ghost kick rather than just speeding up.
-      if (step16 % 4 === 0) this.kick(when, chorus ? 1.02 : 0.92);
-      if (chorus && step16 === 14) this.kick(when + 0.012, 0.38 + energy * 0.08);
-      if (step16 === 4 || step16 === 12) this.clap(when, chorus ? 0.92 : 0.76);
-      if ([2,6,10,14].includes(step16)) this.hat(when + 0.008, chorus ? 0.92 : 0.68, chorus && step16 === 14);
-      if (chorus && energy > 0.48 && [3,7,11,15].includes(step16)) this.hat(when + 0.012, 0.36, false);
+      // Drums are intentionally subordinate: just enough pulse to hold the pocket.
+      if (step16 % 4 === 0) this.kick(when, chorus ? 0.66 : 0.56);
+      if (step16 === 4 || step16 === 12) this.clap(when, chorus ? 0.48 : 0.38);
+      if (chorus && [6,14].includes(step16)) this.hat(when + 0.008, 0.32, step16 === 14);
 
       const bassPattern = chorus ? chorusBass : verseBass;
       const bassInterval = bassPattern[step16]!;
       if (bassInterval > -90) {
         const note = root * 0.5 * semitone(bassInterval);
-        const accent = [0,8,12].includes(step16) ? 1.12 : 0.92;
-        this.acidBass(note, chorus ? 0.22 : 0.25, chorus ? 0.064 : 0.058, when, accent);
+        const accent = [0,8,12].includes(step16) ? 1.08 : 0.9;
+        this.acidBass(note, chorus ? 0.24 : 0.27, chorus ? 0.066 : 0.061, when, accent);
       }
 
-      // Verse: the wah hook appears as a restrained call every other bar.
-      // Chorus: it becomes the memorable lead and answers itself with a second phrase.
-      const motif = localBar % 2 === 0 ? wahA : wahB;
-      const hookInterval = motif[step16]!;
-      const playVerseHook = !chorus && localBar % 2 === 1;
-      if ((chorus || playVerseHook) && hookInterval > -90) {
-        const lead = root * 2 * semitone(hookInterval);
-        this.wahLead(lead, chorus ? 0.19 : 0.16, chorus ? 0.046 : 0.034, when, chorus ? 1.0 : 0.62);
+      // Syncopated chord "answers" give the groove harmonic movement instead of relying on percussion.
+      if ([3,7,11,15].includes(step16)) {
+        const chordSet = chorus ? chorusChords : verseChords;
+        const intervals = chordSet[(localBar + Math.floor(step16 / 4)) % chordSet.length]!;
+        const base = root * (chorus ? 2 : 1);
+        this.chipHarmony(
+          intervals.map(interval => base * semitone(interval)),
+          chorus ? 0.13 : 0.11,
+          chorus ? 0.021 : 0.016,
+          when + 0.012,
+          chorus,
+        );
       }
 
-      // Chorus response: a tiny octave punctuation, deliberately not a continuous melody.
-      if (chorus && [7,15].includes(step16)) {
-        const answer = root * 4 * semitone(localBar % 2 === 0 ? 7 : 5);
-        this.tone(answer, 0.07, 0.012 + energy * 0.003, "triangle", when + 0.018, true, 5);
+      const melody = chorus
+        ? (localBar % 2 === 0 ? chorusMelodyA : chorusMelodyB)
+        : (localBar % 2 === 0 ? verseMelodyA : verseMelodyB);
+      const interval = melody[step16]!;
+      if (interval > -90) {
+        const lead = root * 2 * semitone(interval);
+        if (chorus) {
+          // Chorus is wider and more melodic: vocal wah lead + a quiet octave harmony.
+          this.wahLead(lead, 0.20, 0.050, when, 0.9);
+          if ([0,4,8,12].includes(step16)) {
+            this.tone(lead * 0.5, 0.16, 0.013, "triangle", when + 0.008, true, -4);
+          }
+        } else {
+          // Verse uses a clipped funky clav articulation so the chorus has somewhere to lift.
+          this.funkClav(lead, 0.115, 0.035, when, [3,7,11,15].includes(step16) ? 1.0 : 0.72);
+        }
+      }
+
+      // A tiny two-note turnaround announces the chorus and the return to the verse.
+      if ((bar === 7 || bar === 15) && [13,15].includes(step16)) {
+        const turnaround = root * 4 * semitone(step16 === 13 ? 10 : 12);
+        this.tone(turnaround, 0.095, 0.020, "square", when + 0.01, true, step16 === 13 ? -5 : 5);
       }
     };
 
@@ -307,13 +416,12 @@ export class ArenaAudioEngine {
     const pump = () => {
       const audio = this.ensure();
       if (!audio) return;
-      const lookAhead = 0.18;
+      const lookAhead = 0.20;
       while (this.nextMusicStepTime < audio.currentTime + lookAhead) {
-        const energy = this.intensity;
-        // A relaxed 106 BPM base with only a subtle late-game lift; groove comes from swing, not speed.
-        const bpm = 106 + energy * 5;
+        // Hold the groove around 104 BPM; intensity changes timbre more than tempo.
+        const bpm = 104 + this.intensity * 3;
         const sixteenth = 60 / bpm / 4;
-        const swing = this.step % 2 === 0 ? 1.11 : 0.89;
+        const swing = this.step % 2 === 0 ? 1.13 : 0.87;
         const when = Math.max(0, this.nextMusicStepTime - audio.currentTime);
         scheduleStep(this.step, when);
         this.nextMusicStepTime += sixteenth * swing;
@@ -322,7 +430,6 @@ export class ArenaAudioEngine {
     };
 
     pump();
-    // AudioContext-time scheduling avoids main-thread timer jitter/crackle during long matches.
     this.musicTimer = window.setInterval(pump, 45);
   }
 
