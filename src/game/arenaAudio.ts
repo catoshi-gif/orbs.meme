@@ -69,29 +69,25 @@ export class ArenaAudioEngine {
   }
 
 
-  powerPickup(kind: "kinetic" | "slam" | "shield" | "superjump" | "blaster" | "explosion" | "recovery") {
-    const base = kind === "kinetic" ? 180 : kind === "slam" ? 138 : kind === "shield" ? 220 : kind === "superjump" ? 285 : kind === "blaster" ? 205 : kind === "explosion" ? 92 : 330;
+  powerPickup(kind: "superjump" | "blaster" | "superspeed" | "recovery") {
+    const base = kind === "superjump" ? 285 : kind === "blaster" ? 205 : kind === "superspeed" ? 410 : 330;
     this.tone(base, 0.09, 0.06, "triangle");
     this.tone(base * 1.5, 0.16, 0.05, "sine", 0.045);
     this.tone(base * 2, 0.2, 0.035, "triangle", 0.09);
   }
 
-  powerUse(kind: "kinetic" | "slam" | "shield" | "superjump" | "blaster" | "explosion") {
-    const base = kind === "kinetic" ? 72 : kind === "slam" ? 48 : kind === "shield" ? 165 : kind === "superjump" ? 240 : kind === "blaster" ? 310 : 54;
-    this.tone(base, 0.14, 0.09, kind === "shield" ? "sine" : "sawtooth");
+  powerUse(kind: "superjump" | "blaster" | "superspeed") {
+    const base = kind === "superjump" ? 240 : kind === "blaster" ? 310 : 520;
+    this.tone(base, 0.14, 0.09, kind === "superspeed" ? "triangle" : "sawtooth");
     this.tone(base * 2.2, 0.09, 0.05, "triangle", 0.012);
   }
 
   blasterShot() {
-    this.tone(430, 0.045, 0.045, "square");
-    this.tone(185, 0.07, 0.025, "triangle", 0.008);
+    // Blaster is intentionally quiet so a five-second volley does not overwhelm the mix.
+    this.tone(430, 0.045, 0.0135, "square");
+    this.tone(185, 0.07, 0.0075, "triangle", 0.008);
   }
 
-  explosion() {
-    this.tone(42, 0.28, 0.12, "sawtooth");
-    this.tone(76, 0.18, 0.09, "square", 0.02);
-    this.tone(155, 0.11, 0.05, "triangle", 0.04);
-  }
 
   recover() {
     this.tone(330, 0.1, 0.05, "sine");

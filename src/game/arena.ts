@@ -1,10 +1,10 @@
 import type { GameStyle } from "./types";
 
-export const ARENA_GAME_VERSION = "orb-arena-coliseum-v5" as const;
+export const ARENA_GAME_VERSION = "orb-arena-coliseum-v6" as const;
 export const ARENA_HARD_CAP_SECONDS = 10 * 60;
 
 export type ArenaPace = "demo" | "production";
-export type ArenaPowerKind = "kinetic" | "slam" | "shield" | "superjump" | "blaster" | "explosion";
+export type ArenaPowerKind = "superjump" | "blaster" | "superspeed";
 
 export type ArenaConfig = {
   version: typeof ARENA_GAME_VERSION;
