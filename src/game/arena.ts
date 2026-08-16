@@ -1,10 +1,10 @@
 import type { GameStyle } from "./types";
 
-export const ARENA_GAME_VERSION = "orb-arena-coliseum-v4" as const;
+export const ARENA_GAME_VERSION = "orb-arena-coliseum-v5" as const;
 export const ARENA_HARD_CAP_SECONDS = 10 * 60;
 
 export type ArenaPace = "demo" | "production";
-export type ArenaPowerKind = "kinetic" | "slam" | "shield" | "superjump";
+export type ArenaPowerKind = "kinetic" | "slam" | "shield" | "superjump" | "blaster" | "explosion";
 
 export type ArenaConfig = {
   version: typeof ARENA_GAME_VERSION;
@@ -51,7 +51,7 @@ export function buildArenaConfig(input: {
     jumpImpulse: 7.35,
     jumpCooldownMs: 720,
     impactDamageScale: 0.72,
-    weaponLifetimeMs: 4500,
+    weaponLifetimeMs: 5000,
     ringRespawnMs: input.pace === "demo" ? 5200 : 8500,
     pedestalRespawnMs: input.pace === "demo" ? 7200 : 11500,
     recoveryAmount: 28,
@@ -60,7 +60,7 @@ export function buildArenaConfig(input: {
   };
 }
 
-/** Arena V4 is physically contained; this is retained for admin compatibility only. */
+/** Arena V5 is physically contained; this is retained for admin compatibility only. */
 export function arenaRadiusAt(config: ArenaConfig, _elapsedSeconds: number, _survivors: number) {
   return config.radius;
 }
