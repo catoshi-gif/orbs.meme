@@ -4,6 +4,8 @@ export class ArenaAudioEngine {
   private musicBus: GainNode | null = null;
   private musicFilter: BiquadFilterNode | null = null;
   private sfxBus: GainNode | null = null;
+  private compressor: DynamicsCompressorNode | null = null;
+  private noiseBuffer: AudioBuffer | null = null;
   private musicTimer: number | null = null;
   private intensity = 0;
   private step = 0;
@@ -14,21 +16,35 @@ export class ArenaAudioEngine {
       this.ctx = new AudioContext();
 
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.085;
-      this.master.connect(this.ctx.destination);
+      this.master.gain.value = 0.102;
+
+      this.compressor = this.ctx.createDynamicsCompressor();
+      this.compressor.threshold.value = -12;
+      this.compressor.knee.value = 16;
+      this.compressor.ratio.value = 3.2;
+      this.compressor.attack.value = 0.006;
+      this.compressor.release.value = 0.2;
+      this.master.connect(this.compressor);
+      this.compressor.connect(this.ctx.destination);
 
       this.musicBus = this.ctx.createGain();
-      this.musicBus.gain.value = 0.78;
+      // Arena music is intentionally forward in the mix; gameplay SFX remain readable above it.
+      this.musicBus.gain.value = 1.18;
       this.musicFilter = this.ctx.createBiquadFilter();
       this.musicFilter.type = "lowpass";
-      this.musicFilter.frequency.value = 1550;
-      this.musicFilter.Q.value = 1.15;
+      this.musicFilter.frequency.value = 2050;
+      this.musicFilter.Q.value = 1.4;
       this.musicBus.connect(this.musicFilter);
       this.musicFilter.connect(this.master);
 
       this.sfxBus = this.ctx.createGain();
-      this.sfxBus.gain.value = 1;
+      this.sfxBus.gain.value = 0.92;
       this.sfxBus.connect(this.master);
+
+      // One reusable noise buffer for hats/percussion; no per-beat allocations.
+      this.noiseBuffer = this.ctx.createBuffer(1, Math.max(1, Math.floor(this.ctx.sampleRate * 0.08)), this.ctx.sampleRate);
+      const data = this.noiseBuffer.getChannelData(0);
+      for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
     }
     if (this.ctx.state === "suspended") void this.ctx.resume();
     return this.ctx;
@@ -58,7 +74,39 @@ export class ArenaAudioEngine {
     osc.connect(gain);
     gain.connect(destination);
     osc.start(now);
-    osc.stop(now + duration + 0.035);
+    osc.stop(now + duration + 0.04);
+  }
+
+  private bassPluck(frequency: number, duration: number, gainValue: number, when = 0) {
+    const ctx = this.ensure();
+    if (!ctx || !this.musicBus) return;
+    const now = ctx.currentTime + when;
+    const osc = ctx.createOscillator();
+    const sub = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = "sawtooth";
+    sub.type = "sine";
+    osc.frequency.setValueAtTime(frequency, now);
+    sub.frequency.setValueAtTime(frequency * 0.5, now);
+    filter.type = "lowpass";
+    filter.Q.setValueAtTime(5.4, now);
+    filter.frequency.setValueAtTime(920, now);
+    filter.frequency.exponentialRampToValueAtTime(245, now + Math.max(0.07, duration * 0.82));
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    osc.connect(filter);
+    sub.connect(gain);
+    filter.connect(gain);
+    gain.connect(this.musicBus);
+    osc.start(now);
+    sub.start(now);
+    osc.stop(now + duration + 0.04);
+    sub.stop(now + duration + 0.04);
   }
 
   private kick(when = 0, strength = 1) {
@@ -68,70 +116,139 @@ export class ArenaAudioEngine {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(118, now);
-    osc.frequency.exponentialRampToValueAtTime(44, now + 0.09);
+    osc.frequency.setValueAtTime(126, now);
+    osc.frequency.exponentialRampToValueAtTime(43, now + 0.12);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.115 * strength, now + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+    gain.gain.exponentialRampToValueAtTime(0.145 * strength, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
     osc.connect(gain);
     gain.connect(this.musicBus);
     osc.start(now);
-    osc.stop(now + 0.15);
+    osc.stop(now + 0.2);
+  }
+
+  private hat(when = 0, strength = 1, open = false) {
+    const ctx = this.ensure();
+    if (!ctx || !this.musicBus || !this.noiseBuffer) return;
+    const now = ctx.currentTime + when;
+    const src = ctx.createBufferSource();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    src.buffer = this.noiseBuffer;
+    filter.type = "highpass";
+    filter.frequency.setValueAtTime(open ? 4800 : 6200, now);
+    const duration = open ? 0.072 : 0.032;
+    gain.gain.setValueAtTime(Math.max(0.0002, 0.016 * strength), now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.musicBus);
+    src.start(now);
+    src.stop(now + duration + 0.01);
+  }
+
+  private clap(when = 0, strength = 1) {
+    const ctx = this.ensure();
+    if (!ctx || !this.musicBus || !this.noiseBuffer) return;
+    const now = ctx.currentTime + when;
+    for (const offset of [0, 0.012, 0.025]) {
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      src.buffer = this.noiseBuffer;
+      filter.type = "bandpass";
+      filter.frequency.value = 1500;
+      filter.Q.value = 0.7;
+      const start = now + offset;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.018 * strength, start + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.052);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicBus);
+      src.start(start);
+      src.stop(start + 0.06);
+    }
   }
 
   startMusic() {
     this.ensure();
     if (this.musicTimer !== null) return;
 
-    // Original Arena score: a gritty mechanical house pulse with tiny digital hooks.
-    // It deliberately uses simple synthesis rather than sampling or reproducing any existing track.
-    const roots = [82.41, 92.5, 110, 98];
-    const leadPattern = [0, 7, 12, 7, 3, 10, 15, 10, 0, 7, 12, 19, 3, 10, 15, 12];
-    const bassPattern = [0, 0, 7, 0, 3, 3, 10, 3, 0, 0, 7, 12, 3, 10, 3, 7];
+    // Original Orbs Arena score: slow, swung machine-funk with a rubbery filtered bass,
+    // sparse crunchy digital hooks, and a 4-bar phrase so it breathes instead of looping constantly.
+    const barRoots = [82.41, 82.41, 73.42, 92.5]; // E2, E2, D2, F#2
+    const bassIntervals = [
+      0, -99, 0, -99, 7, -99, 3, -99, 0, -99, 10, -99, 7, -99, 3, -99,
+      0, -99, 12, -99, 7, -99, 3, -99, 0, -99, 10, -99, 5, -99, 7, -99,
+      0, -99, 0, -99, 5, -99, 10, -99, 3, -99, 7, -99, 12, -99, 10, -99,
+      0, -99, 7, -99, 3, -99, 10, -99, 0, -99, 12, -99, 7, -99, 3, -99,
+    ];
+    const hookIntervals = [
+      -99, -99, 12, -99, -99, -99, 7, -99, -99, 10, -99, -99, 15, -99, -99, -99,
+      -99, 12, -99, -99, 7, -99, -99, -99, 10, -99, 15, -99, -99, -99, 7, -99,
+      -99, -99, 12, -99, 7, -99, -99, 10, -99, -99, 15, -99, 19, -99, -99, -99,
+      12, -99, -99, 10, -99, 7, -99, -99, 3, -99, -99, 10, -99, -99, 7, -99,
+    ];
 
     const semitone = (n: number) => Math.pow(2, n / 12);
+
     const tick = () => {
       const ctx = this.ensure();
       if (!ctx) return;
-      const step16 = this.step % 16;
-      const root = roots[Math.floor(this.step / 32) % roots.length]!;
+
+      const phraseStep = this.step % 64;
+      const step16 = phraseStep % 16;
+      const bar = Math.floor(phraseStep / 16);
+      const root = barRoots[bar]!;
       const energy = this.intensity;
 
       if (this.musicFilter) {
-        const cutoff = 1250 + energy * 3700;
-        this.musicFilter.frequency.setTargetAtTime(cutoff, ctx.currentTime, 0.08);
-        this.musicFilter.Q.setTargetAtTime(1.1 + energy * 2.1, ctx.currentTime, 0.08);
+        // Keep the opening warm/dark; let the machine brighten as the field thins.
+        const cutoff = 1850 + energy * 2250;
+        this.musicFilter.frequency.setTargetAtTime(cutoff, ctx.currentTime, 0.12);
+        this.musicFilter.Q.setTargetAtTime(1.35 + energy * 1.25, ctx.currentTime, 0.12);
       }
 
-      // Four-on-the-floor pulse. The final third of a match gets a slightly harder transient.
-      if (step16 % 4 === 0) this.kick(0, 0.78 + energy * 0.24);
+      // Heavy four-on-the-floor foundation with a little extra shove late in each phrase.
+      if (step16 % 4 === 0) this.kick(0, 0.9 + energy * 0.16);
+      if (phraseStep % 32 === 30 && energy > 0.45) this.kick(0.015, 0.42);
 
-      // Rubbery mono bass: short enough to leave room for impacts and Blaster SFX.
-      if ([0, 3, 6, 8, 11, 14].includes(step16)) {
-        const bass = root * 0.5 * semitone(bassPattern[step16]!);
-        this.tone(bass, 0.105, 0.05 + energy * 0.012, "sawtooth", 0, true);
-        this.tone(bass * 0.5, 0.12, 0.018, "sine", 0, true);
+      // Backbeat plus swung hats supply the groove instead of constant melody.
+      if (step16 === 4 || step16 === 12) this.clap(0, 0.82 + energy * 0.12);
+      if (step16 % 4 === 2) this.hat(0.006, 0.82 + energy * 0.2, step16 === 14);
+      if (energy > 0.58 && [3, 7, 11, 15].includes(step16)) this.hat(0.01, 0.46, false);
+
+      // Filtered bass is the lead character. Notes are intentionally sparse and syncopated.
+      const bassInterval = bassIntervals[phraseStep]!;
+      if (bassInterval > -90) {
+        const note = root * 0.5 * semitone(bassInterval);
+        const accent = [0, 6, 10, 14].includes(step16) ? 1.12 : 0.94;
+        this.bassPluck(note, 0.19 + energy * 0.025, (0.072 + energy * 0.009) * accent);
       }
 
-      // Small square-wave hook. Repetition makes it memorable; the note pattern is original.
-      if (step16 % 2 === 0 || energy > 0.58) {
-        const lead = root * 2 * semitone(leadPattern[step16]!);
-        this.tone(lead, 0.052, 0.022 + energy * 0.012, "square", 0, true);
-        if (energy > 0.72 && step16 % 2 === 0) {
-          this.tone(lead * 2, 0.028, 0.009, "square", 0.008, true, 5);
-        }
+      // Sparse digital answer phrase. It leaves entire beats empty so impacts and movement can breathe.
+      const hookInterval = hookIntervals[phraseStep]!;
+      if (hookInterval > -90) {
+        const lead = root * 2 * semitone(hookInterval);
+        this.tone(lead, 0.082, 0.028 + energy * 0.006, "square", 0, true, -5);
+        this.tone(lead * 0.5, 0.095, 0.012, "triangle", 0.008, true, 4);
       }
 
-      // A sparse syncopated metallic chirp enters only after the match develops.
-      if (energy > 0.32 && [2, 7, 10, 15].includes(step16)) {
-        const chirp = root * (energy > 0.74 ? 6 : 4);
-        this.tone(chirp, 0.024, 0.009 + energy * 0.005, "triangle", 0, true);
+      // Only the late game earns the brighter upper counter-line.
+      if (energy > 0.72 && [6, 14].includes(step16)) {
+        const upper = root * 4 * semitone(bar % 2 === 0 ? 7 : 10);
+        this.tone(upper, 0.052, 0.012, "square", 0.012, true, 7);
       }
 
       this.step += 1;
-      // 16th-note grid: ~122 BPM early, rising toward ~151 BPM in the endgame.
-      const interval = Math.max(99, 123 - energy * 24);
-      this.musicTimer = window.setTimeout(tick, interval);
+
+      // Slow pocket: ~108 BPM opening, only rising to ~116 BPM in sudden death.
+      // Alternating sixteenth durations create a gentle swing instead of a rigid machine-gun grid.
+      const bpm = 108 + energy * 8;
+      const sixteenthMs = 60_000 / bpm / 4;
+      const swing = this.step % 2 === 0 ? 1.12 : 0.88;
+      this.musicTimer = window.setTimeout(tick, Math.round(sixteenthMs * swing));
     };
 
     tick();
@@ -196,6 +313,8 @@ export class ArenaAudioEngine {
     this.musicBus = null;
     this.musicFilter = null;
     this.sfxBus = null;
+    this.compressor = null;
+    this.noiseBuffer = null;
     this.step = 0;
   }
 }
