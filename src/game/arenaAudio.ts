@@ -12,9 +12,10 @@ export class ArenaAudioEngine {
     if (!this.ctx) {
       this.ctx = new AudioContext();
 
-      // SFX intentionally retain the compressed arcade character.
+      // SFX intentionally retain the compressed arcade character and sit clearly above the music during action.
+      // 0.27 x 1.15 is ~1.69x (+4.6 dB) over the previous shared SFX path.
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.175;
+      this.master.gain.value = 0.27;
 
       this.compressor = this.ctx.createDynamicsCompressor();
       this.compressor.threshold.value = -12;
@@ -26,7 +27,7 @@ export class ArenaAudioEngine {
       this.compressor.connect(this.ctx.destination);
 
       this.sfxBus = this.ctx.createGain();
-      this.sfxBus.gain.value = 1.05;
+      this.sfxBus.gain.value = 1.15;
       this.sfxBus.connect(this.master);
     }
 
@@ -47,9 +48,10 @@ export class ArenaAudioEngine {
 
     const source = ctx.createMediaElementSource(element);
     const gain = ctx.createGain();
-    // Source peaks around -6.3 dBFS. +3.8 dB gives phone speakers more level
-    // while retaining roughly 2.5 dB of digital peak headroom.
-    gain.gain.value = 1.55;
+    // The approved track measures about -22.3 LUFS integrated / -6.3 dBFS peak.
+    // 1.24x is 20% below the previous 1.55x playback gain: about -20.4 LUFS
+    // with roughly 4.4 dB of peak headroom, leaving space for gameplay SFX.
+    gain.gain.value = 1.24;
 
     source.connect(gain);
     gain.connect(ctx.destination);
