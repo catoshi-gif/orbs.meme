@@ -1,174 +1,310 @@
+import {
+  ARENA_THEME_EVENTS,
+  ARENA_THEME_EVENT_STRIDE,
+  ARENA_THEME_LENGTH_MS,
+} from "./arenaTheme.generated";
+
 export class ArenaAudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private musicBus: GainNode | null = null;
+  private musicFilter: BiquadFilterNode | null = null;
   private sfxBus: GainNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private musicTimer: number | null = null;
   private intensity = 0;
-  private step = 0;
-  private nextMusicStepTime = 0;
+  private themeEpoch = 0;
+  private themeEventIndex = 0;
+  private themeLoop = 0;
 
   private ensure() {
     if (typeof window === "undefined") return null;
     if (!this.ctx) {
       this.ctx = new AudioContext();
+
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.125;
+      this.master.gain.value = 0.124;
 
       this.compressor = this.ctx.createDynamicsCompressor();
       this.compressor.threshold.value = -12;
-      this.compressor.knee.value = 14;
-      this.compressor.ratio.value = 2.4;
-      this.compressor.attack.value = 0.01;
-      this.compressor.release.value = 0.2;
+      this.compressor.knee.value = 16;
+      this.compressor.ratio.value = 2.35;
+      this.compressor.attack.value = 0.008;
+      this.compressor.release.value = 0.22;
       this.master.connect(this.compressor);
       this.compressor.connect(this.ctx.destination);
 
       this.musicBus = this.ctx.createGain();
-      this.musicBus.gain.value = 1.3;
-      this.musicBus.connect(this.master);
+      this.musicBus.gain.value = 1.26;
+
+      this.musicFilter = this.ctx.createBiquadFilter();
+      this.musicFilter.type = "lowpass";
+      this.musicFilter.frequency.value = 7200;
+      this.musicFilter.Q.value = 0.55;
+      this.musicBus.connect(this.musicFilter);
+      this.musicFilter.connect(this.master);
 
       this.sfxBus = this.ctx.createGain();
       this.sfxBus.gain.value = 0.9;
       this.sfxBus.connect(this.master);
 
-      this.noiseBuffer = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * 0.06), this.ctx.sampleRate);
+      this.noiseBuffer = this.ctx.createBuffer(
+        1,
+        Math.max(1, Math.floor(this.ctx.sampleRate * 0.08)),
+        this.ctx.sampleRate,
+      );
       const data = this.noiseBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
     }
+
     if (this.ctx.state === "suspended") void this.ctx.resume();
     return this.ctx;
   }
 
-  private chip(
-    frequency: number,
-    duration: number,
-    gainValue: number,
-    when = 0,
-    type: OscillatorType = "square",
-    octaveSparkle = false,
-  ) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(frequency, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.003);
-    gain.gain.setValueAtTime(gainValue * 0.82, now + Math.min(0.055, duration * 0.45));
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    osc.connect(gain);
-    gain.connect(this.musicBus);
-    osc.start(now);
-    osc.stop(now + duration + 0.02);
-
-    let sparkle: OscillatorNode | null = null;
-    let sparkleGain: GainNode | null = null;
-    if (octaveSparkle) {
-      sparkle = ctx.createOscillator();
-      sparkleGain = ctx.createGain();
-      sparkle.type = "square";
-      sparkle.frequency.setValueAtTime(frequency * 2, now);
-      sparkleGain.gain.setValueAtTime(gainValue * 0.13, now);
-      sparkleGain.gain.exponentialRampToValueAtTime(0.0001, now + duration * 0.72);
-      sparkle.connect(sparkleGain);
-      sparkleGain.connect(this.musicBus);
-      sparkle.start(now);
-      sparkle.stop(now + duration + 0.02);
-    }
-
-    osc.onended = () => {
-      osc.disconnect();
-      gain.disconnect();
-      sparkle?.disconnect();
-      sparkleGain?.disconnect();
-    };
+  private midiHz(note: number) {
+    return 440 * Math.pow(2, (note - 69) / 12);
   }
 
-  private chipBass(frequency: number, duration: number, gainValue: number, when = 0) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
-    const osc = ctx.createOscillator();
+  private velocityGain(velocity: number, base: number) {
+    const normalized = Math.max(0.08, Math.min(1, velocity / 127));
+    return base * (0.42 + normalized * 0.58);
+  }
+
+  private scheduleOscVoice(
+    note: number,
+    durationMs: number,
+    velocity: number,
+    voice: number,
+    absoluteWhen: number,
+  ) {
+    const ctx = this.ctx;
+    const destination = this.musicBus;
+    if (!ctx || !destination) return;
+
+    const duration = Math.max(0.025, Math.min(2.8, durationMs / 1000));
+    const frequency = this.midiHz(note);
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
-    osc.type = "square";
-    osc.frequency.setValueAtTime(frequency, now);
+    const oscillators: OscillatorNode[] = [];
+    let endedCount = 0;
+
+    let baseGain = 0.022;
+    let attack = 0.004;
+    let releaseAt = duration;
+    let cutoff = 4200;
+    let q = 0.7;
+
+    const addOsc = (type: OscillatorType, freq: number, detune = 0, level = 1) => {
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, absoluteWhen);
+      osc.detune.setValueAtTime(detune, absoluteWhen);
+      oscGain.gain.setValueAtTime(level, absoluteWhen);
+      osc.connect(oscGain);
+      oscGain.connect(filter);
+      osc.start(absoluteWhen);
+      osc.stop(absoluteWhen + duration + 0.035);
+      oscillators.push(osc);
+      osc.onended = () => {
+        osc.disconnect();
+        oscGain.disconnect();
+        endedCount += 1;
+        if (endedCount >= oscillators.length) {
+          filter.disconnect();
+          gain.disconnect();
+        }
+      };
+    };
+
+    if (voice === 1) {
+      // MIDI program 81: gritty lead. Preserve the line but soften raw saw edges for phones.
+      baseGain = 0.019;
+      cutoff = 3300 + this.intensity * 900;
+      q = 1.15;
+      addOsc("sawtooth", frequency, -3, 0.72);
+      addOsc("triangle", frequency, 4, 0.42);
+    } else if (voice === 2) {
+      // MIDI program 80: compact 8-bit square lead.
+      baseGain = 0.018;
+      cutoff = 3900 + this.intensity * 700;
+      q = 0.85;
+      addOsc("square", frequency, 0, 0.72);
+      addOsc("triangle", frequency * 2, 2, 0.16);
+    } else if (voice === 3) {
+      // Synth bass: rounded and weighty, with a small square core to preserve the MIDI grit.
+      baseGain = 0.029;
+      cutoff = 760 + this.intensity * 120;
+      q = 1.1;
+      attack = 0.006;
+      addOsc("triangle", frequency, 0, 0.95);
+      addOsc("square", frequency, -2, 0.22);
+      if (frequency > 52) addOsc("sine", frequency * 0.5, 0, 0.34);
+    } else {
+      // Clavinet-style source track: short, articulate, filtered square/triangle.
+      baseGain = 0.017;
+      cutoff = 2450;
+      q = 1.5;
+      releaseAt = Math.min(duration, 0.32);
+      addOsc("square", frequency, 0, 0.62);
+      addOsc("triangle", frequency * 2, 4, 0.2);
+    }
+
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(780, now);
-    filter.Q.setValueAtTime(0.7, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    osc.connect(filter);
+    filter.frequency.setValueAtTime(cutoff, absoluteWhen);
+    filter.Q.setValueAtTime(q, absoluteWhen);
+
+    const peak = this.velocityGain(velocity, baseGain);
+    gain.gain.setValueAtTime(0.0001, absoluteWhen);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), absoluteWhen + attack);
+    if (releaseAt > attack + 0.015) {
+      gain.gain.setValueAtTime(peak * 0.9, absoluteWhen + Math.max(attack + 0.01, releaseAt * 0.56));
+    }
+    gain.gain.exponentialRampToValueAtTime(0.0001, absoluteWhen + releaseAt);
+
     filter.connect(gain);
-    gain.connect(this.musicBus);
-    osc.start(now);
-    osc.stop(now + duration + 0.02);
-    osc.onended = () => { osc.disconnect(); filter.disconnect(); gain.disconnect(); };
+    gain.connect(destination);
+
   }
 
-  private arpeggio(frequencies: number[], duration: number, gainValue: number, when = 0) {
-    const ctx = this.ensure();
+  private scheduleDrum(note: number, velocity: number, absoluteWhen: number) {
+    const ctx = this.ctx;
     if (!ctx || !this.musicBus) return;
-    const slice = duration / frequencies.length;
-    frequencies.forEach((frequency, index) => {
-      const now = ctx.currentTime + when + index * slice;
+    const strength = Math.max(0.2, Math.min(1, velocity / 127));
+
+    if (note === 36) {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = "square";
-      osc.frequency.setValueAtTime(frequency, now);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(gainValue, now + 0.002);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + slice * 0.88);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(112, absoluteWhen);
+      osc.frequency.exponentialRampToValueAtTime(43, absoluteWhen + 0.105);
+      gain.gain.setValueAtTime(0.055 * strength, absoluteWhen);
+      gain.gain.exponentialRampToValueAtTime(0.0001, absoluteWhen + 0.14);
       osc.connect(gain);
-      gain.connect(this.musicBus!);
-      osc.start(now);
-      osc.stop(now + slice);
+      gain.connect(this.musicBus);
+      osc.start(absoluteWhen);
+      osc.stop(absoluteWhen + 0.15);
       osc.onended = () => { osc.disconnect(); gain.disconnect(); };
-    });
-  }
+      return;
+    }
 
-  private kick(when = 0, strength = 1) {
-    const ctx = this.ensure();
-    if (!ctx || !this.musicBus) return;
-    const now = ctx.currentTime + when;
+    if (note === 38 || note === 37 || note === 39) {
+      if (!this.noiseBuffer) return;
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      src.buffer = this.noiseBuffer;
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(note === 38 ? 1650 : 1250, absoluteWhen);
+      filter.Q.setValueAtTime(0.8, absoluteWhen);
+      gain.gain.setValueAtTime(0.018 * strength, absoluteWhen);
+      gain.gain.exponentialRampToValueAtTime(0.0001, absoluteWhen + 0.075);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicBus);
+      src.start(absoluteWhen);
+      src.stop(absoluteWhen + 0.08);
+      src.onended = () => { src.disconnect(); filter.disconnect(); gain.disconnect(); };
+      return;
+    }
+
+    if (note === 42 || note === 46) {
+      if (!this.noiseBuffer) return;
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      src.buffer = this.noiseBuffer;
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(note === 46 ? 4700 : 6100, absoluteWhen);
+      const duration = note === 46 ? 0.065 : 0.028;
+      gain.gain.setValueAtTime(0.008 * strength, absoluteWhen);
+      gain.gain.exponentialRampToValueAtTime(0.0001, absoluteWhen + duration);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicBus);
+      src.start(absoluteWhen);
+      src.stop(absoluteWhen + duration + 0.01);
+      src.onended = () => { src.disconnect(); filter.disconnect(); gain.disconnect(); };
+      return;
+    }
+
+    // Sparse toms from the source arrangement.
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
+    const tomHz = note >= 50 ? 150 : note >= 47 ? 125 : 105;
     osc.type = "sine";
-    osc.frequency.setValueAtTime(105, now);
-    osc.frequency.exponentialRampToValueAtTime(47, now + 0.085);
-    gain.gain.setValueAtTime(0.055 * strength, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    osc.frequency.setValueAtTime(tomHz, absoluteWhen);
+    osc.frequency.exponentialRampToValueAtTime(tomHz * 0.72, absoluteWhen + 0.09);
+    gain.gain.setValueAtTime(0.018 * strength, absoluteWhen);
+    gain.gain.exponentialRampToValueAtTime(0.0001, absoluteWhen + 0.1);
     osc.connect(gain);
     gain.connect(this.musicBus);
-    osc.start(now);
-    osc.stop(now + 0.12);
+    osc.start(absoluteWhen);
+    osc.stop(absoluteWhen + 0.11);
     osc.onended = () => { osc.disconnect(); gain.disconnect(); };
   }
 
-  private tick(when = 0, strength = 1) {
+  private scheduleThemeEvent(eventIndex: number, absoluteWhen: number) {
+    const offset = eventIndex * ARENA_THEME_EVENT_STRIDE;
+    const durationMs = ARENA_THEME_EVENTS[offset + 1]!;
+    const note = ARENA_THEME_EVENTS[offset + 2]!;
+    const velocity = ARENA_THEME_EVENTS[offset + 3]!;
+    const voice = ARENA_THEME_EVENTS[offset + 4]!;
+
+    if (voice === 0) {
+      this.scheduleDrum(note, velocity, absoluteWhen);
+    } else {
+      this.scheduleOscVoice(note, durationMs, velocity, voice, absoluteWhen);
+    }
+  }
+
+  startMusic() {
     const ctx = this.ensure();
-    if (!ctx || !this.musicBus || !this.noiseBuffer) return;
-    const now = ctx.currentTime + when;
-    const src = ctx.createBufferSource();
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-    src.buffer = this.noiseBuffer;
-    filter.type = "highpass";
-    filter.frequency.setValueAtTime(5600, now);
-    gain.gain.setValueAtTime(0.006 * strength, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.022);
-    src.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.musicBus);
-    src.start(now);
-    src.stop(now + 0.028);
-    src.onended = () => { src.disconnect(); filter.disconnect(); gain.disconnect(); };
+    if (!ctx || this.musicTimer !== null) return;
+
+    const eventCount = ARENA_THEME_EVENTS.length / ARENA_THEME_EVENT_STRIDE;
+    const loopSeconds = ARENA_THEME_LENGTH_MS / 1000;
+    this.themeEpoch = ctx.currentTime + 0.08;
+    this.themeEventIndex = 0;
+    this.themeLoop = 0;
+
+    const pump = () => {
+      const audio = this.ensure();
+      if (!audio) return;
+
+      const lookAhead = 0.22;
+      const horizon = audio.currentTime + lookAhead;
+
+      while (true) {
+        if (this.themeEventIndex >= eventCount) {
+          this.themeEventIndex = 0;
+          this.themeLoop += 1;
+        }
+
+        const offset = this.themeEventIndex * ARENA_THEME_EVENT_STRIDE;
+        const startMs = ARENA_THEME_EVENTS[offset]!;
+        const eventWhen = this.themeEpoch + this.themeLoop * loopSeconds + startMs / 1000;
+
+        if (eventWhen > horizon) break;
+
+        // If a browser was briefly stalled, skip stale notes instead of bunching them together.
+        if (eventWhen >= audio.currentTime - 0.06) {
+          this.scheduleThemeEvent(this.themeEventIndex, Math.max(audio.currentTime + 0.002, eventWhen));
+        }
+        this.themeEventIndex += 1;
+      }
+    };
+
+    pump();
+    this.musicTimer = window.setInterval(pump, 45);
+  }
+
+  setIntensity(value: number) {
+    this.intensity = Math.max(0, Math.min(1, value));
+    if (this.ctx && this.musicFilter) {
+      this.musicFilter.frequency.setTargetAtTime(6900 + this.intensity * 1200, this.ctx.currentTime, 0.12);
+    }
   }
 
   private sfxTone(
@@ -193,97 +329,6 @@ export class ArenaAudioEngine {
     osc.start(now);
     osc.stop(now + duration + 0.02);
     osc.onended = () => { osc.disconnect(); gain.disconnect(); };
-  }
-
-  startMusic() {
-    const ctx = this.ensure();
-    if (!ctx || this.musicTimer !== null) return;
-
-    // Original arcade-chiptune Arena theme. Bright, playful and melodic,
-    // inspired only by the broad 8-bit platform-game vocabulary.
-    const semi = (n: number) => Math.pow(2, n / 12);
-    const roots = [130.81, 146.83, 164.81, 146.83, 130.81, 174.61, 164.81, 146.83];
-
-    // 8 bars A + 8 bars B. Sentinel -99 = rest.
-    const melodyA = [
-      0,4,7,-99, 12,7,4,-99, 2,5,9,-99, 7,5,2,-99,
-      4,7,11,-99, 14,11,7,-99, 5,9,12,-99, 11,9,5,-99,
-    ];
-    const melodyB = [
-      12,-99,9,7, 5,7,9,-99, 14,-99,11,9, 7,9,11,-99,
-      16,14,12,-99, 9,12,14,-99, 11,9,7,5, 7,-99,12,-99,
-    ];
-    const bass = [0,-99,0,7, -99,0,5,-99, 0,-99,7,-99, 5,7,-99,0];
-    const chordSets = [[0,4,7], [0,3,7], [0,5,9], [0,4,9]];
-
-    const schedule = (globalStep: number, when: number) => {
-      const phrase = globalStep % 256;
-      const bar = Math.floor(phrase / 16);
-      const s = phrase % 16;
-      const sectionB = bar >= 8;
-      const localBar = bar % 8;
-      const root = roots[localBar]!;
-      const melody = sectionB ? melodyB : melodyA;
-      const melodicIndex = (localBar % 2) * 16 + s;
-      const interval = melody[melodicIndex]!;
-
-      if (s % 4 === 0) this.kick(when, sectionB ? 0.85 : 0.72);
-      if ([2,6,10,14].includes(s)) this.tick(when + 0.006, sectionB ? 0.9 : 0.68);
-
-      const bassInterval = bass[s]!;
-      if (bassInterval > -90) {
-        this.chipBass(root * 0.5 * semi(bassInterval), 0.105, 0.042, when);
-      }
-
-      // Fast broken chords are the harmonic "engine" and stay quieter than the tune.
-      if (s === 0 || s === 8) {
-        const intervals = chordSets[(localBar + (s === 8 ? 1 : 0)) % chordSets.length]!;
-        const base = root;
-        this.arpeggio(
-          [base * semi(intervals[0]!), base * semi(intervals[1]!), base * semi(intervals[2]!), base * semi(intervals[1]!)],
-          0.31,
-          sectionB ? 0.012 : 0.010,
-          when + 0.012,
-        );
-      }
-
-      if (interval > -90) {
-        const frequency = root * 2 * semi(interval);
-        this.chip(frequency, sectionB ? 0.105 : 0.115, sectionB ? 0.036 : 0.032, when, "square", sectionB);
-        // B-section gets harmony, not a volume jump.
-        if (sectionB && [0,4,8,12].includes(s)) {
-          this.chip(frequency * semi(-5), 0.09, 0.011, when + 0.008, "triangle");
-        }
-      }
-
-      // Little end-of-section sparkle makes the form obvious without becoming noisy.
-      if ((bar === 7 || bar === 15) && [12,14,15].includes(s)) {
-        const lift = [12,16,19][[12,14,15].indexOf(s)]!;
-        this.chip(root * 2 * semi(lift), 0.08, 0.022, when, "square", true);
-      }
-    };
-
-    this.nextMusicStepTime = ctx.currentTime + 0.08;
-    const pump = () => {
-      const audio = this.ensure();
-      if (!audio) return;
-      const lookAhead = 0.2;
-      while (this.nextMusicStepTime < audio.currentTime + lookAhead) {
-        const bpm = 116 + this.intensity * 3;
-        const sixteenth = 60 / bpm / 4;
-        const when = Math.max(0, this.nextMusicStepTime - audio.currentTime);
-        schedule(this.step, when);
-        this.nextMusicStepTime += sixteenth;
-        this.step += 1;
-      }
-    };
-
-    pump();
-    this.musicTimer = window.setInterval(pump, 45);
-  }
-
-  setIntensity(value: number) {
-    this.intensity = Math.max(0, Math.min(1, value));
   }
 
   bump(power = 0.6) {
@@ -328,20 +373,25 @@ export class ArenaAudioEngine {
   }
 
   victory() {
-    [261.63, 329.63, 392, 523.25].forEach((f, i) => this.sfxTone(f, 0.45, 0.08, "triangle", i * 0.11));
+    [261.63, 329.63, 392, 523.25].forEach((frequency, index) => {
+      this.sfxTone(frequency, 0.45, 0.08, "triangle", index * 0.11);
+    });
   }
 
   stop() {
     if (this.musicTimer !== null) window.clearInterval(this.musicTimer);
     this.musicTimer = null;
+
     if (this.ctx) void this.ctx.close();
     this.ctx = null;
     this.master = null;
     this.musicBus = null;
+    this.musicFilter = null;
     this.sfxBus = null;
     this.compressor = null;
     this.noiseBuffer = null;
-    this.step = 0;
-    this.nextMusicStepTime = 0;
+    this.themeEpoch = 0;
+    this.themeEventIndex = 0;
+    this.themeLoop = 0;
   }
 }
