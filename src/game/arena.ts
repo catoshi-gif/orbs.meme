@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const ARENA_GAME_VERSION = "orb-arena-v7" as const;
+export const ARENA_GAME_VERSION = "orb-arena-v8" as const;
 export const ARENA_HARD_CAP_SECONDS = 10 * 60;
 
 export type ArenaPace = "demo" | "production";
@@ -51,7 +51,7 @@ export function buildArenaConfig(input: {
     jumpImpulse: 7.35,
     jumpCooldownMs: 720,
     impactDamageScale: 0.72,
-    weaponLifetimeMs: 5000,
+    weaponLifetimeMs: 8000,
     ringRespawnMs: input.pace === "demo" ? 5200 : 8500,
     pedestalRespawnMs: input.pace === "demo" ? 7200 : 11500,
     recoveryAmount: 28,

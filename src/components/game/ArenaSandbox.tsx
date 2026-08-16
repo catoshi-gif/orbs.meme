@@ -70,7 +70,7 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
   const sensorRef=useRef({active:false,beta:0,gamma:0,neutralBeta:0,neutralGamma:0});
   const actionRef=useRef<()=>void>(()=>undefined),startRef=useRef<()=>void>(()=>undefined);
   const [phase,setPhase]=useState<Phase>("ready"),[countdown,setCountdown]=useState(0),[survivors,setSurvivors]=useState(playerCount),[elapsed,setElapsed]=useState(0),[integrity,setIntegrity]=useState(100),[jumpCooldown,setJumpCooldown]=useState(0),[winner,setWinner]=useState<string|null>(null),[eventText,setEventText]=useState("LAST ORB STANDING"),[controlMode,setControlMode]=useState<ControlMode>("keys"),[sensorAvailable,setSensorAvailable]=useState(false);
-  const [power,setPower]=useState<ArenaPowerKind|null>(null),[powerLeft,setPowerLeft]=useState(0);
+  const [power,setPower]=useState<ArenaPowerKind|null>(null),[powerLeft,setPowerLeft]=useState(0),[powerActive,setPowerActive]=useState(false);
   const controlModeRef=useRef<ControlMode>("keys");
   const config=useMemo(()=>buildArenaConfig({playerCount,pace,style,seed}),[playerCount,pace,style,seed]);
 
@@ -78,7 +78,7 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
 
   useEffect(()=>{
     const mount=mountRef.current;if(!mount)return;let cancelled=false,frame=0;let cleanupThree:(()=>void)|null=null;const audio=new ArenaAudioEngine();
-    setPhase("ready");setSurvivors(playerCount);setElapsed(0);setIntegrity(100);setWinner(null);setEventText("LAST ORB STANDING");setJumpCooldown(0);setPower(null);setPowerLeft(0);
+    setPhase("ready");setSurvivors(playerCount);setElapsed(0);setIntegrity(100);setWinner(null);setEventText("LAST ORB STANDING");setJumpCooldown(0);setPower(null);setPowerLeft(0);setPowerActive(false);
     const orientation=(e:DeviceOrientationEvent)=>{sensorRef.current.beta=e.beta??0;sensorRef.current.gamma=e.gamma??0};window.addEventListener("deviceorientation",orientation);if("DeviceOrientationEvent" in window)setSensorAvailable(true);if(window.matchMedia("(pointer: coarse)").matches){controlModeRef.current="touch";setControlMode("touch")}
     const onKey=(e:KeyboardEvent,down:boolean)=>{if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","KeyW","KeyA","KeyS","KeyD","Space"].includes(e.code))e.preventDefault();if(e.code==="ArrowUp"||e.code==="KeyW")controlsRef.current.up=down;if(e.code==="ArrowDown"||e.code==="KeyS")controlsRef.current.down=down;if(e.code==="ArrowLeft"||e.code==="KeyA")controlsRef.current.left=down;if(e.code==="ArrowRight"||e.code==="KeyD")controlsRef.current.right=down;if(e.code==="Space"&&down&&!e.repeat)actionRef.current()};const kd=(e:KeyboardEvent)=>onKey(e,true),ku=(e:KeyboardEvent)=>onKey(e,false);window.addEventListener("keydown",kd,{passive:false});window.addEventListener("keyup",ku,{passive:false});
 
@@ -228,16 +228,22 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
       const burst=(x:number,y:number,z:number,power:number,color:string)=>{const g=new THREE.SphereGeometry(.5,20,12),m=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.48,wireframe:true}),mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,z);scene.add(mesh);shocks.push({mesh,born:performance.now(),life:260+power*180});cameraShake=Math.max(cameraShake,.04+power*.12)};
       const eliminate=(o:OrbSim,reason="SHATTERED")=>{if(!o.alive)return;o.alive=false;o.body.setEnabled(false);o.mesh.visible=false;const alive=orbs.filter(v=>v.alive);setSurvivors(alive.length);if(o.isHuman){setPhase("eliminated");setEventText("YOU'RE OUT · SPECTATING");audio.eliminated()}else setEventText(`${o.username} ${reason}`);if(alive.length<=1&&!resolved){resolved=true;const w=alive[0];setWinner(w?.username??null);if(w?.isHuman){setPhase("won");audio.victory()}else setPhase("finished");setEventText(w?`${w.username} WINS`:"MATCH COMPLETE")}};
       const grounded=(o:OrbSim)=>{const v=o.body.linvel();return Math.abs(v.y)<.72};
-      const clearPower=(o:OrbSim)=>{o.powerKind=null;o.powerExpiresAt=0;o.blasterActive=false;o.doubleJumpArmed=false};
-      const grantPower=(o:OrbSim,kind:ArenaPowerKind,now:number)=>{o.powerKind=kind;o.powerExpiresAt=now+config.weaponLifetimeMs;if(o.isHuman){setPower(kind);setPowerLeft(1);setEventText(`${POWER_META[kind].label} LOADED · SPACE TO USE`)}audio.powerPickup(kind)};
+      const clearPower=(o:OrbSim)=>{o.powerKind=null;o.powerExpiresAt=0;o.blasterActive=false;o.doubleJumpArmed=false;if(o.isHuman)setPowerActive(false)};
+      const grantPower=(o:OrbSim,kind:ArenaPowerKind,now:number)=>{o.powerKind=kind;o.powerExpiresAt=now+config.weaponLifetimeMs;if(o.isHuman){setPower(kind);setPowerLeft(1);setPowerActive(false);setEventText(`${POWER_META[kind].label} LOADED · SPACE TO USE`)}audio.powerPickup(kind)};
       const normalJump=(o:OrbSim,mult=1)=>{const now=performance.now();if(now<o.jumpReadyAt||!grounded(o))return false;const v=o.body.linvel();o.body.setLinvel({x:v.x,y:config.jumpImpulse*mult,z:v.z},true);o.jumpReadyAt=now+config.jumpCooldownMs;o.airborne=true;if(o.isHuman)audio.jump();return true};
       const useAction=(o:OrbSim)=>{if(!live||!o.alive)return;const now=performance.now();if(o.powerKind&&now>=o.powerExpiresAt)clearPower(o);const kind=o.powerKind;if(!kind){normalJump(o);return}
         if(kind==="superjump"){
           if(grounded(o)){if(normalJump(o,1.18)){o.doubleJumpArmed=true;audio.powerUse(kind);if(o.isHuman)setEventText("DOUBLE JUMP · PRESS AGAIN IN AIR")}}
           else if(o.doubleJumpArmed){const v=o.body.linvel();o.body.setLinvel({x:v.x,y:config.jumpImpulse*1.42,z:v.z},true);o.doubleJumpArmed=false;audio.powerUse(kind);clearPower(o);if(o.isHuman)setEventText("DOUBLE JUMP")}
         }
-        else if(kind==="blaster"){if(!o.blasterActive){o.blasterActive=true;o.nextShotAt=0;audio.powerUse(kind);if(o.isHuman)setEventText("BLASTER ACTIVE · 5 SECONDS")}}
-        else if(kind==="superspeed"){if(now>=o.speedUntil){o.speedUntil=now+config.weaponLifetimeMs;o.powerExpiresAt=o.speedUntil;audio.powerUse(kind);if(o.isHuman)setEventText("SUPER SPEED · 5× SPEED · INVULNERABLE")}}
+        else if(kind==="blaster"){
+          if(o.blasterActive){normalJump(o)}
+          else{o.blasterActive=true;o.nextShotAt=0;o.powerExpiresAt=now+config.weaponLifetimeMs;audio.powerUse(kind);if(o.isHuman){setPowerActive(true);setEventText("BLASTER ACTIVE · 8 SECONDS · SPACE TO JUMP")}}
+        }
+        else if(kind==="superspeed"){
+          if(now<o.speedUntil){normalJump(o)}
+          else{o.speedUntil=now+config.weaponLifetimeMs;o.powerExpiresAt=o.speedUntil;audio.powerUse(kind);if(o.isHuman){setPowerActive(true);setEventText("SUPER SPEED · 8 SECONDS · INVULNERABLE · SPACE TO JUMP")}}
+        }
         if(o.isHuman){setPower(o.powerKind);setPowerLeft(o.powerKind?clamp((o.powerExpiresAt-now)/config.weaponLifetimeMs,0,1):0)}
       };actionRef.current=()=>useAction(human);
       const start=()=>{if(live)return;setPhase("countdown");audio.startMusic();let n=3;setCountdown(n);const timer=window.setInterval(()=>{n-=1;setCountdown(n);if(n<=0){window.clearInterval(timer);setCountdown(0);setPhase("playing");setEventText("FIGHT FOR THE POWER RINGS");matchStart=performance.now();live=true}},650)};startRef.current=start;
@@ -325,9 +331,9 @@ export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Pr
     {phase==="ready"?<div className="arena-center-card"><span>ADMIN ONLY</span><h3>ARENA</h3><p>Every ring has one job: gold ↑ = double jump · orange ● = blaster · cyan » = 5× invulnerable super speed · pink/green + = health. Power pedestals award one of the three active powers.</p><button className="btn-primary" onClick={()=>startRef.current()}>Enter Arena →</button></div>:null}
     {phase==="countdown"?<div className="arena-countdown">{countdown||"GO"}</div>:null}
     {(phase==="eliminated"||phase==="finished"||phase==="won")?<div className="arena-result-card"><span>{phase==="eliminated"?"SPECTATING":"MATCH COMPLETE"}</span><h3>{phase==="won"?"YOU WIN":winner?`${winner} WINS`:"YOU'RE OUT"}</h3><p>{phase==="eliminated"?`${survivors} Orbs remain. Watch them fight for the remaining powers.`:"Last Orb standing takes the prize."}</p></div>:null}
-    {phase==="playing"?<div className="arena-jump-wrap"><button className={`arena-jump ${power?"armed":""}`} style={powerMeta?{borderColor:powerMeta.color,boxShadow:`0 0 28px ${powerMeta.color}55`}:undefined} onClick={()=>actionRef.current()} disabled={!power&&jumpCooldown>0.02}><span>{powerMeta?(power==="blaster"?"FIRE":power==="superspeed"?"SPEED":powerMeta.label.split(" ")[0]):"JUMP"}</span><i style={{transform:`scaleX(${power?powerLeft:1-jumpCooldown})`,background:powerMeta?.color}}/></button></div>:null}
+    {phase==="playing"?<div className="arena-jump-wrap"><button className={`arena-jump ${power?"armed":""}`} style={powerMeta?{borderColor:powerMeta.color,boxShadow:`0 0 28px ${powerMeta.color}55`}:undefined} onClick={()=>actionRef.current()} disabled={(!power||powerActive)&&jumpCooldown>0.02}><span>{powerActive?"JUMP":powerMeta?(power==="blaster"?"FIRE":power==="superspeed"?"SPEED":powerMeta.label.split(" ")[0]):"JUMP"}</span><i style={{transform:`scaleX(${power?powerLeft:1-jumpCooldown})`,background:powerMeta?.color}}/></button></div>:null}
     {phase==="playing"&&controlMode==="touch"?<div className="game-touch-pad arena-touch" onPointerDown={touchStart} onPointerMove={touchMove} onPointerUp={touchEnd} onPointerCancel={touchEnd}><div className="game-touch-knob"/></div>:null}
     {sensorAvailable&&phase==="playing"?<div className="arena-controls"><button onClick={()=>void requestMotion()}>{controlMode==="sensor"?"Tilt active":"Enable tilt"}</button>{controlMode==="sensor"?<button onClick={()=>{controlModeRef.current="touch";setControlMode("touch")}}>Touch control</button>:null}</div>:null}
-    <div className="arena-control-hint"><span className="arena-desktop-hint">ARROWS / WASD · ROLL &nbsp;&nbsp; SPACE · {powerMeta?"USE POWER":"JUMP"}</span><span className="arena-mobile-hint">ROLL · {powerMeta?"USE POWER":"JUMP"} · ↑ JUMP · ● BLASTER · » SPEED · + HEALTH</span></div>
+    <div className="arena-control-hint"><span className="arena-desktop-hint">ARROWS / WASD · ROLL &nbsp;&nbsp; SPACE · {powerActive?"JUMP":powerMeta?"USE POWER":"JUMP"}</span><span className="arena-mobile-hint">ROLL · {powerActive?"JUMP":powerMeta?"USE POWER":"JUMP"} · ↑ JUMP · ● BLASTER · » SPEED · + HEALTH</span></div>
   </div>;
 }
