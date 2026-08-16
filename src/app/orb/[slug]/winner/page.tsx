@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { cache } from "react";
-import { getPublicOrb } from "@/lib/orbStore";
+import { getPublicOrb, orbGameType } from "@/lib/orbStore";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import { getWinner } from "@/lib/upstashWinner";
 
@@ -30,7 +30,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const prize = `${amount(orb.prizeTokenAmount)} ${orb.token.symbol}`;
   const username = winner.xUsername ? `@${winner.xUsername}` : "Verified winner";
   const title = `${username} Won ${prize} on Orbs`;
-  const description = `Verified skill-competition win. Finish: ${formatTime(winner.verifiedElapsedMs)}. Prize claimed onchain.`;
+  const description = orbGameType(orb) === "arena" ? `Verified ARENA win. Prize claimed onchain.` : `Verified MAZE win. Finish: ${formatTime(winner.verifiedElapsedMs)}. Prize claimed onchain.`;
   const canonical = `${site}/orb/${encodeURIComponent(slug)}/winner`;
   const image = `${site}/api/orbs/${encodeURIComponent(slug)}/winner-card?v=${winner.claimedAt}`;
 
@@ -78,7 +78,7 @@ export default async function WinnerPage({ params }: { params: Promise<{ slug: s
   return <div className="page"><div className="container"><div className="result">
     <Image src="/orbs-logo-256.png" width={180} height={180} alt="Orbs" />
     <span className="eyebrow">Verified Contest Winner</span>
-    <h1>{winner.xUsername ? `@${winner.xUsername} won the Orb.` : "The Orb has a verified winner."}</h1>
+    <h1>{winner.xUsername ? `@${winner.xUsername} won the ${orbGameType(orb).toUpperCase()}.` : `The ${orbGameType(orb).toUpperCase()} has a verified winner.`}</h1>
     <p className="muted">This skill-competition result was server verified and the prize was claimed onchain.</p>
     <div className="result-prize gradient-text">{prize}</div>
     <div className="metrics">

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import OrbQualification from "@/components/OrbQualification";
 import OrbLobbyHero from "@/components/OrbLobbyHero";
-import { getPublicOrb } from "@/lib/orbStore";
+import { getPublicOrb, orbGameType } from "@/lib/orbStore";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import { getWinner } from "@/lib/upstashWinner";
 
@@ -19,7 +19,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const orb = await loadOrb(slug);
   if (!orb) return { title: "Orb not found" };
   const title = `${amount(orb.prizeTokenAmount)} ${orb.token.symbol.slice(0, 16)} Orb by @${orb.hostX.username}`;
-  const description = `${money(orb.prizeUsd)} prize. Join the waiting room, qualify, and race the same sealed maze. First verified finish wins.`;
+  const gameType = orbGameType(orb);
+  const description = gameType === "arena" ? `${money(orb.prizeUsd)} prize. Join the waiting room, choose your Orb color, and enter the ARENA.` : `${money(orb.prizeUsd)} prize. Join the waiting room, qualify, and race the same sealed MAZE. First verified finish wins.`;
   const canonical = `${site}/orb/${encodeURIComponent(slug)}`;
   const image = `${site}/api/orbs/${encodeURIComponent(slug)}/share-card?v=${orb.createdAt}`;
   return {
@@ -44,5 +45,5 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
   }
   const winner = await getWinner(orb.id);
   const closed = Boolean(winner) || Date.now() >= orb.endsAt;
-  return <div className="page"><div className="container"><div className="lobby"><OrbLobbyHero orb={orb} winner={Boolean(winner)}/>{closed ? <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>{winner ? "A verified winner cleared this Orb." : "This Orb expired without a winner."}</h3><p className="muted">New entries are closed. The result and public fairness manifest are available now.</p><Link className="btn-primary" href={`/orb/${slug}/results`}>View result →</Link></aside> : <OrbQualification slug={slug} hostXId={orb.hostX.id} hostUsername={orb.hostX.username} createdAt={orb.createdAt} startsAt={orb.startsAt} endsAt={orb.endsAt} prizeTokenAmount={orb.prizeTokenAmount} prizeUsd={orb.prizeUsd} tokenSymbol={orb.token.symbol}/>}</div></div></div>;
+  return <div className="page"><div className="container"><div className="lobby"><OrbLobbyHero orb={orb} winner={Boolean(winner)}/>{closed ? <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>{winner ? "A verified winner cleared this Orb." : "This Orb expired without a winner."}</h3><p className="muted">New entries are closed. The result and public fairness manifest are available now.</p><Link className="btn-primary" href={`/orb/${slug}/results`}>View result →</Link></aside> : <OrbQualification slug={slug} hostXId={orb.hostX.id} hostUsername={orb.hostX.username} createdAt={orb.createdAt} startsAt={orb.startsAt} endsAt={orb.endsAt} prizeTokenAmount={orb.prizeTokenAmount} prizeUsd={orb.prizeUsd} tokenSymbol={orb.token.symbol} gameType={orbGameType(orb)}/>}</div></div></div>;
 }

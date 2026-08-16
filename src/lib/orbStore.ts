@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { buildGameCommitment, hashCanonicalManifest, sha256Hex } from "@/game/canonical";
 import { GAME_GENERATOR_VERSION, GAME_PHYSICS_VERSION, RAPIER_VERSION, SUPPORTED_GAME_GENERATOR_VERSIONS } from "@/game/constants";
 import { generateGameManifestFromSecret } from "@/game/maze";
+import { ARENA_GAME_VERSION } from "@/game/arena";
 import type { DifficultyKey, GameManifest, GameStyle } from "@/game/types";
 import type { WalletSplToken } from "@/lib/walletTokens";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber } from "@/lib/prizeEconomics";
@@ -168,6 +169,7 @@ export function orbStoreConfigured() {
 export async function createTestOrb(input: {
   hostWallet: string;
   hostX: XProfile;
+  gameType: OrbGameType;
   difficulty: DifficultyKey;
   style: GameStyle;
   token: WalletSplToken;
@@ -199,7 +201,10 @@ export async function createTestOrb(input: {
   let slug = randomBytes(6).toString("base64url");
   while (await redisGetJson<OrbRecord>(orbKey(slug))) slug = randomBytes(6).toString("base64url");
   const style = cleanStyle(input.style);
+  const gameType = input.gameType === "arena" ? "arena" : "maze";
+  const generatorVersion = gameType === "arena" ? ARENA_GAME_VERSION : GAME_GENERATOR_VERSION;
   const settingsHash = await sha256Hex(JSON.stringify({
+    gameType,
     hostWallet: input.hostWallet,
     hostXId: input.hostX.id,
     difficulty: input.difficulty,
@@ -216,14 +221,14 @@ export async function createTestOrb(input: {
     priceQuotedAt: input.priceQuotedAt,
     fundingQuoteExpiresAt: input.fundingQuoteExpiresAt,
     startsAt: input.startsAt,
-    generatorVersion: GAME_GENERATOR_VERSION,
+    generatorVersion,
     physicsVersion: GAME_PHYSICS_VERSION,
   }));
   const secretSeedHex = randomBytes(32).toString("hex");
-  const commitment = await buildGameCommitment({ orbId: id, secretSeedHex, settingsHash, generatorVersion: GAME_GENERATOR_VERSION });
+  const commitment = await buildGameCommitment({ orbId: id, secretSeedHex, settingsHash, generatorVersion });
   const record: OrbRecord = {
     schemaVersion: 1,
-    gameType: "maze",
+    gameType,
     id,
     slug,
     createdAt: Date.now(),
@@ -252,7 +257,7 @@ export async function createTestOrb(input: {
     feeRawAmount: input.feeRawAmount,
     priceQuotedAt: input.priceQuotedAt,
     fundingQuoteExpiresAt: input.fundingQuoteExpiresAt,
-    generatorVersion: GAME_GENERATOR_VERSION,
+    generatorVersion,
     physicsVersion: GAME_PHYSICS_VERSION,
     rapierVersion: RAPIER_VERSION,
     settingsHash,
@@ -479,11 +484,8 @@ export async function listDiscoverableOrbs(limit = 9): Promise<PublicOrbRecord[]
   if (staleIndexMembers.length) {
     await redisCommand<number>(["ZREM", publicOrbsKey, ...staleIndexMembers]);
   }
-  return records.sort((a, b) => {
-    const aLive = a.startsAt <= now ? 0 : 1;
-    const bLive = b.startsAt <= now ? 0 : 1;
-    return aLive - bLive || a.startsAt - b.startsAt;
-  }).slice(0, max);
+  // MAZE and ARENA share one chronological discovery feed: earliest launch first, furthest-out launch last.
+  return records.sort((a, b) => a.startsAt - b.startsAt).slice(0, max);
 }
 
 export async function listHostedOrbs(wallet: string, limit = 50): Promise<PublicOrbRecord[]> {
@@ -568,6 +570,7 @@ export async function listEnteredOrbs(wallet: string, limit = 50): Promise<Publi
 export async function getCanonicalOrbManifest(slug: string): Promise<{ record: OrbRecord; manifest: GameManifest; manifestHash: string }> {
   const record = await getOrbRecord(slug);
   if (!record || !hasVerifiedOnChainFunding(record)) throw new Error("ORB_NOT_FOUND");
+  if (orbGameType(record) !== "maze") throw new Error("ARENA_REQUIRES_REALTIME");
   if (Date.now() < record.startsAt) throw new Error("ORB_NOT_LIVE");
   if (!SUPPORTED_GAME_GENERATOR_VERSIONS.has(record.generatorVersion) || record.physicsVersion !== GAME_PHYSICS_VERSION || record.rapierVersion !== RAPIER_VERSION) {
     throw new Error("ORB_VERSION_UNSUPPORTED");

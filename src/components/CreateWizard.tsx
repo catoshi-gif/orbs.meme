@@ -13,6 +13,7 @@ import { MIN_PRIZE_USD, MIN_WALLET_REQUIREMENT_USD, ORBS_FEE_USD, feeTokenAmount
 import { ORB_CREATION_MIN_LEAD_MS } from "@/lib/orbLifecycle";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import type { DifficultyKey, GameStyle } from "@/game/types";
+import type { OrbGameType } from "@/lib/orbStore";
 import { assertReviewedFundingTransaction } from "@/lib/orbsFundingFirewall";
 import { xCashtag } from "@/lib/xShareText";
 
@@ -46,8 +47,9 @@ async function jsonPayload<T>(response: Response): Promise<T> {
   catch { throw new Error(response.ok ? "The server returned an invalid response" : `The server is temporarily unavailable (${response.status})`); }
 }
 
-export default function CreateWizard() {
+export default function CreateWizard({ arenaLiveEnabled = false }: { arenaLiveEnabled?: boolean }) {
   const initialLaunch = useMemo(() => localInputParts(new Date(Date.now() + 24 * 60 * 60 * 1000)), []);
+  const [gameType, setGameType] = useState<OrbGameType | null>(null);
   const [step, setStep] = useState(0);
   const [difficulty, setDifficulty] = useState<DifficultyKey>("classic");
   const [style, setStyle] = useState<GameStyle>(DEFAULT_GAME_STYLE);
@@ -252,7 +254,7 @@ export default function CreateWizard() {
       const response = await fetch("/api/orbs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostWallet: publicKey.toBase58(), hostAuthorizationSignature, mint: token.mint, prizeTokenAmount: winnerPrizeInput, prizeQuoteToken: quote?.token, difficulty, style, startsAt: launchMs }),
+        body: JSON.stringify({ hostWallet: publicKey.toBase58(), hostAuthorizationSignature, mint: token.mint, prizeTokenAmount: winnerPrizeInput, prizeQuoteToken: quote?.token, gameType: gameType || "maze", difficulty, style, startsAt: launchMs }),
       });
       const payload = await jsonPayload<{ ok?: boolean; orb?: CreatedOrb; error?: string }>(response);
       if (!response.ok || !payload.ok || !payload.orb) throw new Error(payload.error || "Could not seal Orb funding parameters");
@@ -267,7 +269,9 @@ export default function CreateWizard() {
 
   const shareUrl = createdOrb ? `${publicSiteUrl}/orb/${encodeURIComponent(createdOrb.slug)}?v=${createdOrb.createdAt}` : "";
   const shareCardUrl = createdOrb ? `${publicSiteUrl}/api/orbs/${encodeURIComponent(createdOrb.slug)}/share-card?v=${createdOrb.createdAt}` : "";
-  const hostShareText = `I just sealed an Orb for ${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")} (≈${money(prizeUsd)}). First verified finish wins.\n\nJoin the waiting room and bring your fastest run.`;
+  const hostShareText = gameType === "arena"
+    ? `I just sealed an ARENA Orb for ${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")} (≈${money(prizeUsd)}).\n\nJoin the waiting room and enter the Arena.`
+    : `I just sealed a MAZE Orb for ${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")} (≈${money(prizeUsd)}). First verified finish wins.\n\nJoin the waiting room and bring your fastest run.`;
   const hostShareParams = new URLSearchParams({ text: hostShareText, url: shareUrl });
 
   useEffect(() => {
@@ -303,9 +307,25 @@ export default function CreateWizard() {
     }
   };
 
+  if (!gameType) return (
+    <section className="create-game-select">
+      <span className="eyebrow">Choose a game</span>
+      <h2>What are you dropping?</h2>
+      <p className="muted">MAZE is the original sealed race. ARENA is the new live multiplayer game.</p>
+      <div className="create-game-options">
+        <button type="button" className="create-game-option" onClick={() => setGameType("maze")}>
+          <span className="create-game-badge">MAZE</span><strong>Race the maze.</strong><small>Same sealed course for everyone. First verified finish wins.</small>
+        </button>
+        <button type="button" className="create-game-option arena" onClick={() => arenaLiveEnabled && setGameType("arena")} disabled={!arenaLiveEnabled}>
+          <span className="create-game-badge">ARENA</span><strong>Live multiplayer.</strong><small>{arenaLiveEnabled ? "Enter together and fight for the prize." : "Production plumbing is ready; authoritative realtime play is being connected before prize-bearing creation unlocks."}</small>
+        </button>
+      </div>
+    </section>
+  );
+
   return (
     <div className="wizard-layout">
-      <aside className="wizard-nav">{names.map((name, i) => <button key={name} className={step === i ? "active" : ""} disabled={i === 5 && !createdOrb} onClick={() => { if (i === 4 && token && publicKey) { void refreshFundingForReview(); return; } if (i !== 5 || createdOrb) setStep(i); }}>{i + 1}. {name}</button>)}</aside>
+      <aside className="wizard-nav"><button type="button" className="wizard-game-choice" onClick={() => { setStep(0); setGameType(null); }}>← {gameType.toUpperCase()}</button>{names.map((name, i) => <button key={name} className={step === i ? "active" : ""} disabled={i === 5 && !createdOrb} onClick={() => { if (i === 4 && token && publicKey) { void refreshFundingForReview(); return; } if (i !== 5 || createdOrb) setStep(i); }}>{i + 1}. {name}</button>)}</aside>
       <section className="wizard">
         {step === 0 ? <>
           <span className="eyebrow">Step 1 of 6</span><h2>Who is hosting?</h2>
@@ -320,14 +340,14 @@ export default function CreateWizard() {
         </> : null}
 
         {step === 2 ? <>
-          <span className="eyebrow">Step 3 of 6</span><h2>Design the game.</h2><p>Choose the target solve-time band and your community palette. These settings are frozen into every participant&apos;s canonical game.</p>
-          <div className="difficulty">{profiles.map((profile) => <button key={profile.key} className={difficulty === profile.key ? "active" : ""} onClick={() => setDifficulty(profile.key)}><span className="difficulty-tag">{profile.label}</span><strong>{profile.name}</strong><small>{profile.time} target solve</small></button>)}</div>
+          <span className="eyebrow">Step 3 of 6 · {gameType.toUpperCase()}</span><h2>Design the game.</h2><p>{gameType === "maze" ? "Choose the target solve-time band and your community palette. These settings are frozen into every participant's canonical game." : "Choose the Arena world palette. Player Orb colors are selected individually in the waiting room."}</p>
+          {gameType === "maze" ? <div className="difficulty">{profiles.map((profile) => <button key={profile.key} className={difficulty === profile.key ? "active" : ""} onClick={() => setDifficulty(profile.key)}><span className="difficulty-tag">{profile.label}</span><strong>{profile.name}</strong><small>{profile.time} target solve</small></button>)}</div> : null}
           <div className="game-style-builder"><div className="game-style-preview" style={{ background: `radial-gradient(circle at 35% 30%, ${style.marbleSecondary}, ${style.marble} 30%, ${style.accent} 66%, ${style.floor})`, borderColor: style.walls }}><div className="style-preview-orb" style={{ background: `radial-gradient(circle at 35% 28%, #fff, ${style.marbleSecondary} 14%, ${style.marble} 44%, ${style.accent} 72%, ${style.floor})` }} /><div className="style-preview-rail" style={{ background: style.walls, boxShadow: `0 0 28px ${style.walls}` }} /><span>LIVE PALETTE</span></div><div><div className="game-presets">{GAME_STYLE_PRESETS.map((preset) => <button key={preset.name} onClick={() => setStyle(preset.style)}>{preset.name}</button>)}</div><div className="fields game-color-grid">{colorField("marble", "Marble core")}{colorField("marbleSecondary", "Marble glow")}{colorField("walls", "Glass rails")}{colorField("floor", "World / floor")}{colorField("accent", "Goal / accent")}</div></div></div>
         </> : null}
 
         {step === 3 ? <>
           <span className="eyebrow">Step 4 of 6</span><h2>Schedule launch.</h2><p>Give the X post time to cook. The exact timestamp becomes immutable when the Anchor funding transaction succeeds.</p>
-          {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}<div className="fields"><div className="field"><label>Date</label><input type="date" value={launchDate} onChange={(event) => setLaunchDate(event.target.value)} /></div><div className="field"><label>Time · your local timezone</label><input type="time" value={launchTime} onChange={(event) => setLaunchTime(event.target.value)} /></div><div className="field full"><div className="launch-preview"><span>Scheduled start</span><strong>{launchReady ? new Date(launchMs).toLocaleString([], { dateStyle: "full", timeStyle: "short" }) : "Choose a future launch time"}</strong><small>The maze seed and geometry remain sealed until this moment.</small></div></div></div>
+          {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}<div className="fields"><div className="field"><label>Date</label><input type="date" value={launchDate} onChange={(event) => setLaunchDate(event.target.value)} /></div><div className="field"><label>Time · your local timezone</label><input type="time" value={launchTime} onChange={(event) => setLaunchTime(event.target.value)} /></div><div className="field full"><div className="launch-preview"><span>Scheduled start</span><strong>{launchReady ? new Date(launchMs).toLocaleString([], { dateStyle: "full", timeStyle: "short" }) : "Choose a future launch time"}</strong><small>{gameType === "maze" ? "The maze seed and geometry remain sealed until this moment." : "The Arena launch timestamp is shared by every entrant."}</small></div></div></div>
         </> : null}
 
         {step === 4 ? <>

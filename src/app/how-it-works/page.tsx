@@ -5,9 +5,9 @@ export const metadata = { title: "How it works" };
 const protocolSteps = [
   ["1", "Create", "Connect X and Solana, choose a supported token, set the full commitment, configure the game and schedule launch."],
   ["2", "Share", "Orbs creates a unique public waiting room with the prize, countdown and registration flow so your post can build momentum."],
-  ["3", "Race", "At the committed time, every registered player receives the same hidden-until-launch game. Skill determines the first valid finish."],
+  ["3", "Play", "At the committed time, every registered player enters the selected game. MAZE is a sealed race; ARENA is live multiplayer."],
   ["4", "Claim", "The winning wallet receives a secure claim flow. The final payout comes from the isolated on-chain Orb vault."],
-  ["5", "Keep playing", "After a winner exists, everyone else can continue the maze for fun instead of being kicked out."],
+  ["5", "Keep playing", "MAZE supports post-result practice; ARENA keeps eliminated players in the live event as spectators."],
   ["6", "Drop another Orb", "Players become future hosts, winners can share their result, and the next funded game starts the loop again."],
 ];
 
@@ -31,7 +31,7 @@ export default function Page() {
     <div className="page">
       <div className="container">
         <span className="eyebrow">Simple by design</span>
-        <h1 className="page-title">One prize. One link. <span className="gradient-text">One live race.</span></h1>
+        <h1 className="page-title">One prize. One link. <span className="gradient-text">MAZE or ARENA.</span></h1>
         <p className="page-intro">Orbs turns a funded token reward into a timed social event your community can actually participate in.</p>
 
         <div className="steps3 how-protocol-steps">
@@ -46,7 +46,7 @@ export default function Page() {
 
         <section className="gameplay-guide">
           <div className="gameplay-guide-heading">
-            <span className="eyebrow">Gameplay guide</span>
+            <span className="eyebrow">MAZE gameplay guide</span>
             <h2>Know the maze before the clock starts.</h2>
             <p>Registration happens in the waiting room. The maze stays sealed until launch. Once it opens, the race is simple: roll, clear every glowing ring in order, then reach the finish before everyone else.</p>
           </div>
@@ -147,7 +147,7 @@ export default function Page() {
         </section>
 
         <div className="how-create-cta">
-          <div><span className="eyebrow">Ready?</span><h2>Drop an Orb.</h2><p>Fund the prize, set the launch, and let your community race.</p></div>
+          <div><span className="eyebrow">Ready?</span><h2>Drop an Orb.</h2><p>Choose MAZE or ARENA, fund the prize, set the launch, and bring your community in.</p></div>
           <Link className="btn-primary" href="/create">Create an Orb →</Link>
         </div>
       </div>

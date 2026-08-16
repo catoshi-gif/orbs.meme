@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 import sharp from "sharp";
-import { getPublicOrb } from "@/lib/orbStore";
+import { getPublicOrb, orbGameType } from "@/lib/orbStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,6 +53,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     return new ImageResponse(<div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#050817", color: "#ffffff", fontSize: 64, fontWeight: 900 }}>ORB NOT FOUND</div>, { width, height, status: 404 });
   }
 
+  const gameType = orbGameType(orb);
   const exactTokenAmount = amount(orb.prizeTokenAmount);
   const tokenAmount = exactTokenAmount.length > 22
     ? new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 4 }).format(orb.prizeTokenAmount)
@@ -87,7 +88,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", width: 720, marginTop: 68 }}>
-          <div style={{ display: "flex", color: "#76F4EA", fontSize: 16, fontWeight: 900, letterSpacing: 2.4, marginBottom: 13 }}>SEALED SOLANA REWARD RACE</div>
+          <div style={{ display: "flex", color: "#76F4EA", fontSize: 16, fontWeight: 900, letterSpacing: 2.4, marginBottom: 13 }}>{gameType === "arena" ? "LIVE SOLANA ARENA" : "SEALED SOLANA REWARD RACE"}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
             <div style={{ width: 100, height: 100, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", background: `radial-gradient(circle at 35% 30%, #fff, ${orb.style.marbleSecondary} 18%, ${orb.style.marble} 62%, ${orb.style.floor})`, border: "3px solid #FFFFFF55", boxShadow: `0 0 44px ${orb.style.marble}99` }}>
               {tokenLogo ? <img src={tokenLogo} alt="" width={100} height={100} style={{ width: 100, height: 100, objectFit: "cover" }} /> : <span style={{ fontSize: 38, fontWeight: 900 }}>{tokenSymbol.slice(0, 2)}</span>}
@@ -97,7 +98,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
               <div style={{ display: "flex", marginTop: 10, color: "#C4CCE3", fontSize: 25, fontWeight: 700 }}>{money(orb.prizeUsd)} winner prize</div>
             </div>
           </div>
-          <div style={{ display: "flex", marginTop: 24, color: "#7FF9EE", fontSize: 31, fontWeight: 900, letterSpacing: -0.8, textShadow: "0 4px 24px #020512" }}>FIRST VERIFIED FINISH WINS.</div>
+          <div style={{ display: "flex", marginTop: 24, color: "#7FF9EE", fontSize: 31, fontWeight: 900, letterSpacing: -0.8, textShadow: "0 4px 24px #020512" }}>{gameType === "arena" ? "ENTER THE ARENA." : "FIRST VERIFIED FINISH WINS."}</div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto", borderTop: "1px solid #FFFFFF2B", paddingTop: 22 }}>
@@ -112,7 +113,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 7 }}>
             <div style={{ display: "flex", color: "#7FF9EE", fontSize: 22, fontWeight: 900, letterSpacing: .4 }}>JOIN THE WAITING ROOM &gt;</div>
-            <div style={{ display: "flex", color: "#B3BDD6", fontSize: 16, fontWeight: 700 }}>{difficultyLabel(orb.difficulty)} / {launch}</div>
+            <div style={{ display: "flex", color: "#B3BDD6", fontSize: 16, fontWeight: 700 }}>{gameType.toUpperCase()} / {gameType === "maze" ? `${difficultyLabel(orb.difficulty)} / ` : ""}{launch}</div>
           </div>
         </div>
       </div>

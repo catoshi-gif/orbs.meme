@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { hasEligibilityReceipt } from "@/lib/eligibility";
 import { PublicKey } from "@solana/web3.js";
-import { createTestOrb, finalizeFundedOrb, getActiveHostedOrb, getOrbRecord, listHostedOrbs } from "@/lib/orbStore";
+import { createTestOrb, finalizeFundedOrb, getActiveHostedOrb, getOrbRecord, listHostedOrbs, type OrbGameType } from "@/lib/orbStore";
 import { getWalletSplTokens } from "@/lib/walletTokens";
 import { usdMicrosForRawAmount, verifyPrizeQuote } from "@/lib/prizeQuote";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber, tokenInputToRaw } from "@/lib/prizeEconomics";
@@ -67,6 +67,7 @@ type Body = {
   mint?: unknown;
   prizeTokenAmount?: unknown;
   prizeQuoteToken?: unknown;
+  gameType?: unknown;
   difficulty?: unknown;
   style?: Partial<Record<keyof GameStyle, unknown>>;
   startsAt?: unknown;
@@ -95,6 +96,10 @@ export async function POST(request: Request) {
       : "";
   const prizeQuoteToken = typeof body.prizeQuoteToken === "string" ? body.prizeQuoteToken.trim() : "";
   const startsAt = Number(body.startsAt);
+  const gameType: OrbGameType = body.gameType === "arena" ? "arena" : "maze";
+  if (gameType === "arena") {
+    return NextResponse.json({ ok: false, error: "Arena creation is staged but remains locked until the authoritative realtime Arena service is connected. Maze creation is unchanged." }, { status: 503 });
+  }
   const style: GameStyle = {
     marble: safeColor(typeof body.style?.marble === "string" ? body.style.marble : undefined, DEFAULT_GAME_STYLE.marble),
     marbleSecondary: safeColor(typeof body.style?.marbleSecondary === "string" ? body.style.marbleSecondary : undefined, DEFAULT_GAME_STYLE.marbleSecondary),
@@ -150,6 +155,7 @@ export async function POST(request: Request) {
     const orb = await createTestOrb({
       hostWallet,
       hostX: x.user,
+      gameType,
       difficulty: normalizeDifficulty(typeof body.difficulty === "string" ? body.difficulty : undefined),
       style,
       token,

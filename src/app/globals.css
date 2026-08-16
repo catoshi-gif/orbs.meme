@@ -496,3 +496,21 @@ html:not(.dark) .real-orb-hero>.waiting-orb-showcase{
 .arena-power-meter i{background:#5ef7ff;box-shadow:0 0 14px currentColor}
 .arena-jump.armed{background:rgba(5,10,27,.86)}
 @media(max-width:720px){.arena-vitals{left:14px;bottom:108px;min-width:122px;padding:8px 9px}.arena-meter{width:122px;height:6px}.arena-vitals>span{font-size:7px}}
+
+/* MAZE / ARENA production game taxonomy */
+.game-type-chip{display:inline-flex;align-items:center;justify-content:center;margin-left:8px;padding:4px 8px;border:1px solid rgba(124,245,232,.32);border-radius:999px;background:rgba(5,10,28,.72);color:#8ff8ef;font-size:10px;font-weight:900;letter-spacing:.12em;line-height:1;vertical-align:middle}
+.create-game-select{max-width:920px;margin:28px auto 0;padding:30px;border:1px solid rgba(255,255,255,.1);border-radius:28px;background:linear-gradient(145deg,rgba(12,18,48,.9),rgba(5,8,24,.96));box-shadow:0 24px 70px rgba(0,0,0,.24)}
+.create-game-select h2{margin:8px 0 8px;font-size:clamp(30px,5vw,52px)}
+.create-game-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:24px}
+.create-game-option{min-height:210px;padding:24px;border:1px solid rgba(255,255,255,.12);border-radius:22px;background:radial-gradient(circle at 30% 15%,rgba(90,92,246,.22),rgba(7,10,28,.88) 65%);color:#fff;text-align:left;cursor:pointer;transition:.18s transform,.18s border-color,.18s box-shadow}
+.create-game-option.arena{background:radial-gradient(circle at 72% 16%,rgba(32,227,210,.2),rgba(7,10,28,.9) 66%)}
+.create-game-option:hover:not(:disabled){transform:translateY(-3px);border-color:rgba(127,249,238,.55);box-shadow:0 20px 45px rgba(0,0,0,.25)}
+.create-game-option:disabled{cursor:not-allowed;opacity:.52}
+.create-game-option strong,.create-game-option small{display:block}.create-game-option strong{margin-top:42px;font-size:25px}.create-game-option small{margin-top:9px;color:var(--muted);line-height:1.55}
+.create-game-badge{display:inline-flex;padding:7px 10px;border-radius:999px;background:rgba(118,244,234,.12);border:1px solid rgba(118,244,234,.32);color:#76f4ea;font-size:12px;font-weight:900;letter-spacing:.18em}
+.wizard-game-choice{margin-bottom:10px!important;border-color:rgba(118,244,234,.3)!important;color:#76f4ea!important;font-weight:900!important}
+.arena-identity-card{margin:16px 0;padding:16px;border:1px solid rgba(114,247,255,.22);border-radius:18px;background:linear-gradient(135deg,rgba(16,29,56,.84),rgba(5,10,27,.88));display:grid;gap:14px}
+.arena-identity-copy span,.arena-identity-copy strong,.arena-identity-copy small{display:block}.arena-identity-copy span{font-size:10px;font-weight:900;letter-spacing:.16em;color:#72f7ff}.arena-identity-copy strong{font-size:18px;margin-top:4px}.arena-identity-copy small{color:var(--muted);line-height:1.45;margin-top:5px}
+.arena-identity-control{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.arena-identity-control label{display:grid;gap:4px;font-size:11px;color:var(--muted)}.arena-identity-control input[type=color]{width:54px;height:36px;padding:2px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:#060a19}
+.arena-orb-preview{width:64px;height:64px;border-radius:50%;position:relative;border:1px solid rgba(255,255,255,.38)}.arena-orb-preview img{position:absolute;width:24px;height:24px;object-fit:cover;border-radius:50%;left:50%;bottom:-13px;transform:translateX(-50%);border:2px solid #091028;background:#091028;box-shadow:0 4px 12px rgba(0,0,0,.4)}
+@media(max-width:720px){.create-game-options{grid-template-columns:1fr}.create-game-select{padding:22px}.create-game-option{min-height:170px}.create-game-option strong{margin-top:28px}}

@@ -3,7 +3,7 @@ import Link from "next/link";
 import ClaimPrizeButton from "@/components/ClaimPrizeButton";
 import RefundPrizeButton from "@/components/RefundPrizeButton";
 import WinnerShareCard from "@/components/WinnerShareCard";
-import { getPublicOrb } from "@/lib/orbStore";
+import { getPublicOrb, orbGameType } from "@/lib/orbStore";
 import { getWinner } from "@/lib/upstashWinner";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export default async function Page({params}:{params:Promise<{slug:string}>}) {
     {!winner && !expired ? <button className="btn-primary" disabled>Waiting for a verified winner</button> : null}
     <div className="metrics"><div className="metric"><span>Finish time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Replay proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div><div className="metric"><span>Status</span><strong>{claimed ? "Claimed on-chain" : winner && !expired ? "Winner verified / claimable" : expired ? "Refund available" : "Live / pending"}</strong></div></div>
     {winner?.claimTxSignature ? <p className="muted"><code>{winner.claimTxSignature.slice(0,12)}…{winner.claimTxSignature.slice(-12)}</code></p> : null}
-    {orb && claimed && winner?.wallet ? <WinnerShareCard slug={slug} prize={prize} finishTime={formatTime(winner?.verifiedElapsedMs)} xUsername={winner?.xUsername} winnerWallet={winner.wallet} /> : null}
+    {orb && claimed && winner?.wallet ? <WinnerShareCard slug={slug} prize={prize} finishTime={formatTime(winner?.verifiedElapsedMs)} xUsername={winner?.xUsername} winnerWallet={winner.wallet} gameType={orbGameType(orb)} /> : null}
     <div className="hero-actions" style={{justifyContent:"center"}}><Link className="btn-secondary" href="/create">Create an Orb</Link><Link className="btn-ghost" href={`/orb/${slug}`}>Back to Orb →</Link></div>
   </div></div></div>;
 }

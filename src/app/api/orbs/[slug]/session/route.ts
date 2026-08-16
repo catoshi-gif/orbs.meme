@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { hasEligibilityReceipt } from "@/lib/eligibility";
 import { PublicKey } from "@solana/web3.js";
-import { getCanonicalOrbManifest, getPublicOrb } from "@/lib/orbStore";
+import { getCanonicalOrbManifest, getPublicOrb, orbGameType } from "@/lib/orbStore";
 import { issueCompetitiveSession, competitiveSessionsConfigured } from "@/lib/competitiveSession";
 import { hasFollowProof, hasShareProof, hasWalletProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
@@ -22,6 +22,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const { slug } = await params;
   const [orb, x] = await Promise.all([getPublicOrb(slug), getCurrentXSession()]);
   if (!orb) return NextResponse.json({ ok: false, error: "Orb not found" }, { status: 404 });
+  if (orbGameType(orb) === "arena") return NextResponse.json({ ok: false, error: "ARENA_REALTIME_REQUIRED" }, { status: 503 });
   if (!x) return NextResponse.json({ ok: false, error: "Connect X first" }, { status: 401 });
   if (!competitiveSessionsConfigured()) return NextResponse.json({ ok: false, error: "Competitive session signing is not configured" }, { status: 503 });
   if (Date.now() < orb.startsAt) return NextResponse.json({ ok: false, error: "GAME_NOT_LIVE", startsAt: orb.startsAt, commitment: orb.commitment }, { status: 403 });

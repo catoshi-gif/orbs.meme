@@ -4,12 +4,13 @@ import { useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { xCashtagPrize } from "@/lib/xShareText";
 
-export default function WinnerShareCard({ slug, prize, finishTime, xUsername, winnerWallet }: {
+export default function WinnerShareCard({ slug, prize, finishTime, xUsername, winnerWallet, gameType = "maze" }: {
   slug: string;
   prize: string;
   finishTime: string;
   xUsername?: string;
   winnerWallet: string;
+  gameType?: "maze" | "arena";
 }) {
   const { publicKey } = useWallet();
   const [ready, setReady] = useState(false);
@@ -21,7 +22,7 @@ export default function WinnerShareCard({ slug, prize, finishTime, xUsername, wi
   if (!isWinnerWallet) return null;
 
   const cardUrl = `/api/orbs/${encodeURIComponent(slug)}/winner-card`;
-  const text = `I won ${xCashtagPrize(prize)} in an Orbs skill competition 🪐\n\nVerified finish: ${finishTime}\n\n#ContestWinner`;
+  const text = gameType === "arena" ? `I won ${xCashtagPrize(prize)} in ORBS ARENA 🪐\n\n#ContestWinner` : `I won ${xCashtagPrize(prize)} in an Orbs MAZE 🪐\n\nVerified finish: ${finishTime}\n\n#ContestWinner`;
   const sharePageUrl = `${typeof window === "undefined" ? "" : window.location.origin}/orb/${encodeURIComponent(slug)}/winner`;
 
   const shareX = () => {
