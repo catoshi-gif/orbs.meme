@@ -279,6 +279,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   return <aside id="qualify" className="card qualify">
     <span className="eyebrow">Before you play</span><h3>Register for this Orb.</h3>
     <p className="muted">Registration is required to play for the prize. Complete one X identity, one verified wallet, one 18+ eligibility receipt, one human check, and one real entry post. Nothing here moves funds.</p>
+    <a className="qualify-how-play" href={gameType === "arena" ? "/how-to-play/arena" : "/how-to-play/maze"}>New here? Practice {gameType === "arena" ? "ARENA" : "MAZE"} controls →</a>
     <div className="q-list">
       <div className={`q-row ${xUser ? "ready" : ""}`}><span className="q-num">{xUser ? "✓" : "1"}</span><div style={{flex:1}}><strong>Connect X</strong><small>{xUser ? `@${xUser.username} connected` : "Your social identity for this competition"}</small></div><XConnect compact minimalConnected returnTo={`/orb/${slug}`} onChange={onXChange} /></div>
       <div className={`q-row ${followed ? "ready" : ""}`}><span className="q-num">{followed ? "✓" : "2"}</span><div style={{flex:1}}><strong>Follow @{hostUsername}</strong><small>{followed ? "Follow confirmed directly by X" : "One tap asks X to follow the Orb host from your connected account"}</small>{followError ? <small className="q-error">{followError}</small> : null}</div>{xUser && !followed ? <button className="mini-action" onClick={() => void followHost()} disabled={following}>{following ? "Following…" : "Follow on X"}</button> : null}</div>
