@@ -2,456 +2,123 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArenaAudioEngine } from "@/game/arenaAudio";
-import { arenaRadiusAt, buildArenaConfig, type ArenaPace } from "@/game/arena";
+import { buildArenaConfig, type ArenaPace } from "@/game/arena";
 import { clampPlanarSpeed, nextPlanarVelocity } from "@/game/simulation";
 import { PHYSICS } from "@/game/constants";
 import type { GameStyle } from "@/game/types";
 
-type Props = {
-  playerCount: number;
-  style: GameStyle;
-  seed: string;
-  pace: ArenaPace;
-  generation: number;
-};
-
-type Phase = "ready" | "countdown" | "playing" | "eliminated" | "won" | "finished";
-type ControlMode = "keys" | "touch" | "sensor";
+type Props = { playerCount:number; style:GameStyle; seed:string; pace:ArenaPace; generation:number };
+type Phase = "ready"|"countdown"|"playing"|"eliminated"|"won"|"finished";
+type ControlMode = "keys"|"touch"|"sensor";
+type Personality = "hunter"|"survivor"|"racer"|"opportunist";
 
 type OrbSim = {
-  id: string;
-  username: string;
-  color: string;
-  secondary: string;
-  body: import("@dimforge/rapier3d-compat").RigidBody;
-  mesh: import("three").Mesh;
-  label: import("three").Sprite;
-  alive: boolean;
-  isHuman: boolean;
-  bumpReadyAt: number;
-  botHeading: number;
-  botThinkAt: number;
+  id:string; username:string; color:string; body:import("@dimforge/rapier3d-compat").RigidBody;
+  mesh:import("three").Mesh; core:import("three").Mesh; label:import("three").Sprite;
+  alive:boolean; isHuman:boolean; integrity:number; jumpReadyAt:number; airborne:boolean;
+  personality:Personality; botHeading:number; botThinkAt:number; lastLandingVy:number;
 };
 
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-const usernames = [
-  "orbitaljup","bonkpilot","madlad","solsurfer","pixelwhale","caturday","degenqueen","mooncrate","zerogravity","mintghost",
-  "blockrunner","jupcat","helioroll","voidwalker","tokenpunk","lamportlord","orbmaxi","driftmode","neonape","cryptokite",
-  "glasscanon","solanaut","rollhard","bagholder","mevless","chainchaser","memeengine","jupiterian","vaultfox","orbitron",
-];
+type MovingSurface = {
+  name:string; body:import("@dimforge/rapier3d-compat").RigidBody; mesh:import("three").Mesh;
+  base:{x:number;y:number;z:number}; closeAt:number; drop:number; duration:number;
+};
 
-function seeded(seed: string) {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i += 1) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
-  return () => {
-    h += h << 13; h ^= h >>> 7; h += h << 3; h ^= h >>> 17; h += h << 5;
-    return (h >>> 0) / 4294967296;
-  };
+type Shockwave = { mesh:import("three").Mesh; born:number; life:number };
+
+const clamp=(v:number,min:number,max:number)=>Math.max(min,Math.min(max,v));
+const usernames=["orbitaljup","bonkpilot","madlad","solsurfer","pixelwhale","caturday","degenqueen","mooncrate","zerogravity","mintghost","blockrunner","jupcat","helioroll","voidwalker","tokenpunk","lamportlord","orbmaxi","driftmode","neonape","cryptokite","glasscanon","solanaut","rollhard","bagholder","mevless","chainchaser","memeengine","jupiterian","vaultfox","orbitron","turbocat","liquidjup","candycloud","solstice","nightmarket","airdropkid","ghostroute","mempoolmax","mintcondition","orbitalburn"];
+
+function seeded(seed:string){let h=2166136261;for(let i=0;i<seed.length;i++)h=Math.imul(h^seed.charCodeAt(i),16777619);return()=>{h+=h<<13;h^=h>>>7;h+=h<<3;h^=h>>>17;h+=h<<5;return(h>>>0)/4294967296}}
+function orbColor(i:number,r:()=>number){const hue=(i*137.508+r()*28)%360;return `hsl(${hue.toFixed(0)} 90% 61%)`}
+function seededNumber(seed:string){let n=0;for(let i=0;i<seed.length;i++)n=(n*31+seed.charCodeAt(i))|0;return Math.abs(n)||1}
+
+function makeMountainRing(THREE:typeof import("three"),radius:number,seed:number,y:number,color:string){
+  const segments=64,positions:number[]=[];const rand=(n:number)=>{const x=Math.sin((seed+n*19.17)*12.9898)*43758.5453;return x-Math.floor(x)};
+  for(let i=0;i<segments;i++){const a0=i/segments*Math.PI*2,a1=(i+1)/segments*Math.PI*2;const h0=1.2+rand(i)*5.4+Math.pow(rand(i+177),4)*7,h1=1.2+rand(i+1)*5.4+Math.pow(rand(i+178),4)*7;const inner=radius*.94;positions.push(Math.cos(a0)*inner,y,Math.sin(a0)*inner,Math.cos(a0)*radius,y+h0,Math.sin(a0)*radius,Math.cos(a1)*radius,y+h1,Math.sin(a1)*radius,Math.cos(a0)*inner,y,Math.sin(a0)*inner,Math.cos(a1)*radius,y+h1,Math.sin(a1)*radius,Math.cos(a1)*inner,y,Math.sin(a1)*inner)}
+  const g=new THREE.BufferGeometry();g.setAttribute("position",new THREE.Float32BufferAttribute(positions,3));g.computeVertexNormals();return new THREE.Mesh(g,new THREE.MeshStandardMaterial({color,roughness:.92,metalness:.08,side:THREE.DoubleSide}));
 }
+function makeSky(THREE:typeof import("three"),accent:string){const g=new THREE.SphereGeometry(220,40,24);const m=new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:{uAccent:{value:new THREE.Color(accent)}},vertexShader:`varying vec3 vDir;void main(){vDir=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,fragmentShader:`varying vec3 vDir;uniform vec3 uAccent;void main(){float horizon=pow(1.0-abs(vDir.y),6.0);float zenith=smoothstep(-.15,.9,vDir.y);float aurora=smoothstep(.72,1.0,sin(vDir.x*8.0+vDir.z*10.0+vDir.y*4.0)*.5+.5)*horizon;vec3 deep=vec3(.008,.018,.08),mid=vec3(.035,.07,.22);vec3 color=mix(mid,deep,zenith);color+=uAccent*horizon*.42;color+=vec3(.04,.75,.95)*aurora*.22;gl_FragColor=vec4(color,1.0);}`});return new THREE.Mesh(g,m)}
+function makeLabel(THREE:typeof import("three"),text:string,tint:string){const c=document.createElement("canvas");c.width=512;c.height=128;const x=c.getContext("2d")!;x.font="800 46px Arial";const w=Math.min(465,x.measureText(text).width+64),left=(512-w)/2;x.fillStyle="rgba(3,7,18,.7)";x.strokeStyle="rgba(255,255,255,.18)";x.lineWidth=3;x.beginPath();x.roundRect(left,22,w,72,28);x.fill();x.stroke();x.fillStyle=tint;x.beginPath();x.arc(left+29,58,8,0,Math.PI*2);x.fill();x.fillStyle="white";x.textAlign="center";x.fillText(text,256,73);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthWrite:false}));s.scale.set(2.8,.7,1);return s}
+function makeOrbMaterial(THREE:typeof import("three"),primary:string,secondary:string){return new THREE.MeshPhysicalMaterial({color:primary,emissive:new THREE.Color(secondary).multiplyScalar(.34),emissiveIntensity:1.05,roughness:.1,metalness:.08,transmission:.3,thickness:1.2,clearcoat:1,clearcoatRoughness:.06,iridescence:.45,iridescenceIOR:1.62})}
 
-function orbColor(index: number, rand: () => number) {
-  const hue = (index * 137.508 + rand() * 38) % 360;
-  return `hsl(${hue.toFixed(0)} 88% 61%)`;
-}
+export default function ArenaSandbox({playerCount,style,seed,pace,generation}:Props){
+  const mountRef=useRef<HTMLDivElement>(null);
+  const controlsRef=useRef({up:false,down:false,left:false,right:false,touchX:0,touchY:0});
+  const sensorRef=useRef({active:false,beta:0,gamma:0,neutralBeta:0,neutralGamma:0});
+  const jumpRef=useRef<()=>void>(()=>undefined),startRef=useRef<()=>void>(()=>undefined);
+  const [phase,setPhase]=useState<Phase>("ready"),[countdown,setCountdown]=useState(0),[survivors,setSurvivors]=useState(playerCount),[elapsed,setElapsed]=useState(0),[integrity,setIntegrity]=useState(100),[jumpCooldown,setJumpCooldown]=useState(0),[winner,setWinner]=useState<string|null>(null),[eventText,setEventText]=useState("LAST ORB STANDING"),[controlMode,setControlMode]=useState<ControlMode>("keys"),[sensorAvailable,setSensorAvailable]=useState(false);
+  const controlModeRef=useRef<ControlMode>("keys");
+  const config=useMemo(()=>buildArenaConfig({playerCount,pace,style,seed}),[playerCount,pace,style,seed]);
 
-function makeLabel(THREE: typeof import("three"), text: string, tint: string) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 512; canvas.height = 128;
-  const ctx = canvas.getContext("2d")!;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.font = "800 48px Arial";
-  const width = Math.min(470, ctx.measureText(text).width + 62);
-  ctx.fillStyle = "rgba(3,7,18,.78)";
-  ctx.strokeStyle = "rgba(255,255,255,.24)";
-  ctx.lineWidth = 3;
-  const x = (512 - width) / 2;
-  ctx.beginPath();
-  ctx.roundRect(x, 20, width, 76, 30);
-  ctx.fill(); ctx.stroke();
-  ctx.fillStyle = tint;
-  ctx.beginPath(); ctx.arc(x + 30, 58, 9, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "white";
-  ctx.textAlign = "center";
-  ctx.fillText(text, 256, 74);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
-  const sprite = new THREE.Sprite(material);
-  sprite.scale.set(3.15, 0.79, 1);
-  sprite.position.set(0, 1.12, 0);
-  return sprite;
-}
+  const requestMotion=useCallback(async()=>{const E=window.DeviceOrientationEvent as typeof DeviceOrientationEvent&{requestPermission?:()=>Promise<"granted"|"denied">};try{if(typeof E.requestPermission==="function"&&(await E.requestPermission())!=="granted")return;sensorRef.current.neutralBeta=sensorRef.current.beta;sensorRef.current.neutralGamma=sensorRef.current.gamma;sensorRef.current.active=true;controlModeRef.current="sensor";setControlMode("sensor")}catch{}},[]);
 
-function makeOrbMaterial(THREE: typeof import("three"), primary: string, secondary: string, accent: string) {
-  return new THREE.MeshPhysicalMaterial({
-    color: primary,
-    emissive: new THREE.Color(secondary).multiplyScalar(0.28),
-    emissiveIntensity: 0.9,
-    roughness: 0.12,
-    metalness: 0.1,
-    transmission: 0.28,
-    thickness: 1.1,
-    clearcoat: 1,
-    clearcoatRoughness: 0.08,
-    iridescence: 0.35,
-    iridescenceIOR: 1.6,
-  });
-}
+  useEffect(()=>{
+    const mount=mountRef.current;if(!mount)return;let cancelled=false,frame=0;let cleanupThree:(()=>void)|null=null;const audio=new ArenaAudioEngine();
+    setPhase("ready");setSurvivors(playerCount);setElapsed(0);setIntegrity(100);setWinner(null);setEventText("LAST ORB STANDING");setJumpCooldown(0);
+    const orientation=(e:DeviceOrientationEvent)=>{sensorRef.current.beta=e.beta??0;sensorRef.current.gamma=e.gamma??0};window.addEventListener("deviceorientation",orientation);if("DeviceOrientationEvent" in window)setSensorAvailable(true);if(window.matchMedia("(pointer: coarse)").matches){controlModeRef.current="touch";setControlMode("touch")}
+    const onKey=(e:KeyboardEvent,down:boolean)=>{if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","KeyW","KeyA","KeyS","KeyD","Space"].includes(e.code))e.preventDefault();if(e.code==="ArrowUp"||e.code==="KeyW")controlsRef.current.up=down;if(e.code==="ArrowDown"||e.code==="KeyS")controlsRef.current.down=down;if(e.code==="ArrowLeft"||e.code==="KeyA")controlsRef.current.left=down;if(e.code==="ArrowRight"||e.code==="KeyD")controlsRef.current.right=down;if(e.code==="Space"&&down&&!e.repeat)jumpRef.current()};const kd=(e:KeyboardEvent)=>onKey(e,true),ku=(e:KeyboardEvent)=>onKey(e,false);window.addEventListener("keydown",kd,{passive:false});window.addEventListener("keyup",ku,{passive:false});
 
-export default function ArenaSandbox({ playerCount, style, seed, pace, generation }: Props) {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const controlsRef = useRef({ up: false, down: false, left: false, right: false, touchX: 0, touchY: 0 });
-  const sensorRef = useRef({ active: false, beta: 0, gamma: 0, neutralBeta: 0, neutralGamma: 0 });
-  const bumpRef = useRef<() => void>(() => undefined);
-  const startRef = useRef<() => void>(() => undefined);
-  const [phase, setPhase] = useState<Phase>("ready");
-  const [countdown, setCountdown] = useState(0);
-  const [survivors, setSurvivors] = useState(playerCount);
-  const [elapsed, setElapsed] = useState(0);
-  const [controlMode, setControlMode] = useState<ControlMode>("keys");
-  const controlModeRef = useRef<ControlMode>("keys");
-  const [sensorAvailable, setSensorAvailable] = useState(false);
-  const [bumpCooldown, setBumpCooldown] = useState(0);
-  const [winner, setWinner] = useState<string | null>(null);
-  const [eventText, setEventText] = useState("LAST ORB STANDING");
-  const config = useMemo(() => buildArenaConfig({ playerCount, pace, style, seed }), [playerCount, pace, style, seed]);
-
-  const requestMotion = useCallback(async () => {
-    const DeviceOrientationEventAny = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<"granted" | "denied"> };
-    try {
-      if (typeof DeviceOrientationEventAny.requestPermission === "function") {
-        const result = await DeviceOrientationEventAny.requestPermission();
-        if (result !== "granted") return;
+    (async()=>{
+      const THREE=await import("three"),RAPIER=await import("@dimforge/rapier3d-compat");await RAPIER.init();if(cancelled)return;
+      const rand=seeded(`${seed}:${generation}`),seedN=seededNumber(seed),s=config.courseScale;
+      const scene=new THREE.Scene();scene.background=new THREE.Color("#050817");scene.fog=new THREE.FogExp2("#080D25",.011);
+      const mobileish=window.matchMedia("(pointer: coarse)").matches||window.innerWidth<800;const camera=new THREE.PerspectiveCamera(mobileish?58:52,1,.08,500);const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;renderer.setPixelRatio(Math.min(devicePixelRatio||1,mobileish?1.25:1.6));renderer.shadowMap.enabled=true;mount.innerHTML="";mount.appendChild(renderer.domElement);
+      scene.add(new THREE.HemisphereLight("#8CF6FF","#07091B",2.05));const sun=new THREE.DirectionalLight("#D9E9FF",3.3);sun.position.set(-16,24,12);sun.castShadow=true;scene.add(sun);const rim=new THREE.DirectionalLight(style.accent,2.6);rim.position.set(15,8,-14);scene.add(rim);scene.add(makeSky(THREE,style.accent));scene.add(makeMountainRing(THREE,48*s,seedN,-3.2,"#10183C"),makeMountainRing(THREE,58*s,seedN+991,-3.5,"#09112B"));
+      const starGeo=new THREE.BufferGeometry(),stars:number[]=[];for(let i=0;i<720;i++){const a=rand()*Math.PI*2,r=80+rand()*100,y=8+rand()*88;stars.push(Math.cos(a)*r,y,Math.sin(a)*r)}starGeo.setAttribute("position",new THREE.Float32BufferAttribute(stars,3));scene.add(new THREE.Points(starGeo,new THREE.PointsMaterial({color:"#CBE8FF",size:.09,transparent:true,opacity:.8})));
+      const world=new RAPIER.World({x:0,y:-PHYSICS.gravity,z:0});
+      const terrainMat=new THREE.MeshPhysicalMaterial({color:style.floor,emissive:new THREE.Color(style.marbleSecondary).multiplyScalar(.13),emissiveIntensity:.7,roughness:.26,metalness:.28,transmission:.16,clearcoat:1,clearcoatRoughness:.12});
+      const edgeMat=new THREE.MeshBasicMaterial({color:style.accent,transparent:true,opacity:.45});
+      const moving:MovingSurface[]=[];
+      const staticMeshes:import("three").Object3D[]=[];
+      const quat=(rx:number,ry:number,rz:number)=>{const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz));return{x:q.x,y:q.y,z:q.z,w:q.w}};
+      function addSurface(name:string,pos:{x:number;y:number;z:number},size:{x:number;y:number;z:number},rot={x:0,y:0,z:0},opts?:{closeAt?:number;drop?:number;duration?:number;color?:string}){
+        const movingSurface=typeof opts?.closeAt==="number";const desc=movingSurface?RAPIER.RigidBodyDesc.kinematicPositionBased():RAPIER.RigidBodyDesc.fixed();desc.setTranslation(pos.x,pos.y,pos.z).setRotation(quat(rot.x,rot.y,rot.z));const body=world.createRigidBody(desc);world.createCollider(RAPIER.ColliderDesc.cuboid(size.x/2,size.y/2,size.z/2).setFriction(.56).setRestitution(.05),body);
+        const mat=opts?.color?new THREE.MeshPhysicalMaterial({color:opts.color,emissive:new THREE.Color(style.accent).multiplyScalar(.1),roughness:.25,metalness:.3,clearcoat:1}):terrainMat;const mesh=new THREE.Mesh(new THREE.BoxGeometry(size.x,size.y,size.z,1,1,1),mat);mesh.position.set(pos.x,pos.y,pos.z);mesh.rotation.set(rot.x,rot.y,rot.z);mesh.receiveShadow=true;mesh.castShadow=true;scene.add(mesh);staticMeshes.push(mesh);
+        const outline=new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry as import("three").BufferGeometry),new THREE.LineBasicMaterial({color:style.accent,transparent:true,opacity:.18}));outline.position.copy(mesh.position);outline.rotation.copy(mesh.rotation);scene.add(outline);staticMeshes.push(outline);
+        if(movingSurface)moving.push({name,body,mesh,base:pos,closeAt:opts!.closeAt!,drop:opts?.drop??8,duration:opts?.duration??4});return body;
       }
-      sensorRef.current.neutralBeta = sensorRef.current.beta;
-      sensorRef.current.neutralGamma = sensorRef.current.gamma;
-      sensorRef.current.active = true;
-      controlModeRef.current = "sensor"; setControlMode("sensor");
-    } catch { /* touch remains available */ }
-  }, []);
+      function addRamp(name:string,x:number,z:number,axis:"x"|"z",dir:number,closeAt?:number){const length=6.8*s,width=5.1*s,angle=.19*dir;const rot=axis==="z"?{x:-angle,y:0,z:0}:{x:0,y:0,z:angle};const size=axis==="z"?{x:width,y:.42,z:length}:{x:length,y:.42,z:width};return addSurface(name,{x,y:.75,z},size,rot,typeof closeAt==="number"?{closeAt}:undefined)}
+      // Four broad districts, elevated summit, ramps, and cross-routes. No perimeter walls.
+      const d=12.5*s, court=9.2*s, thick=.48;
+      addSurface("summit",{x:0,y:1.25,z:0},{x:10.2*s,y:.6,z:10.2*s});
+      addSurface("north court",{x:0,y:0,z:-d},{x:court,y:thick,z:8.2*s},{x:0,y:0,z:0},{closeAt:config.innerCloseAt+10,drop:9});
+      addSurface("south court",{x:0,y:0,z:d},{x:court,y:thick,z:8.2*s},{x:0,y:0,z:0},{closeAt:config.innerCloseAt+4,drop:9});
+      addSurface("west court",{x:-d,y:0,z:0},{x:8.2*s,y:thick,z:court},{x:0,y:0,z:0},{closeAt:config.outerCloseAt,drop:9});
+      addSurface("east court",{x:d,y:0,z:0},{x:8.2*s,y:thick,z:court},{x:0,y:0,z:0},{closeAt:config.outerCloseAt+8,drop:9});
+      addRamp("north ramp",0,-6.3*s,"z",1,config.finalCollapseAt);addRamp("south ramp",0,6.3*s,"z",-1,config.finalCollapseAt);addRamp("west ramp",-6.3*s,0,"x",1,config.finalCollapseAt);addRamp("east ramp",6.3*s,0,"x",-1,config.finalCollapseAt);
+      // Diagonal escape bridges create route choice and prevent center clustering.
+      const bridgeL=8.4*s;[[ -8.4,-8.4,Math.PI/4],[8.4,-8.4,-Math.PI/4],[-8.4,8.4,-Math.PI/4],[8.4,8.4,Math.PI/4]].forEach(([x,z,r],i)=>addSurface(`outer bridge ${i+1}`,{x:x*s/1,z:z*s/1,y:.18},{x:bridgeL,y:.36,z:2.7*s},{x:0,y:r,z:0},{closeAt:config.outerCloseAt+12+i*3,drop:8}));
+      // Skill terrain: buried spheres form smooth hills; fixed posts are intentional bounce objects.
+      const hillMat=new THREE.MeshPhysicalMaterial({color:style.floor,emissive:new THREE.Color(style.marbleSecondary).multiplyScalar(.2),emissiveIntensity:.8,roughness:.2,metalness:.22,clearcoat:1});
+      [[-2.8,-d],[2.9,-d],[-d,2.8],[d,-2.8]].forEach(([x,z],i)=>{const rad=2.2*s;const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,-rad+.25,z));world.createCollider(RAPIER.ColliderDesc.ball(rad).setFriction(.65).setRestitution(.02),body);const mesh=new THREE.Mesh(new THREE.SphereGeometry(rad,32,18),hillMat);mesh.position.set(x,-rad+.25,z);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);staticMeshes.push(mesh)});
+      const bumperMat=new THREE.MeshPhysicalMaterial({color:style.marbleSecondary,emissive:style.accent,emissiveIntensity:1.4,roughness:.16,metalness:.36,clearcoat:1});
+      [[-3.7*s,-d],[3.7*s,-d],[-d,-3.7*s],[d,3.7*s],[-3.2*s,3.2*s],[3.2*s,-3.2*s]].forEach(([x,z])=>{const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,.62,z));world.createCollider(RAPIER.ColliderDesc.cylinder(.62,.62).setRestitution(.8).setFriction(.2),body);const mesh=new THREE.Mesh(new THREE.CylinderGeometry(.62,.68,1.24,28),bumperMat);mesh.position.set(x,.62,z);mesh.castShadow=true;scene.add(mesh);staticMeshes.push(mesh)});
+      // A readable opening floor gate at the north approach: three panels breathe on a fixed rhythm.
+      const gatePanels:MovingSurface[]=[];[-1,0,1].forEach((n)=>{const body=RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(n*2.15*s,.32,-8.9*s);const rb=world.createRigidBody(body);world.createCollider(RAPIER.ColliderDesc.cuboid(.95*s,.16,1.25*s).setFriction(.55),rb);const mesh=new THREE.Mesh(new THREE.BoxGeometry(1.9*s,.32,2.5*s),new THREE.MeshPhysicalMaterial({color:style.walls,emissive:style.accent,emissiveIntensity:.9,roughness:.18,metalness:.35,clearcoat:1}));mesh.position.set(n*2.15*s,.32,-8.9*s);scene.add(mesh);gatePanels.push({name:`pulse panel ${n}`,body:rb,mesh,base:{x:n*2.15*s,y:.32,z:-8.9*s},closeAt:0,drop:2.8,duration:1})});
 
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return;
-    let cancelled = false;
-    let frame = 0;
-    let resizeObserver: ResizeObserver | null = null;
-    let cleanupThree: (() => void) | null = null;
-    const audio = new ArenaAudioEngine();
+      const orbGeo=new THREE.SphereGeometry(PHYSICS.ballRadius,40,28),coreGeo=new THREE.SphereGeometry(PHYSICS.ballRadius*.69,28,18);const orbs:OrbSim[]=[];
+      const spawnCenters=[[0,d],[-d,0],[d,0],[0,-d]];for(let i=0;i<playerCount;i++){const human=i===0,center=spawnCenters[i%spawnCenters.length]!,slot=Math.floor(i/4),a=(slot*2.399+i*.31)%(Math.PI*2),ring=1.15+Math.sqrt(slot)*.62;let x=center[0]+Math.cos(a)*ring,z=center[1]+Math.sin(a)*ring;if(human){x=0;z=d+1.1*s}const color=human?style.marble:orbColor(i,rand),secondary=human?style.marbleSecondary:color;const body=world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x,1.15,z).setLinearDamping(PHYSICS.linearDamping).setAngularDamping(PHYSICS.angularDamping).setCcdEnabled(true));world.createCollider(RAPIER.ColliderDesc.ball(PHYSICS.ballRadius).setDensity(1).setFriction(PHYSICS.friction).setRestitution(.16),body);const mat=makeOrbMaterial(THREE,color,secondary),mesh=new THREE.Mesh(orbGeo,mat);mesh.castShadow=true;const core=new THREE.Mesh(coreGeo,new THREE.MeshBasicMaterial({color:secondary,transparent:true,opacity:.17}));mesh.add(core);const label=makeLabel(THREE,human?"@you":`@${usernames[(i-1)%usernames.length]}`,color);label.position.set(0,1.2,0);mesh.add(label);scene.add(mesh);orbs.push({id:`orb-${i}`,username:human?"@you":`@${usernames[(i-1)%usernames.length]}`,color,body,mesh,core,label,alive:true,isHuman:human,integrity:100,jumpReadyAt:0,airborne:false,personality:(['hunter','survivor','racer','opportunist'] as Personality[])[i%4]!,botHeading:rand()*Math.PI*2,botThinkAt:0,lastLandingVy:0})}
+      const human=orbs[0]!;const shocks:Shockwave[]=[];const pairHits=new Map<string,number>();let cameraShake=0,lastFacing=new THREE.Vector3(0,0,-1),matchStart=0,live=false,resolved=false,lastUi=0,acc=0,prev=performance.now(),simTime=0;
+      const burst=(x:number,y:number,z:number,power:number,color:string)=>{const g=new THREE.SphereGeometry(.5,20,12),m=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.45,wireframe:true}),mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,z);scene.add(mesh);shocks.push({mesh,born:performance.now(),life:260+power*180});cameraShake=Math.max(cameraShake,.05+power*.13)};
+      const eliminate=(o:OrbSim,reason="fell from the course")=>{if(!o.alive)return;o.alive=false;o.body.setEnabled(false);o.mesh.visible=false;const alive=orbs.filter(v=>v.alive);setSurvivors(alive.length);if(o.isHuman){setPhase("eliminated");setEventText("YOU'RE OUT · SPECTATING");audio.eliminated()}else setEventText(`${o.username} ${reason}`);if(alive.length<=1&&!resolved){resolved=true;const w=alive[0];setWinner(w?.username??null);if(w?.isHuman){setPhase("won");audio.victory()}else setPhase("finished");setEventText(w ? `${w.username} WINS` : "MATCH COMPLETE")}}
+      const grounded=(o:OrbSim)=>{const p=o.body.translation(),v=o.body.linvel();return Math.abs(v.y)<.62&&p.y<3.4};
+      const jump=(o:OrbSim)=>{if(!live||!o.alive)return;const now=performance.now();if(now<o.jumpReadyAt||!grounded(o))return;const v=o.body.linvel();o.body.setLinvel({x:v.x,y:config.jumpImpulse,z:v.z},true);o.jumpReadyAt=now+config.jumpCooldownMs;o.airborne=true;if(o.isHuman)audio.jump()};jumpRef.current=()=>jump(human);
+      const start=()=>{if(live)return;setPhase("countdown");audio.startMusic();let n=3;setCountdown(n);const timer=window.setInterval(()=>{n-=1;setCountdown(n);if(n<=0){window.clearInterval(timer);setCountdown(0);setPhase("playing");setEventText("COURSE OPEN · BUILD SPEED");matchStart=performance.now();live=true}},650)};startRef.current=start;
 
-    setPhase("ready"); setSurvivors(playerCount); setElapsed(0); setWinner(null); setEventText("LAST ORB STANDING"); setBumpCooldown(0);
-
-    const orientation = (event: DeviceOrientationEvent) => {
-      sensorRef.current.beta = event.beta ?? 0;
-      sensorRef.current.gamma = event.gamma ?? 0;
-    };
-    window.addEventListener("deviceorientation", orientation);
-    if ("DeviceOrientationEvent" in window) setSensorAvailable(true);
-    if (window.matchMedia("(pointer: coarse)").matches) { controlModeRef.current = "touch"; setControlMode("touch"); }
-
-    const onKey = (event: KeyboardEvent, down: boolean) => {
-      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","KeyW","KeyA","KeyS","KeyD","Space"].includes(event.code)) event.preventDefault();
-      if (event.code === "ArrowUp" || event.code === "KeyW") controlsRef.current.up = down;
-      if (event.code === "ArrowDown" || event.code === "KeyS") controlsRef.current.down = down;
-      if (event.code === "ArrowLeft" || event.code === "KeyA") controlsRef.current.left = down;
-      if (event.code === "ArrowRight" || event.code === "KeyD") controlsRef.current.right = down;
-      if (event.code === "Space" && down && !event.repeat) bumpRef.current();
-    };
-    const kd = (e: KeyboardEvent) => onKey(e, true);
-    const ku = (e: KeyboardEvent) => onKey(e, false);
-    window.addEventListener("keydown", kd, { passive: false });
-    window.addEventListener("keyup", ku, { passive: false });
-
-    (async () => {
-      const THREE = await import("three");
-      const RAPIER = await import("@dimforge/rapier3d-compat");
-      await RAPIER.init();
-      if (cancelled) return;
-
-      const scene = new THREE.Scene();
-      scene.background = new THREE.Color("#030612");
-      scene.fog = new THREE.FogExp2(style.floor, 0.018);
-      const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 300);
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      renderer.outputColorSpace = THREE.SRGBColorSpace;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.15;
-      renderer.shadowMap.enabled = true;
-      mount.innerHTML = "";
-      mount.appendChild(renderer.domElement);
-
-      const ambient = new THREE.HemisphereLight(style.marbleSecondary, "#050818", 1.65);
-      scene.add(ambient);
-      const sun = new THREE.DirectionalLight("#ffffff", 3.2);
-      sun.position.set(-10, 18, 7); sun.castShadow = true; scene.add(sun);
-      const rim = new THREE.PointLight(style.accent, 85, 60, 2); rim.position.set(0, 10, -10); scene.add(rim);
-
-      const stars = new THREE.BufferGeometry();
-      const starPos: number[] = [];
-      const rand = seeded(`${seed}:${generation}`);
-      for (let i = 0; i < 700; i += 1) {
-        const a = rand() * Math.PI * 2, r = 35 + rand() * 110, y = 4 + rand() * 55;
-        starPos.push(Math.cos(a) * r, y, Math.sin(a) * r);
-      }
-      stars.setAttribute("position", new THREE.Float32BufferAttribute(starPos, 3));
-      scene.add(new THREE.Points(stars, new THREE.PointsMaterial({ color: "#b8d8ff", size: 0.13, transparent: true, opacity: 0.75 })));
-
-      const world = new RAPIER.World({ x: 0, y: -PHYSICS.gravity, z: 0 });
-      const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.18, 0));
-      world.createCollider(RAPIER.ColliderDesc.cylinder(0.18, config.radius).setFriction(PHYSICS.friction).setRestitution(PHYSICS.restitution), floorBody);
-
-      const floorGeo = new THREE.CylinderGeometry(config.radius, config.radius * 1.025, 0.36, 96, 1, false);
-      const floorMat = new THREE.MeshPhysicalMaterial({ color: style.floor, emissive: new THREE.Color(style.accent).multiplyScalar(0.12), roughness: 0.28, metalness: 0.48, transmission: 0.2, clearcoat: 1 });
-      const floorMesh = new THREE.Mesh(floorGeo, floorMat); floorMesh.position.y = -0.18; floorMesh.receiveShadow = true; scene.add(floorMesh);
-      const rings: import("three").Mesh[] = [];
-      for (let i = 0; i < 6; i += 1) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(config.radius * (0.24 + i * 0.145), 0.035, 8, 120), new THREE.MeshBasicMaterial({ color: i % 2 ? style.marbleSecondary : style.accent, transparent: true, opacity: 0.42 }));
-        ring.rotation.x = Math.PI / 2; ring.position.y = 0.025; scene.add(ring); rings.push(ring);
-      }
-      const boundary = new THREE.Mesh(new THREE.TorusGeometry(config.radius, 0.09, 10, 160), new THREE.MeshBasicMaterial({ color: style.accent, transparent: true, opacity: 0.9 }));
-      boundary.rotation.x = Math.PI / 2; boundary.position.y = 0.06; scene.add(boundary);
-
-      const sweeperGroup = new THREE.Group();
-      const sweeper = new THREE.Mesh(new THREE.BoxGeometry(config.radius * 1.3, 0.28, 0.22), new THREE.MeshStandardMaterial({ color: style.walls, emissive: style.accent, emissiveIntensity: 0.6, roughness: 0.22 }));
-      sweeper.position.x = config.radius * 0.33; sweeper.position.y = 0.36; sweeper.castShadow = true; sweeperGroup.add(sweeper); scene.add(sweeperGroup);
-      const sweeperBody = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(config.radius * 0.33, 0.36, 0));
-      world.createCollider(RAPIER.ColliderDesc.cuboid(config.radius * 0.65, 0.14, 0.11).setFriction(0.1).setRestitution(0.95), sweeperBody);
-
-      const orbGeo = new THREE.SphereGeometry(PHYSICS.ballRadius, 32, 22);
-      const orbs: OrbSim[] = [];
-      const spawnRadius = Math.max(2.8, config.radius * 0.72);
-      for (let i = 0; i < playerCount; i += 1) {
-        const isHuman = i === 0;
-        const a = (i / playerCount) * Math.PI * 2 + rand() * 0.08;
-        const r = spawnRadius * (0.82 + rand() * 0.17);
-        const primary = isHuman ? style.marble : orbColor(i, rand);
-        const secondary = isHuman ? style.marbleSecondary : orbColor(i + 53, rand);
-        const mesh = new THREE.Mesh(orbGeo, makeOrbMaterial(THREE, primary, secondary, style.accent));
-        mesh.castShadow = true;
-        mesh.position.set(Math.cos(a) * r, PHYSICS.ballRadius + 0.03, Math.sin(a) * r);
-        const username = isHuman ? "@you" : `@${usernames[(i - 1) % usernames.length]}${i > usernames.length ? String(i) : ""}`;
-        const label = makeLabel(THREE, username, primary); mesh.add(label); scene.add(mesh);
-        const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(mesh.position.x, mesh.position.y, mesh.position.z).setLinearDamping(PHYSICS.linearDamping).setAngularDamping(PHYSICS.angularDamping).setCcdEnabled(true));
-        world.createCollider(RAPIER.ColliderDesc.ball(PHYSICS.ballRadius).setDensity(1).setFriction(PHYSICS.friction).setRestitution(0.23), body);
-        orbs.push({ id: `orb-${i}`, username, color: primary, secondary, body, mesh, label, alive: true, isHuman, bumpReadyAt: 0, botHeading: rand() * Math.PI * 2, botThinkAt: 0 });
-      }
-      const human = orbs[0]!;
-
-      let live = false;
-      let startAt = 0;
-      let simTime = 0;
-      let last = performance.now() / 1000;
-      let accumulator = 0;
-      let activeRadius = config.radius;
-      let lastPulse = -999;
-      let pulseTarget: OrbSim | null = null;
-      let pulseAt = 0;
-      let lastUiUpdate = 0;
-      let resolved = false;
-
-      const eliminate = (orb: OrbSim, reason = "fell into the void") => {
-        if (!orb.alive) return;
-        orb.alive = false;
-        orb.mesh.visible = false;
-        orb.body.setEnabled(false);
-        const alive = orbs.filter(o => o.alive);
-        setSurvivors(alive.length);
-        if (orb.isHuman) { setPhase("eliminated"); setEventText("YOU'RE OUT · SPECTATING"); audio.eliminated(); }
-        else if (alive.length > 1) setEventText(`${orb.username} ${reason.toUpperCase()}`);
-        if (alive.length === 1 && !resolved) {
-          resolved = true; live = false;
-          const winnerOrb = alive[0]!;
-          setWinner(winnerOrb.username);
-          setEventText(`${winnerOrb.username} WINS`);
-          setPhase(winnerOrb.isHuman ? "won" : "finished");
-          audio.victory();
-        }
-      };
-
-      const doBump = (orb: OrbSim, nowMs: number) => {
-        if (!live || !orb.alive || nowMs < orb.bumpReadyAt) return;
-        const v = orb.body.linvel();
-        let dx = v.x, dz = v.z;
-        const mag = Math.hypot(dx, dz);
-        if (mag < 0.25) {
-          const p = orb.body.translation(); const towardCenter = Math.atan2(-p.z, -p.x);
-          dx = Math.cos(towardCenter); dz = Math.sin(towardCenter);
-        } else { dx /= mag; dz /= mag; }
-        orb.body.applyImpulse({ x: dx * config.bumpImpulse, y: 0.16, z: dz * config.bumpImpulse }, true);
-        orb.bumpReadyAt = nowMs + config.bumpCooldownMs;
-        if (orb.isHuman) { setBumpCooldown(1); audio.bump(); }
-      };
-      bumpRef.current = () => doBump(human, performance.now());
-
-      const begin = () => {
-        if (live || resolved) return;
-        let n = 3; setCountdown(n); setPhase("countdown");
-        const timer = window.setInterval(() => {
-          n -= 1; setCountdown(n);
-          if (n <= 0) {
-            window.clearInterval(timer); live = true; startAt = performance.now() / 1000; setPhase("playing"); setEventText(`${playerCount} ORBS ENTER`); audio.startMusic();
-          }
-        }, 650);
-      };
-      startRef.current = begin;
-
-      const resize = () => {
-        const rect = mount.getBoundingClientRect(); if (!rect.width || !rect.height) return;
-        renderer.setSize(rect.width, rect.height, false); camera.aspect = rect.width / rect.height; camera.updateProjectionMatrix();
-      };
-      resizeObserver = new ResizeObserver(resize); resizeObserver.observe(mount); resize();
-
-      const updateCamera = () => {
-        const survivorsNow = orbs.filter(o => o.alive);
-        let targetX = 0, targetZ = 0;
-        if (human.alive) { const p = human.body.translation(); targetX = p.x * 0.18; targetZ = p.z * 0.18; }
-        else if (survivorsNow.length) { const p = survivorsNow[0]!.body.translation(); targetX = p.x * 0.12; targetZ = p.z * 0.12; }
-        const dist = Math.max(15, activeRadius * 1.48);
-        camera.position.lerp(new THREE.Vector3(targetX, dist * 0.92, targetZ + dist * 0.66), 0.045);
-        camera.lookAt(targetX, 0, targetZ);
-      };
-
-      const render = (ms: number) => {
-        frame = requestAnimationFrame(render);
-        const now = ms / 1000;
-        const dt = clamp(now - last, 0, 0.05); last = now; accumulator = Math.min(accumulator + dt, PHYSICS.fixedStep * 5);
-        if (live) {
-          const matchElapsed = now - startAt;
-          activeRadius = arenaRadiusAt(config, matchElapsed, orbs.filter(o => o.alive).length);
-          const scale = activeRadius / config.radius;
-          floorMesh.scale.set(scale, 1, scale); boundary.scale.setScalar(scale);
-          rings.forEach((ring, i) => { const local = Math.min(1, scale / (0.24 + i * 0.145)); ring.visible = local > 0.86; });
-          const intensity = clamp(Math.max(matchElapsed / config.maxSeconds, 1 - orbs.filter(o => o.alive).length / playerCount), 0, 1);
-          audio.setIntensity(intensity);
-          if (matchElapsed > config.suddenDeathAt && Math.floor(matchElapsed) % 6 === 0) setEventText("SUDDEN DEATH");
-
-          if (matchElapsed > config.suddenDeathAt && matchElapsed - lastPulse >= config.voidPulseInterval) {
-            const candidates = orbs.filter(o => o.alive).sort((a,b) => {
-              const pa = a.body.translation(), pb = b.body.translation();
-              return Math.hypot(pb.x,pb.z)-Math.hypot(pa.x,pa.z);
-            });
-            pulseTarget = candidates[0] ?? null; pulseAt = matchElapsed; lastPulse = matchElapsed;
-            if (pulseTarget) setEventText(`VOID PULSE · ${pulseTarget.username}`);
-          }
-          if (pulseTarget && pulseTarget.alive && matchElapsed - pulseAt > 1.35) {
-            const p = pulseTarget.body.translation(); const mag = Math.max(0.1, Math.hypot(p.x,p.z));
-            pulseTarget.body.applyImpulse({ x: (p.x/mag)*5.2, y: 1.4, z: (p.z/mag)*5.2 }, true);
-            pulseTarget = null;
-          }
-
-          while (accumulator >= PHYSICS.fixedStep) {
-            simTime += PHYSICS.fixedStep;
-            const angle = simTime * (0.3 + intensity * 0.75);
-            sweeperGroup.rotation.y = angle;
-            sweeperBody.setNextKinematicTranslation({ x: Math.cos(angle) * config.radius * 0.33, y: 0.36, z: -Math.sin(angle) * config.radius * 0.33 });
-            const half = -angle / 2;
-            sweeperBody.setNextKinematicRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
-
-            for (const orb of orbs) {
-              if (!orb.alive) continue;
-              let inputX = 0, inputY = 0;
-              if (orb.isHuman) {
-                const keys = controlsRef.current;
-                inputX = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-                inputY = (keys.up ? 1 : 0) - (keys.down ? 1 : 0);
-                if (controlModeRef.current === "touch") { inputX = keys.touchX; inputY = keys.touchY; }
-                if (sensorRef.current.active && controlModeRef.current === "sensor") {
-                  inputX = clamp((sensorRef.current.gamma - sensorRef.current.neutralGamma) / PHYSICS.sensorFullScaleDeg, -1, 1);
-                  inputY = clamp(-(sensorRef.current.beta - sensorRef.current.neutralBeta) / PHYSICS.sensorFullScaleDeg, -1, 1);
-                }
-              } else {
-                const p = orb.body.translation();
-                if (simTime >= orb.botThinkAt) {
-                  const enemies = orbs.filter(o => o.alive && o !== orb);
-                  const target = enemies[Math.floor(rand() * Math.max(1, enemies.length))];
-                  const edgeDanger = Math.hypot(p.x,p.z) > activeRadius * 0.72;
-                  if (edgeDanger) orb.botHeading = Math.atan2(-p.z, -p.x) + (rand()-0.5)*0.45;
-                  else if (target && rand() > 0.25) { const tp = target.body.translation(); orb.botHeading = Math.atan2(tp.z-p.z, tp.x-p.x) + (rand()-0.5)*0.42; }
-                  else orb.botHeading += (rand()-0.5)*1.8;
-                  orb.botThinkAt = simTime + 0.25 + rand()*0.45;
-                  if (target && rand() < 0.18) doBump(orb, performance.now());
-                }
-                inputX = Math.cos(orb.botHeading); inputY = -Math.sin(orb.botHeading);
-              }
-              const v = orb.body.linvel();
-              const steered = nextPlanarVelocity({ x: v.x, z: v.z }, inputX, inputY, orb.isHuman && controlModeRef.current === "keys" ? "desktop" : "mobile");
-              orb.body.setLinvel({ x: steered.x, y: v.y, z: steered.z }, true);
-            }
-            world.step();
-            for (const orb of orbs) {
-              if (!orb.alive) continue;
-              const v = orb.body.linvel();
-              const clamped = clampPlanarSpeed({ x: v.x, z: v.z }, orb.isHuman && controlModeRef.current === "keys" ? "desktop" : "mobile");
-              if (clamped.x !== v.x || clamped.z !== v.z) orb.body.setLinvel({ x: clamped.x, y: v.y, z: clamped.z }, true);
-              const p = orb.body.translation();
-              if (p.y < -1.5 || Math.hypot(p.x,p.z) > activeRadius + PHYSICS.ballRadius * 0.58) eliminate(orb);
-            }
-            if (!resolved && matchElapsed >= config.maxSeconds) {
-              const alive = orbs.filter(o => o.alive).sort((a,b) => {
-                const pa=a.body.translation(), pb=b.body.translation(); return Math.hypot(pa.x,pa.z)-Math.hypot(pb.x,pb.z);
-              });
-              alive.slice(1).forEach(o => eliminate(o, "lost the final collapse"));
-            }
-            accumulator -= PHYSICS.fixedStep;
-          }
-
-          if (now - lastUiUpdate > 0.1) {
-            lastUiUpdate = now; setElapsed(matchElapsed);
-            if (human.bumpReadyAt > performance.now()) setBumpCooldown(clamp((human.bumpReadyAt-performance.now())/config.bumpCooldownMs,0,1)); else setBumpCooldown(0);
-          }
-        }
-
-        orbs.forEach(orb => {
-          if (!orb.alive) return;
-          const p = orb.body.translation(), q = orb.body.rotation();
-          orb.mesh.position.set(p.x,p.y,p.z); orb.mesh.quaternion.set(q.x,q.y,q.z,q.w);
-          orb.label.quaternion.copy(camera.quaternion);
-        });
-        if (pulseTarget?.alive) {
-          const pulse = 1 + Math.sin(ms * 0.018) * 0.22;
-          pulseTarget.mesh.scale.setScalar(pulse);
-        }
-        orbs.forEach(o => { if (o !== pulseTarget) o.mesh.scale.setScalar(1); });
-        const aliveForGlow = orbs.filter(o => o.alive).length;
-        floorMat.emissiveIntensity = 0.08 + Math.sin(ms*0.0018)*0.025 + (live ? Math.max(0,1-aliveForGlow/playerCount)*0.15 : 0);
-        updateCamera(); renderer.render(scene,camera);
-      };
-      render(performance.now());
-
-      cleanupThree = () => {
-        cancelAnimationFrame(frame); resizeObserver?.disconnect();
-        orbs.forEach(o => { (o.mesh.material as import("three").Material).dispose(); (o.label.material as import("three").Material).dispose(); });
-        orbGeo.dispose(); floorGeo.dispose(); floorMat.dispose(); renderer.dispose(); mount.innerHTML = "";
-      };
+      function handleImpacts(now:number){const cellSize=1.15,buckets=new Map<string,OrbSim[]>();for(const o of orbs){if(!o.alive)continue;const p=o.body.translation(),k=`${Math.floor(p.x/cellSize)},${Math.floor(p.z/cellSize)}`;const b=buckets.get(k);if(b)b.push(o);else buckets.set(k,[o])}const seen=new Set<string>();for(const [key,bucket] of buckets){const [cx,cz]=key.split(',').map(Number);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const other=buckets.get(`${cx!+dx},${cz!+dz}`);if(!other)continue;for(const a of bucket)for(const b of other){if(a===b)continue;const pk=a.id<b.id?`${a.id}:${b.id}`:`${b.id}:${a.id}`;if(seen.has(pk))continue;seen.add(pk);const pa=a.body.translation(),pb=b.body.translation(),nx=pb.x-pa.x,nz=pb.z-pa.z,dist=Math.hypot(nx,nz);if(dist>PHYSICS.ballRadius*2.35||dist<.001)continue;const va=a.body.linvel(),vb=b.body.linvel(),ux=nx/dist,uz=nz/dist,closing=Math.max(0,-((vb.x-va.x)*ux+(vb.z-va.z)*uz));const last=pairHits.get(pk)??0;if(closing<1.45||now-last<190)continue;pairHits.set(pk,now);const sa=Math.hypot(va.x,va.z),sb=Math.hypot(vb.x,vb.z),power=clamp((closing-1.2)/3.8,0,1);let attacker=a,target=b;if(sb>sa){attacker=b;target=a}const damage=clamp((closing-1.25)*config.impactDamageScale,2,24);target.integrity=Math.max(0,target.integrity-damage);attacker.integrity=Math.max(0,attacker.integrity-damage*.18);const vulnerability=1+(100-target.integrity)/105;target.body.applyImpulse({x:(target===b?ux:-ux)*(.6+power*1.55)*vulnerability,y:.08+power*.33,z:(target===b?uz:-uz)*(.6+power*1.55)*vulnerability},true);const mx=(pa.x+pb.x)/2,my=(pa.y+pb.y)/2,mz=(pa.z+pb.z)/2;burst(mx,my,mz,power,target.color);audio.bump(.35+power*.9);if(power>.48)setEventText(`${attacker.username} CRUSHED ${target.username} · ${Math.round(damage)} IMPACT`);if(a.isHuman||b.isHuman)setIntegrity(Math.round(human.integrity));if(target.integrity<=0){burst(pb.x,pb.y,pb.z,1,target.color);eliminate(target,"SHATTERED")}}}}}
+      function updateMoving(matchElapsed:number){for(const surface of moving){const p=clamp((matchElapsed-surface.closeAt)/surface.duration,0,1),e=p*p*(3-2*p),y=surface.base.y-e*surface.drop;surface.body.setNextKinematicTranslation({x:surface.base.x,y,z:surface.base.z});surface.mesh.position.y=y;const mat=surface.mesh.material as import("three").MeshPhysicalMaterial;if(matchElapsed>surface.closeAt-4&&matchElapsed<surface.closeAt)mat.emissiveIntensity=1.2+Math.sin(matchElapsed*8)*.8}const gateStart=config.outerCloseAt*.55;for(let i=0;i<gatePanels.length;i++){const g=gatePanels[i]!,t=Math.max(0,matchElapsed-gateStart),wave=(Math.sin(t*.92+i*.85)+1)/2,drop=t>0?Math.pow(wave,4)*2.6:0;g.body.setNextKinematicTranslation({x:g.base.x,y:g.base.y-drop,z:g.base.z});g.mesh.position.y=g.base.y-drop}}
+      function botInput(o:OrbSim,nowSec:number){const p=o.body.translation();if(nowSec>=o.botThinkAt){const enemies=orbs.filter(v=>v.alive&&v!==o);let target=enemies[0];let best=Infinity;for(const e of enemies){const ep=e.body.translation(),dd=Math.hypot(ep.x-p.x,ep.z-p.z);if(dd<best){best=dd;target=e}}const edge=Math.hypot(p.x,p.z)>config.radius*.86;if(edge||o.personality==="survivor"){o.botHeading=Math.atan2(-p.z,-p.x)+(rand()-.5)*.6}else if(target&&(o.personality==="hunter"||o.personality==="opportunist"&&rand()>.35)){const tp=target.body.translation();o.botHeading=Math.atan2(tp.z-p.z,tp.x-p.x)+(rand()-.5)*.28}else{o.botHeading+= (rand()-.5)*1.35}o.botThinkAt=nowSec+.22+rand()*.4;if(target&&best<2.5&&rand()<.22)jump(o)}return{x:Math.cos(o.botHeading),y:-Math.sin(o.botHeading)}}
+      const resize=()=>{const r=mount.getBoundingClientRect();renderer.setSize(Math.max(1,r.width),Math.max(1,r.height),false);camera.aspect=r.width/Math.max(1,r.height);camera.updateProjectionMatrix()};const ro=new ResizeObserver(resize);ro.observe(mount);resize();
+      const camPos=new THREE.Vector3(),look=new THREE.Vector3(),desired=new THREE.Vector3();
+      const render=(ms:number)=>{if(cancelled)return;frame=requestAnimationFrame(render);const dt=Math.min(.05,(ms-prev)/1000);prev=ms;const matchElapsed=live?(ms-matchStart)/1000:0;if(live&&!resolved){setElapsed(matchElapsed);updateMoving(matchElapsed);const alive=orbs.filter(o=>o.alive).length;audio.setIntensity(clamp(Math.max(matchElapsed/config.maxSeconds,1-alive/playerCount),0,1));if(matchElapsed>config.finalCollapseAt)setEventText("FINAL SUMMIT · FLOOR COLLAPSING");else if(matchElapsed>config.suddenDeathAt)setEventText("SUDDEN DEATH · REACH THE SUMMIT");else if(matchElapsed>config.innerCloseAt)setEventText("INNER COURSE CLOSING");else if(matchElapsed>config.outerCloseAt)setEventText("OUTER COURSE DROPPING");acc+=dt;while(acc>=PHYSICS.fixedStep){simTime+=PHYSICS.fixedStep;for(const o of orbs){if(!o.alive)continue;let ix=0,iy=0;if(o.isHuman){const k=controlsRef.current;ix=(k.right?1:0)-(k.left?1:0);iy=(k.up?1:0)-(k.down?1:0);if(controlModeRef.current==="touch"){ix=k.touchX;iy=k.touchY}else if(controlModeRef.current==="sensor"&&sensorRef.current.active){ix=clamp((sensorRef.current.gamma-sensorRef.current.neutralGamma)/PHYSICS.sensorFullScaleDeg,-1,1);iy=clamp(-(sensorRef.current.beta-sensorRef.current.neutralBeta)/PHYSICS.sensorFullScaleDeg,-1,1)}}else{const b=botInput(o,simTime);ix=b.x;iy=b.y}const v=o.body.linvel(),steer=nextPlanarVelocity({x:v.x,z:v.z},ix,iy,o.isHuman&&controlModeRef.current==="keys"?"desktop":"mobile");o.body.setLinvel({x:steer.x,y:v.y,z:steer.z},true)}world.step();handleImpacts(performance.now());for(const o of orbs){if(!o.alive)continue;const v=o.body.linvel(),cl=clampPlanarSpeed({x:v.x,z:v.z},o.isHuman&&controlModeRef.current==="keys"?"desktop":"mobile");if(cl.x!==v.x||cl.z!==v.z)o.body.setLinvel({x:cl.x,y:v.y,z:cl.z},true);const p=o.body.translation();if(o.airborne&&Math.abs(v.y)<.55&&p.y<3.4)o.airborne=false;if(p.y<-4.5||Math.hypot(p.x,p.z)>config.radius*1.36)eliminate(o,"fell into the void")}acc-=PHYSICS.fixedStep}if(matchElapsed>=config.maxSeconds&&!resolved){const aliveOrbs=orbs.filter(o=>o.alive).sort((a,b)=>b.integrity-a.integrity);aliveOrbs.slice(1).forEach(o=>eliminate(o,"lost sudden death"))}if(ms-lastUi>100){lastUi=ms;setSurvivors(orbs.filter(o=>o.alive).length);setIntegrity(Math.round(human.integrity));setJumpCooldown(clamp((human.jumpReadyAt-performance.now())/config.jumpCooldownMs,0,1))}}
+        for(const o of orbs){if(!o.alive)continue;const p=o.body.translation(),q=o.body.rotation();o.mesh.position.set(p.x,p.y,p.z);o.mesh.quaternion.set(q.x,q.y,q.z,q.w);o.label.quaternion.copy(camera.quaternion);const damage=1-o.integrity/100;(o.mesh.material as import("three").MeshPhysicalMaterial).emissiveIntensity=1.05+damage*1.8+Math.sin(ms*.012)*damage*.45;o.core.scale.setScalar(1+damage*.18)}for(let i=shocks.length-1;i>=0;i--){const sh=shocks[i]!,age=ms-sh.born,t=age/sh.life;if(t>=1){scene.remove(sh.mesh);(sh.mesh.geometry as import("three").BufferGeometry).dispose();(sh.mesh.material as import("three").Material).dispose();shocks.splice(i,1)}else{sh.mesh.scale.setScalar(1+t*3.5);(sh.mesh.material as import("three").MeshBasicMaterial).opacity=.42*(1-t)}}
+        const focus=human.alive?human:orbs.find(o=>o.alive);if(focus){const p=focus.body.translation(),v=focus.body.linvel(),speed=Math.hypot(v.x,v.z);if(speed>.3)lastFacing.lerp(new THREE.Vector3(v.x,0,v.z).normalize(),.12);const back=mobileish?7.8:6.5,height=mobileish?4.6:3.9;desired.set(p.x-lastFacing.x*back,p.y+height,p.z-lastFacing.z*back);if(cameraShake>.002){desired.x+=(rand()-.5)*cameraShake;desired.y+=(rand()-.5)*cameraShake;desired.z+=(rand()-.5)*cameraShake;cameraShake*=.86}camera.position.lerp(desired,1-Math.exp(-dt*7.2));look.set(p.x+lastFacing.x*(2.0+speed*.15),p.y+.25,p.z+lastFacing.z*(2.0+speed*.15));camera.lookAt(look)}renderer.render(scene,camera)};render(performance.now());
+      cleanupThree=()=>{cancelAnimationFrame(frame);ro.disconnect();audio.stop();orbGeo.dispose();coreGeo.dispose();terrainMat.dispose();edgeMat.dispose();renderer.dispose();mount.innerHTML=""};
     })();
+    return()=>{cancelled=true;cleanupThree?.();audio.stop();window.removeEventListener("deviceorientation",orientation);window.removeEventListener("keydown",kd);window.removeEventListener("keyup",ku)};
+  },[config,generation,playerCount,seed,style]);
 
-    return () => {
-      cancelled = true; cleanupThree?.(); audio.stop(); window.removeEventListener("deviceorientation", orientation); window.removeEventListener("keydown", kd); window.removeEventListener("keyup", ku);
-    };
-  }, [config, generation, playerCount, seed, style]);
-
-  const touchStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => { event.currentTarget.setPointerCapture(event.pointerId); }, []);
-  const touchMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    const r = event.currentTarget.getBoundingClientRect(); const x=(event.clientX-(r.left+r.width/2))/(r.width*.36); const y=(event.clientY-(r.top+r.height/2))/(r.height*.36);
-    const mag=Math.max(1,Math.hypot(x,y)); controlsRef.current.touchX=clamp(x/mag,-1,1); controlsRef.current.touchY=clamp(-y/mag,-1,1);
-  }, []);
-  const touchEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => { controlsRef.current.touchX=0; controlsRef.current.touchY=0; try{event.currentTarget.releasePointerCapture(event.pointerId);}catch{} }, []);
-
-  const timeLeft = Math.max(0, config.maxSeconds - elapsed);
-  return <div className="arena-sandbox-game">
-    <div ref={mountRef} className="arena-sandbox-canvas" />
-    <div className="arena-hud arena-hud-top">
-      <div><span>ORBS REMAIN</span><strong>{survivors}</strong></div>
-      <div className="arena-event"><strong>{eventText}</strong><small>{Math.floor(timeLeft/60)}:{String(Math.floor(timeLeft%60)).padStart(2,"0")} · radius {arenaRadiusAt(config,elapsed,survivors).toFixed(1)}m</small></div>
-      <div><span>PLAYERS</span><strong>{playerCount}</strong></div>
-    </div>
-    {phase === "ready" ? <div className="arena-center-card"><span>ADMIN ARENA DEMO</span><h3>LAST ORB STANDING</h3><p>Arrow keys / WASD to roll. Space to BUMP. Stay on the shrinking floor.</p><button className="btn-primary" onClick={()=>startRef.current()}>Enter Arena →</button></div> : null}
-    {phase === "countdown" ? <div className="arena-countdown">{countdown || "GO"}</div> : null}
-    {(phase === "eliminated" || phase === "finished" || phase === "won") ? <div className="arena-result-card"><span>{phase === "eliminated" ? "SPECTATING" : "MATCH COMPLETE"}</span><h3>{phase === "won" ? "YOU WIN" : winner ? `${winner} WINS` : "YOU'RE OUT"}</h3><p>{phase === "eliminated" ? `${survivors} Orbs remain. The camera stays live until one survives.` : "Last Orb standing takes the prize."}</p></div> : null}
-    {(phase === "playing" || phase === "eliminated") ? <div className="arena-bump-wrap"><button className="arena-bump" onClick={()=>bumpRef.current()} disabled={phase === "eliminated" || bumpCooldown>0.02}><span>BUMP</span><i style={{transform:`scaleX(${1-bumpCooldown})`}} /></button></div> : null}
-    {(phase === "playing" || phase === "eliminated") && controlMode === "touch" ? <div className="game-touch-pad arena-touch" onPointerDown={touchStart} onPointerMove={touchMove} onPointerUp={touchEnd} onPointerCancel={touchEnd}><div className="game-touch-knob" /></div> : null}
-    {sensorAvailable && phase === "playing" ? <div className="arena-controls"><button onClick={()=>void requestMotion()}>{controlMode === "sensor" ? "Tilt active" : "Enable tilt"}</button>{controlMode === "sensor"?<button onClick={()=>{controlModeRef.current="touch";setControlMode("touch")}}>Touch control</button>:null}</div> : null}
-  </div>;
+  const touchStart=useCallback((e:React.PointerEvent<HTMLDivElement>)=>e.currentTarget.setPointerCapture(e.pointerId),[]);const touchMove=useCallback((e:React.PointerEvent<HTMLDivElement>)=>{if(!e.currentTarget.hasPointerCapture(e.pointerId))return;const r=e.currentTarget.getBoundingClientRect(),x=(e.clientX-(r.left+r.width/2))/(r.width*.36),y=(e.clientY-(r.top+r.height/2))/(r.height*.36),m=Math.max(1,Math.hypot(x,y));controlsRef.current.touchX=clamp(x/m,-1,1);controlsRef.current.touchY=clamp(-y/m,-1,1)},[]);const touchEnd=useCallback((e:React.PointerEvent<HTMLDivElement>)=>{controlsRef.current.touchX=0;controlsRef.current.touchY=0;try{e.currentTarget.releasePointerCapture(e.pointerId)}catch{}},[]);
+  const left=Math.max(0,config.maxSeconds-elapsed);return <div className="arena-sandbox-game arena-course-game"><div ref={mountRef} className="arena-sandbox-canvas"/><div className="arena-hud arena-hud-top"><div><span>ORBS REMAIN</span><strong>{survivors}</strong></div><div className="arena-event"><strong>{eventText}</strong><small>{Math.floor(left/60)}:{String(Math.floor(left%60)).padStart(2,"0")} · integrity {integrity}%</small></div><div><span>INTEGRITY</span><strong>{integrity}</strong></div></div>{phase==="ready"?<div className="arena-center-card"><span>ADMIN ARENA COURSE</span><h3>LAST ORB STANDING</h3><p>Roll the terrain. Build speed. Jump gaps and attacks. Hard impacts damage integrity and make opponents easier to launch.</p><button className="btn-primary" onClick={()=>startRef.current()}>Enter Arena →</button></div>:null}{phase==="countdown"?<div className="arena-countdown">{countdown||"GO"}</div>:null}{(phase==="eliminated"||phase==="finished"||phase==="won")?<div className="arena-result-card"><span>{phase==="eliminated"?"SPECTATING":"MATCH COMPLETE"}</span><h3>{phase==="won"?"YOU WIN":winner?`${winner} WINS`:"YOU'RE OUT"}</h3><p>{phase==="eliminated"?`${survivors} Orbs remain. Stay and watch the course close toward the summit.`:"Last Orb standing takes the prize."}</p></div>:null}{phase==="playing"?<div className="arena-jump-wrap"><button className="arena-jump" onClick={()=>jumpRef.current()} disabled={jumpCooldown>0.02}><span>JUMP</span><i style={{transform:`scaleX(${1-jumpCooldown})`}}/></button></div>:null}{phase==="playing"&&controlMode==="touch"?<div className="game-touch-pad arena-touch" onPointerDown={touchStart} onPointerMove={touchMove} onPointerUp={touchEnd} onPointerCancel={touchEnd}><div className="game-touch-knob"/></div>:null}{sensorAvailable&&phase==="playing"?<div className="arena-controls"><button onClick={()=>void requestMotion()}>{controlMode==="sensor"?"Tilt active":"Enable tilt"}</button>{controlMode==="sensor"?<button onClick={()=>{controlModeRef.current="touch";setControlMode("touch")}}>Touch control</button>:null}</div>:null}<div className="arena-control-hint"><span className="arena-desktop-hint">ARROWS / WASD · ROLL &nbsp;&nbsp; SPACE · JUMP</span><span className="arena-mobile-hint">ROLL · JUMP · USE TERRAIN</span></div></div>;
 }

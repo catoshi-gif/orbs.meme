@@ -57,8 +57,15 @@ export class ArenaAudioEngine {
   }
 
   bump(power = 0.6) {
-    this.tone(72 + power * 54, 0.09, 0.09, "sine");
-    this.tone(155 + power * 80, 0.055, 0.04, "triangle", 0.015);
+    this.tone(58 + power * 48, 0.11, 0.105, "sine");
+    this.tone(145 + power * 110, 0.07, 0.055, "triangle", 0.012);
+    if (power > 0.62) this.tone(46, 0.16, 0.07, "square", 0.018);
+  }
+
+  jump() {
+    this.tone(118, 0.075, 0.07, "sine");
+    this.tone(248, 0.12, 0.04, "triangle", 0.018);
+    this.tone(420, 0.065, 0.024, "sine", 0.045);
   }
 
   eliminated() {
