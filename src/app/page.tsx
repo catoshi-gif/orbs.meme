@@ -29,7 +29,12 @@ export default async function Home() {
   const discovered = await listDiscoverableOrbs(9);
   const winners = await getWinners(discovered.map((orb) => orb.id));
   const entrants = await getOrbEntrantCounts(discovered.map((orb) => orb.slug));
-  // Homepage discovery is intentionally pre-launch only. Once an Orb reaches its\n  // scheduled launch time it leaves this feed, regardless of its later competition\n  // window/result state. Live/failed games remain reachable by their direct URL and\n  // dashboards, but are never advertised as a fresh game people can still prepare for.\n  const orbs = discovered.filter((orb) => !winners.has(orb.id) && orb.startsAt > now).slice(0, 6);\n  const next = orbs[0];
+  // Homepage discovery is intentionally pre-launch only. Once an Orb reaches its
+  // scheduled launch time it leaves this feed, regardless of its later competition
+  // window/result state. Live/failed games remain reachable by their direct URL and
+  // dashboards, but are never advertised as a fresh game people can still prepare for.
+  const orbs = discovered.filter((orb) => !winners.has(orb.id) && orb.startsAt > now).slice(0, 6);
+  const next = orbs[0];
 
   return <>
     <section className="hero hero-game-backdrop"><OrbShowcase background className="home-orb-showcase"/><div className="hero-grid"><div><div className="eyebrow">MAZE · ARENA · LIVE ON SOLANA</div><h1>Where online communities <span className="gradient-text">play for their tokens.</span></h1><p>Host a game, put up a token prize, and bring your community, or jump into a live Orb and play for someone else&apos;s.</p><div className="hero-actions"><a className="btn-primary" href="#live">Find an upcoming Orb</a><Link className="btn-secondary" href="/create">Create an Orb</Link></div><div className="trust"><span>Free to enter</span><span>Skill decides</span><span>Prize escrowed before launch</span></div></div><div className="visual"><Image src="/orbs-logo-512.png" width={512} height={512} alt="" priority/><div className="visual-card"><span className="eyebrow">{next ? "Starting soon" : "Next Orb"}</span><strong>{next ? formatLaunch(next.startsAt, now) : "—"}</strong><small>{orbs.length ? "MAZE and ARENA. One link, one launch, one winner." : "No upcoming public Orbs right now."}</small></div></div></div></section>
