@@ -24,7 +24,7 @@ export type ArenaConfig = {
   seed: string;
 };
 
-/** Approximate half-footprint of the continuous coliseum. Physics stays fixed as geometry scales. */
+/** Approximate radius of the circular coliseum floor. Physics stays fixed as geometry scales. */
 export function arenaRadiusForPlayers(playerCount: number) {
   const players = Math.max(2, Math.min(200, Math.floor(playerCount)));
   return Math.min(74, Math.max(30, 25 + Math.sqrt(players) * 2.35));
@@ -60,7 +60,7 @@ export function buildArenaConfig(input: {
   };
 }
 
-/** Arena is physically contained; this is retained for admin compatibility only. */
+/** Arena radius is fixed for a given roster; retained for admin compatibility. */
 export function arenaRadiusAt(config: ArenaConfig, _elapsedSeconds: number, _survivors: number) {
   return config.radius;
 }

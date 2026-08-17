@@ -74,7 +74,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   const [verifiedPostUrl, setVerifiedPostUrl] = useState<string | null>(null);
   const [directPostUrl, setDirectPostUrl] = useState("");
   const [shareCardReady, setShareCardReady] = useState(false);
-  const arenaAutoEntryRef = useRef(false);
+  const gameAutoEntryRef = useRef(false);
   const [now, setNow] = useState(Date.now());
   const wallet = publicKey?.toBase58() || "";
   const orbShareUrl = `${publicSiteUrl}/orb/${encodeURIComponent(slug)}?v=${createdAt}`;
@@ -297,14 +297,16 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   const closed = now >= endsAt;
 
   useEffect(() => {
-    if (gameType !== "arena" || !qualified || !wallet || !arenaPrepareOpen || closed || arenaAutoEntryRef.current) return;
-    arenaAutoEntryRef.current = true;
+    const autoEntryOpen = gameType === "arena" ? arenaPrepareOpen : live;
+    if (!qualified || !wallet || !autoEntryOpen || closed || gameAutoEntryRef.current) return;
+    gameAutoEntryRef.current = true;
     window.location.assign(`/orb/${encodeURIComponent(slug)}/play?wallet=${encodeURIComponent(wallet)}`);
-  }, [arenaPrepareOpen, closed, gameType, qualified, slug, wallet]);
+  }, [arenaPrepareOpen, closed, gameType, live, qualified, slug, wallet]);
 
   if (closed) return <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>This Orb has expired.</h3><p className="muted">The competition window ended. New registration and competitive entry are closed.</p><a className="btn-primary" href={`/orb/${slug}/results`}>View result →</a></aside>;
   if (gameType === "arena" && live && !qualified) return <aside className="card qualify orb-closed-card"><span className="eyebrow">ARENA LIVE</span><h3>Registration is closed.</h3><p className="muted">Arena rosters lock at launch. Registered players can reconnect to the authoritative match from the same wallet and X account.</p></aside>;
   if (gameType === "arena" && qualified && arenaPrepareOpen) return <aside className="card qualify"><span className="eyebrow">ARENA</span><h3>Getting your Orb ready…</h3><p className="muted">You&apos;re registered. Orbs is connecting you to the authoritative Arena automatically.</p><div className="game-loader-orb" /></aside>;
+  if (gameType === "maze" && qualified && live) return <aside className="card qualify"><span className="eyebrow">MAZE</span><h3>Loading your Maze…</h3><p className="muted">You&apos;re registered. The course is opening automatically now that the launch clock has reached zero.</p><div className="game-loader-orb" /></aside>;
 
   return <aside id="qualify" className="card qualify">
     <span className="eyebrow">Before you play</span><h3>Register for this Orb.</h3>
@@ -319,6 +321,6 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
       <div className={`q-row q-share ${shareVerified ? "ready" : ""}`}><span className="q-num">{shareVerified ? "✓" : "6"}</span><div className="q-copy"><strong>Share your entry</strong><small>{shareVerified ? "Orb post verified directly from your X account" : recoveringShare ? "Checking your X account for the entry post you already made…" : readyForShare ? shareStarted ? "Already posted? Orbs can find and verify it without making you post again." : shareCardReady ? "Add your own line and post the waiting-room card. Orbs will check X when you return." : "Preparing the X card before posting…" : "Complete the human check first"}</small>{shareError ? <small className="q-error">{shareError}</small> : null}{shareVerified && verifiedPostUrl ? <a className="q-post-link" href={verifiedPostUrl} target="_blank" rel="noreferrer">View verified post ↗</a> : null}</div>{readyForShare && !shareVerified ? <div className="q-share-actions"><input value={shareLine} onChange={(event) => setShareLine(event.target.value.slice(0, 70))} maxLength={70} placeholder="Why are you going to win?" aria-label="Your original line for the X post" />{shareStarted ? <><button className="mini-action" onClick={() => void recoverShare(false)} disabled={recoveringShare || verifyingShare}>{recoveringShare ? "Checking X…" : "Check X for my post"}</button><div className="q-direct-post"><input value={directPostUrl} onChange={(event) => setDirectPostUrl(event.target.value.slice(0, 220))} placeholder="Can’t find it? Paste your X post link" aria-label="X post link" /><button className="q-compose-again" type="button" onClick={() => void verifyDirectShare()} disabled={verifyingShare || !directPostUrl.trim()}>{verifyingShare ? "Checking…" : "Verify pasted link"}</button></div><button className="q-compose-again" onClick={openShareComposer} disabled={!shareCardReady || shareLine.trim().length < 12}>Open composer again</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card if X delays preview</a></> : <><button className="mini-action" onClick={openShareComposer} disabled={!shareCardReady}>{shareCardReady ? "Post on X" : "Preparing card…"}</button><button className="q-compose-again" onClick={() => void recoverShare(false)} disabled={recoveringShare}>{recoveringShare ? "Checking X…" : "Already posted? Check X"}</button><div className="q-direct-post"><input value={directPostUrl} onChange={(event) => setDirectPostUrl(event.target.value.slice(0, 220))} placeholder="Or paste your X post link" aria-label="X post link" /><button className="q-compose-again" type="button" onClick={() => void verifyDirectShare()} disabled={verifyingShare || !directPostUrl.trim()}>{verifyingShare ? "Checking…" : "Verify link"}</button></div><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card</a></>}</div> : null}</div>
     </div>
     {qualified && gameType === "arena" ? <ArenaOrbIdentity slug={slug} wallet={wallet} /> : null}
-    {gameType === "maze" ? <a className={`btn-primary qualify-play ${qualified && entryOpen ? "" : "disabled"}`} href={qualified && entryOpen ? `/orb/${slug}/play?wallet=${encodeURIComponent(wallet)}` : undefined} aria-disabled={!qualified || !entryOpen}>{qualified && entryOpen ? "Enter live Orb →" : live ? "Finish registration" : "Game opens at launch"}</a> : <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · Arena opens automatically in the final minute" : "Finish registration before launch"}</div>}
+    {gameType === "maze" ? <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · MAZE opens automatically at launch" : live ? "Finish registration to enter the live MAZE" : "Finish registration before launch"}</div> : <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · ARENA opens automatically in the final minute" : "Finish registration before launch"}</div>}
   </aside>;
 }

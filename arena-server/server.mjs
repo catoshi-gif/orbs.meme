@@ -141,14 +141,16 @@ class Room {
     this.config=configFor(this.players.size);const s=this.config.courseScale,world=new RAPIER.World({x:0,y:-GRAVITY,z:0});this.world=world;this.arenaHalf=30*s;
     const addSurface=(x,y,z,sx,sy,sz,ry=0,restitution=.045,friction=.58)=>{const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,y,z).setRotation(quat(0,ry,0)));world.createCollider(RAPIER.ColliderDesc.cuboid(sx/2,sy/2,sz/2).setFriction(friction).setRestitution(restitution),body)};
     const addRamp=(x,z,axis,dir,width=5*s,length=8*s,height=1.7*s)=>{const L=length,W=width,H=height,vertices=new Float32Array([-L/2,0,-W/2,-L/2,0,W/2,L/2,0,-W/2,L/2,0,W/2,L/2,H,-W/2,L/2,H,W/2]),ry=axis==="x"?(dir>0?0:Math.PI):(dir>0?-Math.PI/2:Math.PI/2),body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,0,z).setRotation(quat(0,ry,0))),solid=RAPIER.ColliderDesc.convexHull(vertices);if(!solid)throw new Error("Could not build Arena ramp");world.createCollider(solid.setFriction(.62).setRestitution(.035),body)};
-    addSurface(0,-.28,0,this.arenaHalf*2,.56,this.arenaHalf*2);
+    // True circular colosseum floor. The column ring sits on this edge, so the open
+    // arches between columns are genuine ring-out lanes in every direction.
+    {const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0,-.28,0));world.createCollider(RAPIER.ColliderDesc.cylinder(.28,this.arenaHalf).setFriction(.58).setRestitution(.045),body)}
     const d=15.5*s;[[-d,0,"x",1],[d,0,"x",-1],[0,-d,"z",1],[0,d,"z",-1]].forEach(v=>addRamp(v[0],v[1],v[2],v[3],6.5*s,10*s,2.2*s));
     // Diagonal approaches intentionally remain continuous floor; no hidden ridge colliders.
     addSurface(0,.28,0,16*s,.55,16*s);addSurface(0,.78,0,11.5*s,.55,11.5*s);addSurface(0,1.32,0,7.2*s,.55,7.2*s);
     const stepDepth=1.05*s,stepWidth=5.4*s;for(let side=0;side<4;side++)for(let i=0;i<4;i++){const top=.34+i*.28,offset=(8.4-i*1.05)*s,isNS=side<2,x=isNS?0:(side===2?-offset:offset),z=isNS?(side===0?-offset:offset):0;addSurface(x,top/2,z,isNS?stepWidth:stepDepth,top,isNS?stepDepth:stepWidth)}
     // The colonnade itself is the perimeter. Open arches between columns are real ring-out lanes.
     const wallR=this.arenaHalf*.965,columnCount=32,columnR=wallR*1.025;this.columnHazards=[];
-    for(let i=0;i<columnCount;i++){const a=i/columnCount*Math.PI*2,x=Math.cos(a)*columnR,z=Math.sin(a)*columnR,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,2.1,z));world.createCollider(RAPIER.ColliderDesc.cylinder(2.1,.74*s).setFriction(.42).setRestitution(.34),body);this.columnHazards.push({x,z,r:.96*s})}
+    for(let i=0;i<columnCount;i++){const a=i/columnCount*Math.PI*2,x=Math.cos(a)*columnR,z=Math.sin(a)*columnR,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,2.1,z));world.createCollider(RAPIER.ColliderDesc.cylinder(2.1,.74*s).setFriction(.42).setRestitution(.34),body);this.columnHazards.push({x,z,r:.74*s})}
     // Two opposite banks have visible spike rails on their outside edges. One simple hazard strip
     // per rail keeps the authority cheap while the renderer can draw several decorative spikes.
     this.spikeHazards=[

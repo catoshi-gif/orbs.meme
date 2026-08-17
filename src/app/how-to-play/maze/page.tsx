@@ -18,6 +18,7 @@ export default function MazeHowToPlay() {
     </div>
 
     <div className="how-play-rules">
+      <div><b>00</b><h3>Stay in the waiting room.</h3><p>Once you are fully registered, keep the Orb page open. MAZE opens automatically when the launch countdown reaches zero.</p></div>
       <div><b>01</b><h3>Follow the rings.</h3><p>Cross every glowing checkpoint in order. A ring confirms when you clear it.</p></div>
       <div><b>02</b><h3>Keep your line clean.</h3><p>Momentum matters. Smooth steering is faster than constantly correcting.</p></div>
       <div><b>03</b><h3>Finish only opens last.</h3><p>The goal does not count until every required ring has been cleared.</p></div>

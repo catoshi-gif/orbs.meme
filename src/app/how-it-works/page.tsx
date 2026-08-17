@@ -6,7 +6,7 @@ const protocolSteps = [
   ["1", "Create", "Connect X and Solana, choose MAZE or ARENA, put up the prize, customize the world, and set the launch."],
   ["2", "Share", "Orbs gives you one public waiting-room link with the prize, countdown, host identity, and registration flow."],
   ["3", "Register", "Players complete the required X, wallet, eligibility, human, and entry-post checks before competitive play."],
-  ["4", "Launch", "Everyone returns for the same scheduled start. MAZE reveals its sealed course; ARENA connects everyone into one live multiplayer match."],
+  ["4", "Launch", "Keep the waiting room open. Registered players enter automatically: MAZE opens at the launch clock, while ARENA quietly prepares its shared live connection just before launch."],
   ["5", "Play", "Skill decides the result under the rules of the selected game. Orbs verifies the winning result server-side."],
   ["6", "Claim", "The verified winning wallet claims the prize from the Orb's isolated on-chain vault."],
 ];
@@ -77,7 +77,7 @@ export default function Page() {
               <span className="gameplay-launch-orb" aria-hidden="true" />
               <div>
                 <strong>Be back before launch.</strong>
-                <p>The waiting room shows the countdown and your local start time. ARENA opens a short synchronization window before launch so registered players can connect to the same live match.</p>
+                <p>The waiting room shows the countdown and your local start time. Keep it open: registered MAZE players enter automatically at zero, and registered ARENA players are prepared automatically just before launch so everyone reaches the same live match.</p>
               </div>
             </div>
           </div>
