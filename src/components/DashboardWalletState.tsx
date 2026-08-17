@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
 import Link from "next/link";
+import RefundPrizeButton from "@/components/RefundPrizeButton";
 
 type Orb = {
   id: string;
@@ -26,6 +27,7 @@ type Activity = {
   outcome: "entered" | "racing" | "won" | "dnf" | null;
   verifiedElapsedMs: number | null;
   winner: { wallet?: string; xUsername?: string; verifiedElapsedMs: number } | null;
+  canRetrieve?: boolean;
 };
 
 function money(value: number) { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }
@@ -50,15 +52,18 @@ function status(activity: Activity) {
   return { label: "Upcoming", tone: "entered" };
 }
 
-function ActivityRow({ activity, role }: { activity: Activity; role: "Host" | "Player" }) {
+function ActivityRow({ activity, role, onRetrieved }: { activity: Activity; role: "Host" | "Player"; onRetrieved?: () => void }) {
   const { orb } = activity;
   const state = status(activity);
   const href = activity.phase === "completed" || activity.phase === "expired" ? `/orb/${orb.slug}/results` : `/orb/${orb.slug}`;
-  return <Link className="hosted-orb-row" href={href}>
-    <div className="hosted-orb-token">{orb.token.logoURI ? <img src={orb.token.logoURI} alt="" referrerPolicy="no-referrer" /> : <span>{orb.token.symbol.slice(0, 2)}</span>}<div><strong>{amount(orb.prizeTokenAmount)} {orb.token.symbol}</strong><small>{money(orb.prizeUsd)} · hosted by @{orb.hostX.username}</small><div className="activity-tags"><em>{(orb.gameType === "arena" ? "ARENA" : "MAZE")}</em><em>{role}</em><em className={state.tone}>{state.label}</em></div></div></div>
-    <div className="hosted-orb-launch"><strong>{activity.phase === "upcoming" ? "Launches" : activity.phase === "live" ? "Closes" : "Closed"}</strong><small>{new Date(activity.phase === "upcoming" ? orb.startsAt : orb.endsAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></div>
-    <span className="hosted-orb-open">{activity.phase === "completed" || activity.phase === "expired" ? "Result" : "Open"} →</span>
-  </Link>;
+  return <div className="hosted-orb-row-wrap">
+    <Link className="hosted-orb-row" href={href}>
+      <div className="hosted-orb-token">{orb.token.logoURI ? <img src={orb.token.logoURI} alt="" referrerPolicy="no-referrer" /> : <span>{orb.token.symbol.slice(0, 2)}</span>}<div><strong>{amount(orb.prizeTokenAmount)} {orb.token.symbol}</strong><small>{money(orb.prizeUsd)} · hosted by @{orb.hostX.username}</small><div className="activity-tags"><em>{(orb.gameType === "arena" ? "ARENA" : "MAZE")}</em><em>{role}</em><em className={state.tone}>{state.label}</em></div></div></div>
+      <div className="hosted-orb-launch"><strong>{activity.phase === "upcoming" ? "Launches" : activity.phase === "live" ? "Closes" : "Closed"}</strong><small>{new Date(activity.phase === "upcoming" ? orb.startsAt : orb.endsAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></div>
+      <span className="hosted-orb-open">{activity.phase === "completed" || activity.phase === "expired" ? "Result" : "Open"} →</span>
+    </Link>
+    {role === "Host" && activity.canRetrieve ? <div className="hosted-orb-retrieve"><RefundPrizeButton slug={orb.slug} compact onSuccess={onRetrieved} /></div> : null}
+  </div>;
 }
 
 export default function Dashboard() {
@@ -67,6 +72,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wallet = publicKey?.toBase58() || "";
+  const markRetrieved = (orbId: string) => setActivities((current) => current.map((activity) => activity.orb.id === orbId ? { ...activity, canRetrieve: false } : activity));
 
   useEffect(() => {
     setActivities([]); setError(null);
@@ -97,7 +103,7 @@ export default function Dashboard() {
     <div className="dashboard"><div className="metric"><span>Hosted</span><strong>{hosted.length}</strong></div><div className="metric"><span>Entered</span><strong>{entered.length}</strong></div><div className="metric"><span>Wins</span><strong>{wins}</strong></div><div className="metric"><span>Wallet</span><strong>{wallet.slice(0,4)}…{wallet.slice(-4)}</strong></div></div>
     {loading ? <div className="card empty"><h3>Loading your Orb history…</h3></div> : error ? <div className="card empty"><h3>Couldn&apos;t load your activity.</h3><p>{error}</p></div> : activities.length ? <div className="activity-sections">
       <section><div className="activity-section-head"><div><span className="eyebrow">Player history</span><h2>Entered Orbs.</h2></div><small>Upcoming, live, and verified results</small></div>{entered.length ? <div className="hosted-orb-list">{entered.map((activity) => <ActivityRow activity={activity} role="Player" key={`entered:${activity.orb.id}`} />)}</div> : <div className="card activity-empty">No verified entries from this wallet yet.</div>}</section>
-      <section><div className="activity-section-head"><div><span className="eyebrow">Creator history</span><h2>Hosted Orbs.</h2></div><small>One active Orb per wallet; admin test wallet exempt</small></div>{hosted.length ? <div className="hosted-orb-list">{hosted.map((activity) => <ActivityRow activity={activity} role="Host" key={`hosted:${activity.orb.id}`} />)}</div> : <div className="card activity-empty">No hosted Orbs from this wallet yet.</div>}</section>
+      <section><div className="activity-section-head"><div><span className="eyebrow">Creator history</span><h2>Hosted Orbs.</h2></div><small>One active Orb per wallet; admin test wallet exempt</small></div>{hosted.length ? <div className="hosted-orb-list">{hosted.map((activity) => <ActivityRow activity={activity} role="Host" key={`hosted:${activity.orb.id}`} onRetrieved={() => markRetrieved(activity.orb.id)} />)}</div> : <div className="card activity-empty">No hosted Orbs from this wallet yet.</div>}</section>
     </div> : <div className="card empty"><h3>No Orb activity from this wallet yet.</h3><p>Create an Orb or verify an entry post and it will appear here automatically.</p><Link className="btn-primary" href="/create">Create an Orb</Link></div>}
   </>;
 }

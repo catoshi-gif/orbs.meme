@@ -19,7 +19,7 @@ const SITE_ORIGINS = new Set([SITE_ORIGIN]);
 }
 let lastArenaError = null;
 
-const VERSION = "orb-arena-v8";
+const VERSION = "orb-arena-v9";
 const FIXED = 1 / 60;
 const BALL_RADIUS = .42;
 const GRAVITY = 9.81;
@@ -34,7 +34,6 @@ const WEAPON_LIFETIME = 8000;
 const RING_RESPAWN = 8500;
 const PEDESTAL_RESPAWN = 11500;
 const RECOVERY_AMOUNT = 28;
-const HARD_CAP_MS = 10 * 60 * 1000;
 const SNAPSHOT_MS = 50;
 const LOBBY_GRACE_MS = 20_000;
 const MAX_PLAYERS = 200;
@@ -68,7 +67,7 @@ function verifyToken(token){
   return payload;
 }
 function arenaRadiusForPlayers(count){const p=Math.max(2,Math.min(MAX_PLAYERS,Math.floor(count)));return Math.min(74,Math.max(30,25+Math.sqrt(p)*2.35))}
-function configFor(count){const radius=arenaRadiusForPlayers(count);return{radius,courseScale:radius/32,maxSeconds:600,suddenDeathAt:432,overchargeAt:528,jumpImpulse:JUMP_IMPULSE,jumpCooldownMs:JUMP_COOLDOWN,impactDamageScale:.72,weaponLifetimeMs:WEAPON_LIFETIME,ringRespawnMs:RING_RESPAWN,pedestalRespawnMs:PEDESTAL_RESPAWN,recoveryAmount:RECOVERY_AMOUNT}}
+function configFor(count){const radius=arenaRadiusForPlayers(count);return{radius,courseScale:radius/32,maxSeconds:0,suddenDeathAt:432,overchargeAt:528,jumpImpulse:JUMP_IMPULSE,jumpCooldownMs:JUMP_COOLDOWN,impactDamageScale:.72,weaponLifetimeMs:WEAPON_LIFETIME,ringRespawnMs:RING_RESPAWN,pedestalRespawnMs:PEDESTAL_RESPAWN,recoveryAmount:RECOVERY_AMOUNT}}
 function quat(rx,ry,rz){
   const cx=Math.cos(rx/2),sx=Math.sin(rx/2),cy=Math.cos(ry/2),sy=Math.sin(ry/2),cz=Math.cos(rz/2),sz=Math.sin(rz/2);
   return {x:sx*cy*cz-cx*sy*sz,y:cx*sy*cz+sx*cy*sz,z:cx*cy*sz-sx*sy*cz,w:cx*cy*cz+sx*sy*sz};
@@ -84,7 +83,7 @@ function clampVelocity(v,profile){const limit=profile==="mobile"?MOBILE_MAX:DESK
 class Room {
   constructor(payload){
     this.orbId=payload.orbId;this.slug=payload.slug;this.commitment=payload.commitment;this.style=payload.style;this.startsAt=payload.startsAt;this.endsAt=payload.endsAt;
-    this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.pickups=[];this.pedestals=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
+    this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.pickups=[];this.pedestals=[];this.columnHazards=[];this.spikeHazards=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
     this.abortReason=null;this.resultRetryTimer=null;this.simAccumulator=0;this.lastLoopAt=performance.now();this.snapshotDrops=0;this.loopLagMs=0;this.timer=setInterval(()=>this.loop(),LOOP_INTERVAL_MS);
   }
   compatible(p){return p.orbId===this.orbId&&p.slug===this.slug&&p.commitment===this.commitment&&p.startsAt===this.startsAt&&p.endsAt===this.endsAt}
@@ -94,7 +93,7 @@ class Room {
     if(this.phase!=="lobby"&&!player)throw new Error("Arena entry is closed");
     if(!player){
       if(this.players.size>=MAX_PLAYERS)throw new Error("Arena is full");
-      player={id:`p${this.players.size+1}`,wallet:p.wallet,xUserId:p.xUserId,username:p.username,profileImageUrl:p.profileImageUrl||null,color:p.orbColor,glow:p.orbGlow||p.orbColor,body:null,alive:true,health:100,input:{x:0,z:0},profile:"desktop",jumpReadyAt:0,airborne:false,descending:false,powerKind:null,powerExpiresAt:0,speedUntil:0,blasterActive:false,nextShotAt:0,doubleJumpArmed:false,connected:true,disconnectedAt:0,lastSeq:-1,damageDealt:0,knockouts:0};
+      player={id:`p${this.players.size+1}`,wallet:p.wallet,xUserId:p.xUserId,username:p.username,profileImageUrl:p.profileImageUrl||null,color:p.orbColor,glow:p.orbGlow||p.orbColor,body:null,alive:true,health:100,input:{x:0,z:0},profile:"desktop",jumpReadyAt:0,airborne:false,descending:false,powerKind:null,powerExpiresAt:0,speedUntil:0,blasterActive:false,nextShotAt:0,doubleJumpArmed:false,connected:true,disconnectedAt:0,lastSeq:-1,damageDealt:0,knockouts:0,hazardReadyAt:0};
       this.players.set(p.wallet,player);
     }
     const prior=this.clients.get(p.wallet);if(prior&&prior!==ws)try{prior.close(4001,"Arena reconnected elsewhere")}catch{}
@@ -147,7 +146,15 @@ class Room {
     // Diagonal approaches intentionally remain continuous floor; no hidden ridge colliders.
     addSurface(0,.28,0,16*s,.55,16*s);addSurface(0,.78,0,11.5*s,.55,11.5*s);addSurface(0,1.32,0,7.2*s,.55,7.2*s);
     const stepDepth=1.05*s,stepWidth=5.4*s;for(let side=0;side<4;side++)for(let i=0;i<4;i++){const top=.34+i*.28,offset=(8.4-i*1.05)*s,isNS=side<2,x=isNS?0:(side===2?-offset:offset),z=isNS?(side===0?-offset:offset):0;addSurface(x,top/2,z,isNS?stepWidth:stepDepth,top,isNS?stepDepth:stepWidth)}
-    const wallR=this.arenaHalf*.965,wallSegments=48;for(let i=0;i<wallSegments;i++){const a=i/wallSegments*Math.PI*2,x=Math.cos(a)*wallR,z=Math.sin(a)*wallR,len=2*Math.PI*wallR/wallSegments*1.08;addSurface(x,1.9,z,len,4.2,1*s,Math.PI/2-a,.28,.48)}
+    // The colonnade itself is the perimeter. Open arches between columns are real ring-out lanes.
+    const wallR=this.arenaHalf*.965,columnCount=32,columnR=wallR*1.025;this.columnHazards=[];
+    for(let i=0;i<columnCount;i++){const a=i/columnCount*Math.PI*2,x=Math.cos(a)*columnR,z=Math.sin(a)*columnR,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,2.1,z));world.createCollider(RAPIER.ColliderDesc.cylinder(2.1,.74*s).setFriction(.42).setRestitution(.34),body);this.columnHazards.push({x,z,r:.96*s})}
+    // Two opposite banks have visible spike rails on their outside edges. One simple hazard strip
+    // per rail keeps the authority cheap while the renderer can draw several decorative spikes.
+    this.spikeHazards=[
+      {axis:"x",cx:-d,cz:3.25*s,half:5*s,dir:1},{axis:"x",cx:-d,cz:-3.25*s,half:5*s,dir:1},
+      {axis:"x",cx:d,cz:3.25*s,half:5*s,dir:-1},{axis:"x",cx:d,cz:-3.25*s,half:5*s,dir:-1},
+    ];
     [[-9,-16],[9,-16],[-16,-9],[16,9],[-9,16],[9,16],[16,-9],[-16,9]].forEach(([xx,zz])=>{const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(xx*s,1.05,zz*s));world.createCollider(RAPIER.ColliderDesc.cylinder(1.05,.72*s).setRestitution(.7).setFriction(.2),body)});
     const pedKinds=["superjump","blaster","superspeed","superjump","blaster","superspeed"],pedLoc=[[-14,-7],[14,-7],[-14,7],[14,7],[0,-15],[0,15]];this.pedestals=pedLoc.map(([xx,zz],i)=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,.72,z));world.createCollider(RAPIER.ColliderDesc.cylinder(.72,1.75*s).setFriction(.52).setRestitution(.06),body);return{id:`ped-${i}`,x,z,kind:pedKinds[i],readyAt:0}});
     const addPickup=(id,rx,rz,y,kind)=>this.pickups.push({id,x:rx*s,z:rz*s,y:y+.16,kind,readyAt:0});this.pickups=[];
@@ -156,11 +163,20 @@ class Room {
     this.phase="live";this.startedAt=Date.now();console.log(`[arena] match started orb=${this.orbId} match=${this.matchId} players=${this.players.size} scale=${this.config.courseScale.toFixed(3)}`);this.broadcastRoster();this.event("start",{startedAt:this.startedAt,courseScale:this.config.courseScale,playerCount:this.players.size});return true;
   }
   updatePlayers(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=nextVelocity({x:v.x/speedMul,z:v.z/speedMul},p.input,p.profile),next={x:base.x*speedMul,z:base.z*speedMul};p.body.setLinvel({x:next.x,y:v.y,z:next.z},true)}}
-  postStep(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=clampVelocity({x:v.x/speedMul,z:v.z/speedMul},p.profile),cl={x:base.x*speedMul,z:base.z*speedMul};if(cl.x!==v.x||cl.z!==v.z)p.body.setLinvel({x:cl.x,y:v.y,z:cl.z},true);const pos=p.body.translation();if(p.airborne){if(v.y<-.25)p.descending=true;if(p.descending&&Math.abs(v.y)<.16){p.airborne=false;p.descending=false}}if(p.powerKind&&now>=p.powerExpiresAt)this.clearPower(p);if(pos.y<-5){p.body.setTranslation({x:clamp(pos.x,-this.arenaHalf*.7,this.arenaHalf*.7),y:2,z:clamp(pos.z,-this.arenaHalf*.7,this.arenaHalf*.7)},true);p.body.setLinvel({x:0,y:0,z:0},true);p.health=Math.max(1,p.health-4)}}}
+  postStep(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=clampVelocity({x:v.x/speedMul,z:v.z/speedMul},p.profile),cl={x:base.x*speedMul,z:base.z*speedMul};if(cl.x!==v.x||cl.z!==v.z)p.body.setLinvel({x:cl.x,y:v.y,z:cl.z},true);const pos=p.body.translation();if(p.airborne){if(v.y<-.25)p.descending=true;if(p.descending&&Math.abs(v.y)<.16){p.airborne=false;p.descending=false}}if(p.powerKind&&now>=p.powerExpiresAt)this.clearPower(p);
+      // Falling through a colonnade arch is a clean authoritative ring-out.
+      if(pos.y<-3.6){this.eliminate(p,"FELL");continue}
+      if(now>=p.hazardReadyAt){
+        let hazard=null,normalX=0,normalZ=0,damage=0,kind="";
+        if(Math.hypot(pos.x,pos.z)>this.arenaHalf*.84)for(const c of this.columnHazards){const dx=pos.x-c.x,dz=pos.z-c.z,dist=Math.hypot(dx,dz);if(dist<c.r+BALL_RADIUS*.7){const center=Math.hypot(c.x,c.z)||1;hazard=c;normalX=-c.x/center;normalZ=-c.z/center;damage=3;kind="column";break}}
+        if(!hazard)for(const h of this.spikeHazards){const rampT=clamp(h.dir>0?(pos.x-(h.cx-5*this.config.courseScale))/(10*this.config.courseScale):((h.cx+5*this.config.courseScale)-pos.x)/(10*this.config.courseScale),0,1),rampY=rampT*2.2*this.config.courseScale;if(h.axis==="x"&&Math.abs(pos.x-h.cx)<=h.half+BALL_RADIUS&&Math.abs(pos.z-h.cz)<=.46*this.config.courseScale+BALL_RADIUS&&pos.y<=rampY+.9*this.config.courseScale){hazard=h;normalZ=(pos.z-h.cz)>=0?1:-1;damage=4;kind="spikes";break}}
+        if(hazard){p.hazardReadyAt=now+850;const inv=now<p.speedUntil,before=p.health;if(!inv)p.health=Math.max(0,p.health-damage);if(!inv)p.body.applyImpulse({x:normalX*.72,y:.12,z:normalZ*.72},true);const actual=before-p.health;if(actual>0)this.event("hit",{playerId:p.id,attackerId:null,attackKind:kind,damage:actual});if(p.health<=0){this.eliminate(p,kind==="column"?"ZAPPED":"SPIKED");continue}}
+      }
+    }}
   facing(p){const v=p.body.linvel(),speed=Math.hypot(v.x,v.z);if(speed>.55)return{x:v.x/speed,z:v.z/speed};const i=p.input,m=Math.hypot(i.x,i.z);return m>.1?{x:i.x/m,z:i.z/m}:{x:0,z:-1}}
-  fire(p,now){const dir=this.facing(p),pos=p.body.translation();this.projectiles.push({id:`b${++this.seq}`,x:pos.x+dir.x*.95,y:pos.y+.06,z:pos.z+dir.z*.95,vx:dir.x*14,vz:dir.z*14,owner:p,born:now,life:1200});}
-  updateProjectiles(now){for(const p of this.players.values())if(p.alive&&p.blasterActive&&p.powerKind==="blaster"&&now<p.powerExpiresAt&&now>=p.nextShotAt){this.fire(p,now);p.nextShotAt=now+145}
-    for(let i=this.projectiles.length-1;i>=0;i--){const b=this.projectiles[i];if(now-b.born>b.life){this.projectiles.splice(i,1);continue}b.x+=b.vx*FIXED;b.z+=b.vz*FIXED;let hit=false;for(const t of this.players.values()){if(!t.alive||t===b.owner||!t.body)continue;const p=t.body.translation();if(Math.hypot(p.x-b.x,p.y-b.y,p.z-b.z)>BALL_RADIUS+.22*this.config.courseScale)continue;const inv=now<t.speedUntil,damage=inv?0:8,before=t.health;t.health=Math.max(0,t.health-damage);const actualDamage=before-t.health;if(actualDamage>0)b.owner.damageDealt+=actualDamage;if(!inv){const m=Math.hypot(b.vx,b.vz)||1;t.body.applyImpulse({x:b.vx/m*.75,y:.08,z:b.vz/m*.75},true)}this.event("hit",{playerId:t.id,attackerId:b.owner.id,attackKind:"blaster",damage});if(t.health<=0)this.eliminate(t,"BLASTED",b.owner);hit=true;break}if(hit)this.projectiles.splice(i,1)}
+  fire(p,now){const dir=this.facing(p),pos=p.body.translation();this.projectiles.push({id:`b${++this.seq}`,x:pos.x+dir.x*.95,y:pos.y+.06,z:pos.z+dir.z*.95,vx:dir.x*13.5,vz:dir.z*13.5,owner:p,born:now,life:1700});}
+  updateProjectiles(now){for(const p of this.players.values())if(p.alive&&p.blasterActive&&p.powerKind==="blaster"&&now<p.powerExpiresAt&&now>=p.nextShotAt){this.fire(p,now);p.nextShotAt=now+180}
+    for(let i=this.projectiles.length-1;i>=0;i--){const b=this.projectiles[i];if(now-b.born>b.life){this.projectiles.splice(i,1);continue}b.x+=b.vx*FIXED;b.z+=b.vz*FIXED;let hit=false;for(const t of this.players.values()){if(!t.alive||t===b.owner||!t.body)continue;const p=t.body.translation();const hitRadius=BALL_RADIUS+clamp(.58*this.config.courseScale,.52,.9);if(Math.hypot(p.x-b.x,p.y-b.y,p.z-b.z)>hitRadius)continue;const inv=now<t.speedUntil,damage=inv?0:8,before=t.health;t.health=Math.max(0,t.health-damage);const actualDamage=before-t.health;if(actualDamage>0)b.owner.damageDealt+=actualDamage;if(!inv){const m=Math.hypot(b.vx,b.vz)||1;t.body.applyImpulse({x:b.vx/m*.75,y:.08,z:b.vz/m*.75},true)}this.event("hit",{playerId:t.id,attackerId:b.owner.id,attackKind:"blaster",damage});if(t.health<=0)this.eliminate(t,"BLASTED",b.owner);hit=true;break}if(hit)this.projectiles.splice(i,1)}
   }
   impacts(now){
     // Broad-phase the gameplay damage pass with a small spatial hash instead of comparing
@@ -198,7 +214,7 @@ class Room {
     for(const ped of this.pedestals){if(now<ped.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body||p.powerKind)continue;const pos=p.body.translation();if(Math.hypot(pos.x-ped.x,pos.z-ped.z)>1.55*s||pos.y<1.35)continue;ped.readyAt=now+this.config.pedestalRespawnMs*respawn;this.grantPower(p,ped.kind,now);break}}
   }
   abort(reason){if(this.phase==="finished"||this.phase==="aborted")return;this.phase="aborted";this.completedAt=Date.now();this.abortReason=reason;console.error(`[arena] match aborted orb=${this.orbId} match=${this.matchId}: ${reason}`);this.broadcast({t:"aborted",reason,completedAt:this.completedAt});}
-  eliminate(p,reason,attacker=null){if(!p.alive)return;p.alive=false;if(attacker&&attacker!==p)attacker.knockouts=(attacker.knockouts||0)+1;if(p.body)p.body.setEnabled(false);this.playerEvent(p,"eliminated",{playerId:p.id,reason,attackerId:attacker?.id||null});this.maybeFinish()}
+  eliminate(p,reason,attacker=null){if(!p.alive)return;p.alive=false;if(attacker&&attacker!==p)attacker.knockouts=(attacker.knockouts||0)+1;if(p.body)p.body.setEnabled(false);this.event("eliminated",{playerId:p.id,reason,attackerId:attacker?.id||null});this.maybeFinish()}
   maybeFinish(){const alive=[...this.players.values()].filter(p=>p.alive);if(this.phase!=="live"||alive.length>1)return;if(alive.length===1)this.finish(alive[0]);else this.finish(null)}
   finish(winner){if(this.phase==="finished")return;this.phase="finished";this.completedAt=Date.now();this.winner=winner||null;this.broadcast({t:"finished",winnerId:winner?.id||null,completedAt:this.completedAt});if(winner)void this.postResult(winner)}
   async postResult(winner){if(this.resultPosted||this.resultPosting)return;this.resultPosting=true;const body=JSON.stringify({schemaVersion:1,version:VERSION,matchId:this.matchId,orbId:this.orbId,slug:this.slug,startedAt:this.startedAt,completedAt:this.completedAt,participantCount:this.players.size,commitment:this.commitment,winnerWallet:winner.wallet,winnerXUserId:winner.xUserId,winnerUsername:winner.username});const ts=String(Date.now()),sig=createHmac("sha256",HMAC_KEY).update(`${ts}.${body}`,"utf8").digest("base64url");try{const r=await fetch(`${SITE_URL}/api/arena/runtime/result`,{method:"POST",headers:{"content-type":"application/json","x-arena-timestamp":ts,"x-arena-signature":sig},body});if(!r.ok)throw new Error(`result callback ${r.status}: ${await r.text()}`);this.resultPosted=true}catch(e){console.error("[arena] winner callback failed",e);this.resultRetryTimer=setTimeout(()=>{this.resultRetryTimer=null;this.resultPosting=false;void this.postResult(winner)},3000);return}this.resultPosting=false}
@@ -236,12 +252,7 @@ class Room {
     if(steps===MAX_CATCHUP_STEPS&&this.simAccumulator>FIXED*MAX_CATCHUP_STEPS)this.simAccumulator=FIXED;
     if(this.phase!=="live")return;
 
-    const elapsed=now-this.startedAt;
-    if(elapsed>=HARD_CAP_MS){
-      const alive=[...this.players.values()].filter(p=>p.alive).sort((a,b)=>(b.knockouts||0)-(a.knockouts||0)||(b.damageDealt||0)-(a.damageDealt||0)||b.health-a.health);
-      if(alive.length>1){const a=alive[0],b=alive[1],exactTie=(a.knockouts||0)===(b.knockouts||0)&&Math.abs((a.damageDealt||0)-(b.damageDealt||0))<.001&&Math.abs(a.health-b.health)<.001;if(exactTie){this.abort("Arena ended in an exact sudden-death tie; no winner was recorded");return}for(const p of alive.slice(1))this.eliminate(p,"SUDDEN DEATH",a)}
-      this.maybeFinish()
-    }
+    if(now>=this.endsAt){this.abort("Arena reached the Orb refund window before a winner was decided. No winner was recorded.");return}
     if(this.phase==="live"&&now-this.lastSnapshot>=this.snapshotInterval()){this.lastSnapshot=now;this.snapshot(now)}
   }
   stepSimulation(now){

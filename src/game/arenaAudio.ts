@@ -175,6 +175,20 @@ export class ArenaAudioEngine {
     this.sfxTone(118, 0.28, 0.07, "triangle", 0.09);
   }
 
+  fall() {
+    this.duckMusic(0.76, 0.08, 0.18);
+    this.sfxTone(132, 0.16, 0.055, "triangle");
+    this.sfxTone(92, 0.28, 0.06, "sine", 0.06);
+    this.sfxTone(65, 0.38, 0.045, "triangle", 0.14);
+  }
+
+  zap() {
+    this.duckMusic(0.78, 0.06, 0.14);
+    this.sfxTone(760, 0.045, 0.05, "square");
+    this.sfxTone(1180, 0.035, 0.034, "square", 0.018);
+    this.sfxTone(470, 0.08, 0.035, "triangle", 0.032);
+  }
+
   victory() {
     this.duckMusic(0.68, 0.18, 0.28);
     [261.63, 329.63, 392, 523.25].forEach((frequency, index) => {

@@ -10,6 +10,7 @@ export type WalletOrbActivity = {
   outcome: "entered" | "racing" | "won" | "dnf" | null;
   verifiedElapsedMs: number | null;
   winner: Omit<WinnerRecord, "xUserId"> | null;
+  canRetrieve: boolean;
 };
 
 function publicWinner(winner: WinnerRecord | undefined) {
@@ -59,6 +60,7 @@ export async function listWalletOrbActivity(wallet: string, limit = 50): Promise
       outcome,
       verifiedElapsedMs: outcome === "won" ? winner?.verifiedElapsedMs || null : null,
       winner: publicWinner(winner),
+      canRetrieve: hosted && phase === "expired" && !winner && !orb.refundTxSignature,
     };
   });
 }

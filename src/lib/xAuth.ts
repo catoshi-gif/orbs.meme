@@ -309,6 +309,67 @@ export async function getRecentXPostsForCurrentSession(maxResults = 5): Promise<
   return { user: session.user, posts };
 }
 
+export async function getXPostByIdForCurrentSession(postId: string): Promise<{ user: XProfile; post: XRecentPost; authorId: string }> {
+  const session = await getCurrentXSession();
+  if (!session) throw new Error("X_NOT_CONNECTED");
+  if (!/^\d{5,30}$/.test(postId)) throw new XApiRequestError("That X post link is not valid.", "X_POST_ID_INVALID", null);
+
+  const url = new URL(`https://api.x.com/2/tweets/${postId}`);
+  url.searchParams.set("tweet.fields", "author_id,created_at,entities");
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${session.accessToken}`, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    throw new XApiRequestError(
+      timedOut ? "X took too long to verify that post link. Wait a moment, then try again." : "Could not reach X for direct post verification. Try again in a moment.",
+      timedOut ? "X_POST_READ_TIMEOUT" : "X_POST_READ_NETWORK_ERROR",
+      null,
+      15,
+    );
+  }
+
+  const raw = await response.text();
+  const json = parseXPayload<{
+    data?: {
+      id?: string;
+      author_id?: string;
+      text?: string;
+      created_at?: string;
+      entities?: { urls?: Array<{ expanded_url?: string; unwound_url?: string; url?: string }> };
+    };
+    detail?: string;
+    title?: string;
+    errors?: XErrorPayload["errors"];
+  }>(raw);
+
+  if (!response.ok) throw recentPostsError(response, json);
+  if (!json?.data?.id || !json.data.author_id) {
+    throw new XApiRequestError("X could not return that post. Confirm the link is public and try again.", "X_POST_READ_INVALID_RESPONSE", response.status, 15);
+  }
+
+  const createdAt = Date.parse(json.data.created_at || "");
+  if (!Number.isFinite(createdAt)) {
+    throw new XApiRequestError("X returned that post without a valid timestamp. Try again in a moment.", "X_POST_READ_INVALID_RESPONSE", response.status, 15);
+  }
+  const urls = (json.data.entities?.urls || []).flatMap((entry) => {
+    const value = entry.unwound_url || entry.expanded_url || entry.url;
+    return value ? [value] : [];
+  });
+
+  return {
+    user: session.user,
+    authorId: json.data.author_id,
+    post: { id: json.data.id, text: json.data.text || "", createdAt, urls },
+  };
+}
+
+
 export async function setXSessionCookie(sessionId: string) {
   const jar = await cookies();
   jar.set(SESSION_COOKIE, sessionId, {

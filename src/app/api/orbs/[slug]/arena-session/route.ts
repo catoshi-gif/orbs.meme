@@ -9,6 +9,7 @@ import { getWinner } from "@/lib/upstashWinner";
 import { orbEndsAt } from "@/lib/orbLifecycle";
 import { assignArenaEntrantProfile, getArenaEntrantProfile } from "@/lib/arenaEntrants";
 import { arenaRealtimeUrl, arenaRuntimeConfigured, arenaRuntimeHealthy, issueArenaJoinToken } from "@/lib/arenaRuntime";
+import { ARENA_GAME_VERSION } from "@/game/arena";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const [orb, x] = await Promise.all([getPublicOrb(slug), getCurrentXSession()]);
   if (!orb || orbGameType(orb) !== "arena") return NextResponse.json({ ok:false,error:"Arena not found" }, { status:404 });
   if (!x) return NextResponse.json({ ok:false,error:"Connect X first" }, { status:401 });
+  if (orb.generatorVersion !== ARENA_GAME_VERSION) return NextResponse.json({ ok:false,error:"This Arena was funded under an older gameplay version and cannot be silently upgraded. Use its existing/refund path rather than changing paid rules after creation." }, { status:409 });
   if (!arenaRuntimeConfigured()) return NextResponse.json({ ok:false,error:"Arena realtime service is not configured" }, { status:503 });
   if (!await arenaRuntimeHealthy()) return NextResponse.json({ ok:false,error:"Arena realtime service is not healthy or is running a mismatched game version" }, { status:503 });
   if (Date.now() < orb.startsAt - 60_000) return NextResponse.json({ ok:false,error:"ARENA_NOT_OPEN",startsAt:orb.startsAt }, { status:403 });

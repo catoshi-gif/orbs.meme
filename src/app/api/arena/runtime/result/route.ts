@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ARENA_GAME_VERSION, ARENA_HARD_CAP_SECONDS } from "@/game/arena";
+import { ARENA_GAME_VERSION } from "@/game/arena";
 import { getArenaEntrantProfile } from "@/lib/arenaEntrants";
 import { verifyArenaRuntimeRequest } from "@/lib/arenaRuntime";
 import { getOrbRecord, orbGameType } from "@/lib/orbStore";
@@ -36,9 +36,10 @@ export async function POST(request: Request) {
   if (body.schemaVersion!==1 || body.version!==ARENA_GAME_VERSION || !body.matchId || !body.orbId || !body.slug || !body.commitment) return NextResponse.json({ok:false,error:"Invalid Arena result"},{status:400});
   const orb=await getOrbRecord(body.slug);
   if (!orb || orb.id!==body.orbId || orbGameType(orb)!=="arena" || orb.commitment!==body.commitment) return NextResponse.json({ok:false,error:"Arena Orb mismatch"},{status:404});
+  if (orb.generatorVersion!==ARENA_GAME_VERSION) return NextResponse.json({ok:false,error:"Arena gameplay version does not match funded record"},{status:409});
   const endsAt=orbEndsAt(orb), now=Date.now();
   if (body.startedAt<orb.startsAt-2_000 || body.completedAt<body.startedAt || body.completedAt>endsAt+5_000 || now<orb.startsAt) return NextResponse.json({ok:false,error:"Arena result timing is invalid"},{status:409});
-  if (body.completedAt-body.startedAt>(ARENA_HARD_CAP_SECONDS+15)*1000 || body.participantCount<2 || body.participantCount>200) return NextResponse.json({ok:false,error:"Arena result bounds are invalid"},{status:409});
+  if (body.participantCount<2 || body.participantCount>200) return NextResponse.json({ok:false,error:"Arena result bounds are invalid"},{status:409});
   const profile=await getArenaEntrantProfile(body.slug,body.winnerWallet);
   if (!profile || profile.xUserId!==body.winnerXUserId || profile.username!==body.winnerUsername) return NextResponse.json({ok:false,error:"Arena winner identity is not a registered entrant"},{status:403});
   const canonical=JSON.stringify({schemaVersion:body.schemaVersion,version:body.version,matchId:body.matchId,orbId:body.orbId,slug:body.slug,startedAt:body.startedAt,completedAt:body.completedAt,participantCount:body.participantCount,commitment:body.commitment,winnerWallet:body.winnerWallet,winnerXUserId:body.winnerXUserId,winnerUsername:body.winnerUsername});

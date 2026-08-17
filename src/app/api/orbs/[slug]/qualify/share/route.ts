@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
-import { getPublicOrb } from "@/lib/orbStore";
+import { getPublicOrb, orbGameType } from "@/lib/orbStore";
 import { clearShareIntent, getShareIntent, getShareProof, hasFollowProof, hasWalletProof, indexEnteredOrb, storeShareIntent, storeShareProof } from "@/lib/qualification";
 import { hasHumanProof } from "@/lib/turnstile";
-import { getCurrentXSession, getRecentXPostsForCurrentSession, XApiRequestError } from "@/lib/xAuth";
+import { getCurrentXSession, getRecentXPostsForCurrentSession, getXPostByIdForCurrentSession, XApiRequestError } from "@/lib/xAuth";
 import { redisCommand } from "@/lib/upstash";
 import { ORB_HISTORY_TTL_SECONDS, orbEndsAt } from "@/lib/orbLifecycle";
 import { getWinner } from "@/lib/upstashWinner";
@@ -28,6 +28,17 @@ function isOrbUrl(value: string, slug: string) {
     const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
     return url.protocol === "https:" && hostname === siteHostname() && url.pathname.replace(/\/+$/, "") === `/orb/${slug}`;
   } catch { return false; }
+}
+
+function xStatusId(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host !== "x.com" && host !== "twitter.com") return null;
+    const match = url.pathname.match(/\/status\/(\d{5,30})(?:\/|$)/);
+    return match?.[1] || null;
+  } catch { return null; }
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
@@ -63,6 +74,7 @@ function findMatchingEntryPost(
   originalLine: string,
   notBefore: number,
   allowStandardizedRecovery = false,
+  arena = false,
 ) {
   const expectedLine = originalLine.replace(/\s+/g, " ").toLocaleLowerCase();
   return posts.find((post) => {
@@ -74,7 +86,7 @@ function findMatchingEntryPost(
     // connected X account, the exact Orb URL and the standardized contest copy.
     return allowStandardizedRecovery &&
       normalized.includes("#contest") &&
-      normalized.includes("first verified finish wins");
+      (arena ? normalized.includes("arena") : normalized.includes("first verified finish wins"));
   });
 }
 
@@ -98,10 +110,11 @@ async function saveVerifiedShare(
 
 async function verifySharePost(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const body = await request.json().catch(() => ({})) as { wallet?: unknown; originalLine?: unknown; mode?: unknown };
+  const body = await request.json().catch(() => ({})) as { wallet?: unknown; originalLine?: unknown; mode?: unknown; postUrl?: unknown };
   const wallet = normalizeWallet(body.wallet);
   const originalLine = typeof body.originalLine === "string" ? body.originalLine.trim().replace(/\s+/g, " ") : "";
-  const mode = body.mode === "intent" || body.mode === "recover" ? body.mode : "verify";
+  const mode = body.mode === "intent" || body.mode === "recover" || body.mode === "direct" ? body.mode : "verify";
+  const directPostId = mode === "direct" ? xStatusId(body.postUrl) : null;
   if (!wallet) return NextResponse.json({ ok: false, error: "Invalid wallet" }, { status: 400 });
 
   const [orb, x] = await Promise.all([getPublicOrb(slug), getCurrentXSession()]);
@@ -113,6 +126,9 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
     try { await indexEnteredOrb(slug, wallet, existing.confirmedAt); }
     catch (error) { console.warn("[orbs:entry-index] Could not backfill entrant activity", error); }
     return NextResponse.json({ ok: true, verified: true, postUrl: `https://x.com/${encodeURIComponent(x.user.username)}/status/${existing.postId}` });
+  }
+  if (orbGameType(orb) === "arena" && Date.now() >= orb.startsAt) {
+    return NextResponse.json({ ok: false, error: "Arena registration closed at launch. Registered players can still reconnect to the live match." }, { status: 409 });
   }
   if (Date.now() >= orbEndsAt(orb) || await getWinner(orb.id)) {
     return NextResponse.json({ ok: false, error: "This Orb is already closed. New entries are no longer accepted." }, { status: 409 });
@@ -134,7 +150,9 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   let notBefore = orb.createdAt - 5 * 60_000;
 
   let pendingIntent = null as Awaited<ReturnType<typeof getShareIntent>>;
-  if (mode === "recover") {
+  if (mode === "direct") {
+    if (!directPostId) return NextResponse.json({ ok: false, error: "Paste a full public X post link such as https://x.com/username/status/123…" }, { status: 400 });
+  } else if (mode === "recover") {
     pendingIntent = await getShareIntent(slug, x.user.id, wallet);
     if (pendingIntent) {
       verificationLine = pendingIntent.originalLine;
@@ -153,8 +171,24 @@ async function verifySharePost(request: Request, { params }: { params: Promise<{
   if (count === 1) await redisCommand(["EXPIRE", rateKey, 70]);
   if (count > 4) return NextResponse.json({ ok: false, error: "Too many verification attempts. Wait a minute, then try again." }, { status: 429 });
 
+  if (mode === "direct" && directPostId) {
+    const exact = await getXPostByIdForCurrentSession(directPostId);
+    if (exact.authorId !== x.user.id) {
+      return NextResponse.json({ ok: false, error: "That post was not authored by your connected X account." }, { status: 403 });
+    }
+    const normalized = exact.post.text.replace(/\s+/g, " ").toLocaleLowerCase();
+    const expected = verificationLine.replace(/\s+/g, " ").toLocaleLowerCase();
+    const hasExactOrb = exact.post.urls.some((url) => isOrbUrl(url, slug));
+    const hasContestCopy = normalized.includes("#contest");
+    const hasExpectedLine = !expected || normalized.includes(expected);
+    if (exact.post.createdAt < notBefore || !hasExactOrb || !hasContestCopy || !hasExpectedLine) {
+      return NextResponse.json({ ok: false, verified: false, error: "That X post does not match this Orb entry. Make sure it is your public post, contains this exact Orb link, and includes the entry copy." }, { status: 422 });
+    }
+    return saveVerifiedShare(slug, wallet, x, orb, exact.post);
+  }
+
   const { posts } = await getRecentXPostsForCurrentSession(mode === "recover" ? 10 : 5);
-  const match = findMatchingEntryPost(posts, slug, verificationLine, notBefore, mode === "recover");
+  const match = findMatchingEntryPost(posts, slug, verificationLine, notBefore, mode === "recover", orbGameType(orb) === "arena");
   if (!match) {
     return NextResponse.json({
       ok: true,

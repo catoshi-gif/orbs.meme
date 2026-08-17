@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildRefundTransaction, verifySettledOrbClosed } from "@/lib/orbsProgram";
-import { getOrbRecord } from "@/lib/orbStore";
+import { getOrbRecord, recordRefundSettlement } from "@/lib/orbStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +16,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ sl
     const confirmation = await connection.confirmTransaction({ signature, ...latest }, "confirmed");
     if (confirmation.value.err) throw new Error("Solana rejected the refund transaction");
     await verifySettledOrbClosed(record, signature);
+    await recordRefundSettlement(slug, signature).catch((error) => console.warn("[orbs:refund] Could not persist refund receipt", error));
     return NextResponse.json({ ok: true, signature }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not refund Orb" }, { status: 400 });

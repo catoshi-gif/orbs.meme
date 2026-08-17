@@ -44,6 +44,8 @@ export type OrbRecord = {
   fundingQuoteExpiresAt: number;
   fundingBroadcastSignature?: string;
   fundingTxSignature?: string;
+  refundTxSignature?: string;
+  refundedAt?: number;
   hostSharePostId?: string;
   hostSharePostCreatedAt?: number;
   orbPda?: string;
@@ -378,6 +380,26 @@ export async function noteFundingBroadcast(slug: string, signature: string) {
     String(ttl),
   ]);
   if (result !== "OK") throw new Error("Could not persist the funding broadcast receipt");
+  return publicRecord(updated);
+}
+
+export async function recordRefundSettlement(slug: string, signature: string) {
+  const record = await getOrbRecord(slug);
+  if (!record) throw new Error("Orb was not found");
+  if (record.refundTxSignature) return publicRecord(record);
+  const updated: OrbRecord = { ...record, refundTxSignature: signature, refundedAt: Date.now() };
+  const currentTtl = Number(await redisCommand<number>(["TTL", orbKey(slug)]) || -1);
+  const ttl = currentTtl > 0 ? currentTtl : ORB_HISTORY_TTL_SECONDS;
+  const stored = await redisCommand<string>([
+    "EVAL",
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2]); return 'OK'",
+    "2",
+    orbKey(slug),
+    recoveryOrbKey(slug),
+    JSON.stringify(updated),
+    String(ttl),
+  ]);
+  if (stored !== "OK") throw new Error("Could not persist the refund receipt");
   return publicRecord(updated);
 }
 

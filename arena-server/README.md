@@ -45,7 +45,7 @@ Before enabling a real-money Arena:
 2. Set `ORBS_SITE_URL` to the exact production origin (the WebSocket server rejects other browser origins).
 3. Set the same 32+ character `ARENA_RUNTIME_HMAC_KEY` on the authority and web app.
 4. Set `NEXT_PUBLIC_ARENA_REALTIME_URL` to the authority's public `wss://` origin.
-5. Confirm `GET /health` returns `{ ok: true, version: "orb-arena-v8" }` from the public internet.
+5. Confirm `GET /health` returns `{ ok: true, version: "orb-arena-v9" }` from the public internet.
 6. Redeploy the web app. Arena creation now performs a live health/version preflight and fails closed if the authority is unavailable or mismatched.
 7. Run a two-wallet, zero/low-value operational rehearsal before increasing prize sizes.
 
@@ -58,7 +58,7 @@ If fewer than two entrants connect within two minutes after the scheduled launch
 - Configure the Railway service Root Directory as `/arena-server` and Config File path as `/arena-server/railway.json`.
 - The included Railway config watches only `/arena-server/**`, health-checks `/health`, and restarts on crashes.
 - **Do not intentionally redeploy the Arena authority while `liveRooms > 0`.** A deploy replaces the in-memory physics authority for an active match. Check `/health` first.
-- Clients get a 20-second reconnect grace period. After that, a disconnected Orb is eliminated instead of being able to AFK-disconnect and survive to the hard cap.
-- At the 10-minute hard cap, an unresolved match uses a skill tiebreak in this order: knockouts, damage dealt, then remaining health. An exact tie records no winner and safely falls through to the normal refund path rather than choosing a wallet arbitrarily.
+- Clients get a 20-second reconnect grace period. After that, a disconnected Orb is eliminated instead of being able to AFK-disconnect and remain alive indefinitely.
+- There is no competitive match timer. A healthy match continues until one Orb remains. Power availability accelerates later in the match; the only operational ceiling is the Orb refund window, which aborts safely with no winner rather than inventing one.
 - The server sends WebSocket heartbeats so dead connections are detected promptly.
 - Redis is intentionally **not** used for 60 Hz physics state. The existing Orbs web app remains responsible for entrant profiles, qualification, winner locking, and durable records.

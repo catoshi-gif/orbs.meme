@@ -19,9 +19,13 @@ export default function ArenaHowToPlay() {
 
     <div className="how-play-rules arena-rules">
       <div><b>↑</b><h3>Double Jump</h3><p>Use the second lift to reach pedestals, clear terrain, or escape an attack.</p></div>
-      <div><b>●</b><h3>Blaster</h3><p>Activate it and bullets fire in the direction you are facing while you keep moving and jumping.</p></div>
+      <div><b>●</b><h3>Blaster</h3><p>Activate it and broad crescent pulses fire in the direction you are facing. They travel far enough to chase an opponent while you keep moving and jumping.</p></div>
       <div><b>»</b><h3>Super Speed</h3><p>Move dramatically faster, become temporarily invulnerable, and hit other Orbs hard.</p></div>
       <div><b>+</b><h3>Health</h3><p>Pink recovery rings restore health immediately. Fight for one when you need a second chance.</p></div>
+      <div><b>⚡</b><h3>Column zap</h3><p>The outer columns are live. Hit one and it gives you a small electric hit and pushes you back toward the fight.</p></div>
+      <div><b>▲</b><h3>Spikes</h3><p>Some ramp edges are armed with visible spikes. Use the clean center line or jump them.</p></div>
+      <div><b>↓</b><h3>Ring out</h3><p>The arches between outer columns are open. Roll off the Arena and your Orb is eliminated, so control your momentum near the edge.</p></div>
+      <div><b>∞</b><h3>No match clock</h3><p>A healthy Arena keeps going until one Orb remains. Later power surges keep the fight moving without cutting off a great match.</p></div>
     </div>
   </div></div>;
 }

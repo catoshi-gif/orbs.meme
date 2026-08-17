@@ -1,7 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const ARENA_GAME_VERSION = "orb-arena-v8" as const;
-export const ARENA_HARD_CAP_SECONDS = 10 * 60;
+export const ARENA_GAME_VERSION = "orb-arena-v9" as const;
 
 export type ArenaPace = "demo" | "production";
 export type ArenaPowerKind = "superjump" | "blaster" | "superspeed";
@@ -38,7 +37,7 @@ export function buildArenaConfig(input: {
   seed: string;
 }): ArenaConfig {
   const playerCount = Math.max(2, Math.min(200, Math.floor(input.playerCount)));
-  const maxSeconds = input.pace === "demo" ? 135 : ARENA_HARD_CAP_SECONDS;
+  const maxSeconds = input.pace === "demo" ? 135 : 0;
   const radius = arenaRadiusForPlayers(playerCount);
   return {
     version: ARENA_GAME_VERSION,
@@ -46,8 +45,9 @@ export function buildArenaConfig(input: {
     radius,
     courseScale: radius / 32,
     maxSeconds,
-    suddenDeathAt: maxSeconds * 0.72,
-    overchargeAt: maxSeconds * 0.88,
+    // Production has no competitive hard cap. These fixed thresholds only accelerate power respawns.
+    suddenDeathAt: input.pace === "demo" ? maxSeconds * 0.72 : 7 * 60 + 12,
+    overchargeAt: input.pace === "demo" ? maxSeconds * 0.88 : 8 * 60 + 48,
     jumpImpulse: 7.35,
     jumpCooldownMs: 720,
     impactDamageScale: 0.72,
