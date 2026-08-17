@@ -25,6 +25,12 @@ type Metrics = {
   }>;
 };
 
+type OnchainEscrow = {
+  orbPda:string;orbIdHex:string;host:string;mint:string;prizeVault:string;
+  prizeRawAmount:string;vaultRawAmount:string;decimals:number;tokenAmount:number|null;
+  startsAt:number;refundAfter:number;
+};
+
 export default function AdminDashboard(){
   const {publicKey,signMessage}=useWallet();
   const wallet=publicKey?.toBase58()||"";
@@ -36,6 +42,9 @@ export default function AdminDashboard(){
   const [metrics,setMetrics]=useState<Metrics|null>(null);
   const [xBusy,setXBusy]=useState(false);
   const [attachValues,setAttachValues]=useState<Record<string,string>>({});
+  const [escrowBusy,setEscrowBusy]=useState(false);
+  const [escrows,setEscrows]=useState<OnchainEscrow[]|null>(null);
+  const [escrowMessage,setEscrowMessage]=useState<string|null>(null);
 
   const loadStatus=async()=>{
     const r=await fetch("/api/admin/auth/status",{cache:"no-store"});
@@ -57,6 +66,36 @@ export default function AdminDashboard(){
       if(!r.ok||!p.ok) throw new Error(p.error||"Could not refresh X reach");
       await loadMetrics();
     }catch(e){setError(e instanceof Error?e.message:"Could not refresh X reach")}finally{setXBusy(false)}
+  };
+  const scanOnchainEscrows=async()=>{
+    setEscrowBusy(true);setError(null);setEscrowMessage(null);
+    try{
+      const r=await fetch("/api/admin/onchain-refunds",{cache:"no-store"});
+      const p=await r.json() as {ok?:boolean;escrows?:OnchainEscrow[];error?:string};
+      if(!r.ok||!p.ok||!Array.isArray(p.escrows)) throw new Error(p.error||"Could not scan on-chain escrows");
+      setEscrows(p.escrows);
+      setEscrowMessage(p.escrows.length?`Found ${p.escrows.length} expired on-chain escrow${p.escrows.length===1?"":"s"} with funds.`:"No expired funded escrows found on-chain.");
+    }catch(e){setError(e instanceof Error?e.message:"Could not scan on-chain escrows")}finally{setEscrowBusy(false)}
+  };
+  const returnExpiredEscrows=async()=>{
+    if(!escrows?.length||escrowBusy)return;
+    setEscrowBusy(true);setError(null);setEscrowMessage(null);
+    let returned=0;const failures:string[]=[];
+    try{
+      // One transaction per Orb keeps each permissionless refund atomic and limits blast radius.
+      for(const escrow of escrows){
+        try{
+          const r=await fetch("/api/admin/onchain-refunds",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({orbPda:escrow.orbPda,slug:metrics?.games.find(g=>g.id.toLowerCase()===escrow.orbIdHex.toLowerCase())?.slug||""})});
+          const p=await r.json() as {ok?:boolean;signature?:string;error?:string};
+          if(!r.ok||!p.ok) throw new Error(p.error||"Refund failed");
+          returned+=1;
+        }catch(e){failures.push(`${short(escrow.orbPda)}: ${e instanceof Error?e.message:"refund failed"}`)}
+      }
+      const r=await fetch("/api/admin/onchain-refunds",{cache:"no-store"});
+      const p=await r.json() as {ok?:boolean;escrows?:OnchainEscrow[];error?:string};
+      if(r.ok&&p.ok&&Array.isArray(p.escrows))setEscrows(p.escrows);
+      setEscrowMessage(`${returned} expired escrow${returned===1?"":"s"} returned to the original author${returned===1?"":"s"}.${failures.length?` ${failures.length} failed: ${failures.join(" · ")}`:""}`);
+    }catch(e){setError(e instanceof Error?e.message:"Could not return expired escrows")}finally{setEscrowBusy(false)}
   };
   const attachPost=async(slug:string)=>{
     const postUrl=(attachValues[slug]||"").trim();
@@ -102,7 +141,8 @@ export default function AdminDashboard(){
     ["Unique host X accounts",T.uniqueHostXAccounts],["X host impressions",metrics.xMetrics.totalImpressions.toLocaleString()],["Fastest win",duration(T.fastestVerifiedWinMs as number|null)]
   ];
   return <div className="admin-dashboard">
-    <div className="admin-toolbar"><div><span className="eyebrow">Private operator console</span><h1>Orbs network metrics</h1><p>Generated {new Date(metrics.generatedAt).toLocaleString()}</p></div><div className="admin-toolbar-actions"><a className="btn-secondary" href="/api/admin/metrics/export">Export lifetime CSV</a><button className="btn-secondary" onClick={()=>void loadMetrics().catch(e=>setError(e instanceof Error?e.message:"Refresh failed"))}>Refresh DB</button><button className="btn-primary" onClick={()=>void refreshX()} disabled={xBusy||!metrics.xMetrics.enabled||metrics.xMetrics.trackedPosts===0}>{xBusy?"Refreshing X…":`Refresh X reach · ~${money(metrics.xMetrics.estimatedRefreshUsd)}`}</button></div></div>
+    <div className="admin-toolbar"><div><span className="eyebrow">Private operator console</span><h1>Orbs network metrics</h1><p>Generated {new Date(metrics.generatedAt).toLocaleString()}</p></div><div className="admin-toolbar-actions"><button className="btn-secondary" onClick={()=>void scanOnchainEscrows()} disabled={escrowBusy}>{escrowBusy?"Checking chain…":"Scan expired escrows"}</button><a className="btn-secondary" href="/api/admin/metrics/export">Export lifetime CSV</a><button className="btn-secondary" onClick={()=>void loadMetrics().catch(e=>setError(e instanceof Error?e.message:"Refresh failed"))}>Refresh DB</button><button className="btn-primary" onClick={()=>void refreshX()} disabled={xBusy||!metrics.xMetrics.enabled||metrics.xMetrics.trackedPosts===0}>{xBusy?"Refreshing X…":`Refresh X reach · ~${money(metrics.xMetrics.estimatedRefreshUsd)}`}</button></div></div>
+    {escrows!==null?<div className="card admin-x-note"><strong>On-chain expired escrow recovery</strong><p>This scan reads every live Orb PDA directly from the deployed Solana program, including Orbs missing from the web database. Only accounts whose on-chain refund time has passed and whose canonical prize vault still contains classic SPL tokens are eligible. Refunds are permissionless and the program hard-binds each destination to the original author&apos;s canonical token account.</p>{escrowMessage?<p><strong>{escrowMessage}</strong></p>:null}{escrows.length?<><div className="admin-escrow-list">{escrows.map(e=><div className="admin-escrow-row" key={e.orbPda}><code>{short(e.orbPda)}</code><span>{e.tokenAmount===null?`${e.vaultRawAmount} raw`:e.tokenAmount.toLocaleString(undefined,{maximumFractionDigits:9})} tokens</span><span>host {short(e.host)}</span><span>expired {new Date(e.refundAfter).toLocaleString()}</span></div>)}</div><button className="btn-primary" onClick={()=>void returnExpiredEscrows()} disabled={escrowBusy}>{escrowBusy?"Returning prizes…":`Return all ${escrows.length} to original authors`}</button></>:null}</div>:null}
     <div className="admin-stats">{cards.map(([k,v])=><div className="card admin-stat" key={String(k)}><span>{k}</span><strong>{String(v??"—")}</strong></div>)}</div>
     <div className="card admin-x-note"><strong>Lifetime product analytics</strong><p>Funded-Orb snapshots and aggregate funnel counts have no TTL. Waiting-room and live-player identity sets are used only to deduplicate active games, then expire; the lifetime counts remain. Historical waiting-room visitors and live racers begin when this analytics version is deployed because those events were not previously persisted.</p></div>
     <div className="card admin-x-note"><strong>Manual X reach analytics</strong><p>{metrics.xMetrics.reason} Tracked host posts: {metrics.xMetrics.trackedPosts}. Cached total impressions: {metrics.xMetrics.totalImpressions.toLocaleString()}. X currently charges about $0.005 per Post read, so the button estimates the cost before you refresh.</p></div>

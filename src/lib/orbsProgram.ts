@@ -451,6 +451,178 @@ export function buildClaimInstruction(record: OrbRecord, winner: PublicKey, paye
   };
 }
 
+
+export type OnchainRefundableOrb = {
+  orbPda: string;
+  orbIdHex: string;
+  host: string;
+  mint: string;
+  prizeVault: string;
+  prizeRawAmount: string;
+  vaultRawAmount: string;
+  decimals: number;
+  tokenAmount: number | null;
+  startsAt: number;
+  refundAfter: number;
+};
+
+function decodeClassicTokenAccount(data: Buffer, expectedMint: PublicKey, expectedOwner: PublicKey) {
+  if (data.length < 165) throw new Error("Prize vault token account is malformed");
+  const mint = new PublicKey(data.subarray(0, 32));
+  const owner = new PublicKey(data.subarray(32, 64));
+  const amount = data.readBigUInt64LE(64);
+  if (!mint.equals(expectedMint) || !owner.equals(expectedOwner)) {
+    throw new Error("Prize vault identities do not match the on-chain Orb");
+  }
+  return { amount };
+}
+
+function decodeClassicMintDecimals(data: Buffer) {
+  if (data.length < 82) throw new Error("Mint account is malformed");
+  return data.readUInt8(44);
+}
+
+async function getMultipleAccountInfosChunked(connection: Connection, keys: PublicKey[]) {
+  const out = new Map<string, Awaited<ReturnType<Connection["getMultipleAccountsInfo"]>>[number]>();
+  for (let i = 0; i < keys.length; i += 100) {
+    const chunk = keys.slice(i, i + 100);
+    const infos = await connection.getMultipleAccountsInfo(chunk, "confirmed");
+    chunk.forEach((key, index) => out.set(key.toBase58(), infos[index] ?? null));
+  }
+  return out;
+}
+
+/**
+ * Reads the deployed program directly. This deliberately does not consult Redis/OrbRecord,
+ * so orphaned historical escrows remain recoverable even if their web record is missing.
+ */
+export async function scanRefundableOnchainOrbs(): Promise<OnchainRefundableOrb[]> {
+  const connection = new Connection(solanaRpcUrl(), "confirmed");
+  const programId = orbsProgramId();
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const accounts = await connection.getProgramAccounts(programId, {
+    commitment: "confirmed",
+    filters: [
+      { dataSize: 113 },
+      { memcmp: { offset: 0, bytes: bs58.encode(ORB_ACCOUNT_DISCRIMINATOR) } },
+    ],
+  });
+
+  const expired = accounts.flatMap(({ pubkey, account }) => {
+    try {
+      const decoded = decodeOrbAccount(Buffer.from(account.data));
+      if (decoded.refundAfter > now) return [];
+      const [expectedOrb] = PublicKey.findProgramAddressSync(
+        [ORB_SEED, decoded.host.toBuffer(), Buffer.from(decoded.orbIdHex, "hex")],
+        programId,
+      );
+      if (!expectedOrb.equals(pubkey)) return [];
+      const prizeVault = deriveClassicAta(pubkey, decoded.mint);
+      return [{ pubkey, decoded, prizeVault }];
+    } catch {
+      return [];
+    }
+  });
+
+  if (!expired.length) return [];
+  const vaultKeys = expired.map((entry) => entry.prizeVault);
+  const mintKeys = [...new Map(expired.map((entry) => [entry.decoded.mint.toBase58(), entry.decoded.mint])).values()];
+  const [vaultInfos, mintInfos] = await Promise.all([
+    getMultipleAccountInfosChunked(connection, vaultKeys),
+    getMultipleAccountInfosChunked(connection, mintKeys),
+  ]);
+
+  const refundable: OnchainRefundableOrb[] = [];
+  for (const entry of expired) {
+    const vaultInfo = vaultInfos.get(entry.prizeVault.toBase58());
+    if (!vaultInfo || !vaultInfo.owner.equals(CLASSIC_SPL_TOKEN_PROGRAM_ID)) continue;
+    let vaultAmount: bigint;
+    let decimals = 0;
+    try {
+      vaultAmount = decodeClassicTokenAccount(Buffer.from(vaultInfo.data), entry.decoded.mint, entry.pubkey).amount;
+      const mintInfo = mintInfos.get(entry.decoded.mint.toBase58());
+      if (!mintInfo || !mintInfo.owner.equals(CLASSIC_SPL_TOKEN_PROGRAM_ID)) continue;
+      decimals = decodeClassicMintDecimals(Buffer.from(mintInfo.data));
+    } catch {
+      continue;
+    }
+    if (vaultAmount <= BigInt(0)) continue;
+    const divisor = 10 ** decimals;
+    const asNumber = Number(vaultAmount);
+    refundable.push({
+      orbPda: entry.pubkey.toBase58(),
+      orbIdHex: entry.decoded.orbIdHex,
+      host: entry.decoded.host.toBase58(),
+      mint: entry.decoded.mint.toBase58(),
+      prizeVault: entry.prizeVault.toBase58(),
+      prizeRawAmount: entry.decoded.prizeAmount.toString(),
+      vaultRawAmount: vaultAmount.toString(),
+      decimals,
+      tokenAmount: Number.isSafeInteger(asNumber) && Number.isFinite(divisor) ? asNumber / divisor : null,
+      startsAt: Number(entry.decoded.startsAt) * 1000,
+      refundAfter: Number(entry.decoded.refundAfter) * 1000,
+    });
+  }
+  return refundable.sort((a, b) => a.refundAfter - b.refundAfter);
+}
+
+/**
+ * Builds a permissionless refund directly from verified on-chain Orb state.
+ * Anchor constrains the destination to the original host's canonical ATA, so neither
+ * the admin caller nor the relayer can redirect prize funds.
+ */
+export async function buildOnchainRefundTransaction(orbPdaInput: string) {
+  const connection = new Connection(solanaRpcUrl(), "confirmed");
+  const programId = orbsProgramId();
+  const orbPda = new PublicKey(orbPdaInput);
+  const info = await connection.getAccountInfo(orbPda, "confirmed");
+  if (!info) throw new Error("Orb escrow is already closed");
+  if (!info.owner.equals(programId)) throw new Error("Account is not owned by the Orbs program");
+  const decoded = decodeOrbAccount(Buffer.from(info.data));
+  const [expectedOrb] = PublicKey.findProgramAddressSync(
+    [ORB_SEED, decoded.host.toBuffer(), Buffer.from(decoded.orbIdHex, "hex")],
+    programId,
+  );
+  if (!expectedOrb.equals(orbPda)) throw new Error("Orb PDA does not match its on-chain host/id seeds");
+  if (BigInt(Math.floor(Date.now() / 1000)) < decoded.refundAfter) throw new Error("Orb has not reached its on-chain refund time");
+
+  const mint = decoded.mint;
+  const prizeVault = deriveClassicAta(orbPda, mint);
+  const vaultInfo = await connection.getAccountInfo(prizeVault, "confirmed");
+  if (!vaultInfo || !vaultInfo.owner.equals(CLASSIC_SPL_TOKEN_PROGRAM_ID)) throw new Error("Prize vault is missing or not a classic SPL token account");
+  const vault = decodeClassicTokenAccount(Buffer.from(vaultInfo.data), mint, orbPda);
+  if (vault.amount <= BigInt(0)) throw new Error("Prize vault is already empty");
+
+  const payer = serverRelayerKeypair();
+  const hostTokenAccount = deriveClassicAta(decoded.host, mint);
+  const keys: AccountMeta[] = [
+    { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+    { pubkey: ORBS_RENT_RECEIVER_WALLET, isSigner: false, isWritable: true },
+    { pubkey: orbPda, isSigner: false, isWritable: true },
+    { pubkey: mint, isSigner: false, isWritable: false },
+    { pubkey: prizeVault, isSigner: false, isWritable: true },
+    { pubkey: decoded.host, isSigner: false, isWritable: false },
+    { pubkey: hostTokenAccount, isSigner: false, isWritable: true },
+    { pubkey: CLASSIC_SPL_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+  const latest = await connection.getLatestBlockhash("confirmed");
+  const tx = new Transaction({ feePayer: payer.publicKey, recentBlockhash: latest.blockhash }).add(
+    new TransactionInstruction({ programId, keys, data: REFUND_DISCRIMINATOR }),
+  );
+  tx.partialSign(payer);
+  return { connection, tx, latest, orbPda, prizeVault, decoded, vaultAmount: vault.amount };
+}
+
+export async function verifyOnchainRefundClosed(connection: Connection, orbPda: PublicKey, prizeVault: PublicKey) {
+  const [orbInfo, vaultInfo] = await Promise.all([
+    connection.getAccountInfo(orbPda, "confirmed"),
+    connection.getAccountInfo(prizeVault, "confirmed"),
+  ]);
+  if (orbInfo || vaultInfo) throw new Error("Refund transaction confirmed but escrow accounts are still open");
+}
+
 export async function buildRefundTransaction(record: OrbRecord) {
   if (Date.now() < (record.endsAt ?? record.startsAt + ORB_COMPETITION_WINDOW_MS)) throw new Error("Orb has not reached its refund time");
   const { connection, host, mint, accounts } = await loadVerifiedOrbState(record);
