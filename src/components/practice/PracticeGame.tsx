@@ -148,7 +148,7 @@ export default function PracticeGame({ mode }: { mode: PracticeMode }) {
       </> : <>
         <div className={`practice-power-ring ${power ? "collected" : ""}`}><b>●</b><span>BLASTER</span></div>
         <div className="practice-ramp" aria-hidden="true" />
-        {shot ? <div className="practice-shot" style={{ left: `${pos.x + 5}%`, top: `${pos.y}%` }} /> : null}
+        {shot ? <div className="practice-shot" style={{ left: `${pos.x + 5}%`, top: `${pos.y}%` }}><i /><i /><i /></div> : null}
       </>}
       <div className={`practice-orb ${jumping ? "jumping" : ""} ${power ? "armed" : ""}`} style={{ left: `${pos.x}%`, top: `${pos.y}%` }}><i /></div>
 
