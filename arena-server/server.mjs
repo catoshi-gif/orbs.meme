@@ -43,6 +43,9 @@ const MAX_MESSAGES_PER_SECOND = 120;
 const MAX_ACTIONS_PER_SECOND = 24;
 const DISCONNECT_GRACE_MS = 20_000;
 const HEARTBEAT_MS = 15_000;
+const LOOP_INTERVAL_MS = 8;
+const MAX_CATCHUP_STEPS = 4;
+const MAX_SNAPSHOT_BUFFERED_BYTES = 192 * 1024;
 
 const POWER_META = {
   superjump:{label:"DOUBLE JUMP",color:"#FFD86B"},
@@ -51,6 +54,8 @@ const POWER_META = {
 };
 
 function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+function round3(v){return Math.round(v*1000)/1000}
+function round4(v){return Math.round(v*10000)/10000}
 function safeJson(raw){try{return JSON.parse(raw)}catch{return null}}
 function sign(encoded){return createHmac("sha256",HMAC_KEY).update(encoded,"utf8").digest("base64url")}
 function verifyToken(token){
@@ -80,7 +85,7 @@ class Room {
   constructor(payload){
     this.orbId=payload.orbId;this.slug=payload.slug;this.commitment=payload.commitment;this.style=payload.style;this.startsAt=payload.startsAt;this.endsAt=payload.endsAt;
     this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.pickups=[];this.pedestals=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
-    this.abortReason=null;this.resultRetryTimer=null;this.timer=setInterval(()=>this.tick(),1000/60);
+    this.abortReason=null;this.resultRetryTimer=null;this.simAccumulator=0;this.lastLoopAt=performance.now();this.snapshotDrops=0;this.loopLagMs=0;this.timer=setInterval(()=>this.loop(),LOOP_INTERVAL_MS);
   }
   compatible(p){return p.orbId===this.orbId&&p.slug===this.slug&&p.commitment===this.commitment&&p.startsAt===this.startsAt&&p.endsAt===this.endsAt}
   add(ws,p){
@@ -100,25 +105,36 @@ class Room {
   remove(ws){if(!ws.player)return;const p=ws.player;if(this.clients.get(p.wallet)!==ws)return;this.clients.delete(p.wallet);p.connected=false;p.disconnectedAt=Date.now();p.input={x:0,z:0};this.broadcastRoster()}
   send(ws,msg){if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(msg))}
   broadcast(msg){const raw=JSON.stringify(msg);for(const ws of this.clients.values())if(ws.readyState===WebSocket.OPEN)ws.send(raw)}
+  broadcastSnapshot(msg){
+    const raw=JSON.stringify(msg);
+    for(const ws of this.clients.values()){
+      if(ws.readyState!==WebSocket.OPEN)continue;
+      // Snapshots are disposable. Never queue seconds of stale physics behind a slow
+      // mobile/worldwide connection; roster/events/results still use reliable broadcast().
+      if(ws.bufferedAmount>MAX_SNAPSHOT_BUFFERED_BYTES){this.snapshotDrops+=1;continue}
+      ws.send(raw)
+    }
+  }
   broadcastRoster(){this.broadcast({t:"roster",players:[...this.players.values()].map(p=>({id:p.id,wallet:p.wallet,username:p.username,profileImageUrl:p.profileImageUrl,color:p.color,glow:p.glow,connected:p.connected}))})}
   input(player,msg){if(!player.alive)return;const seq=Math.trunc(Number(msg.seq)||0);if(seq<=player.lastSeq)return;player.lastSeq=seq;player.input=normalizeInput(msg.x,msg.z);// Mobile means normalized onscreen-joystick input; the authority accepts planar input only.
     player.profile=msg.profile==="mobile"?"mobile":"desktop"}
   action(player){if(this.phase!=="live"||!player.alive||!player.body)return;const now=Date.now();if(player.powerKind&&now>=player.powerExpiresAt)this.clearPower(player);const kind=player.powerKind;if(!kind){this.normalJump(player);return}
     if(kind==="superjump"){
       if(this.grounded(player)){if(this.normalJump(player,1.18))player.doubleJumpArmed=true}
-      else if(player.doubleJumpArmed){const v=player.body.linvel();player.body.setLinvel({x:v.x,y:this.config.jumpImpulse*1.42,z:v.z},true);player.doubleJumpArmed=false;this.clearPower(player);this.event("power",{playerId:player.id,powerKind:"superjump"})}
+      else if(player.doubleJumpArmed){const v=player.body.linvel();player.body.setLinvel({x:v.x,y:this.config.jumpImpulse*1.42,z:v.z},true);player.doubleJumpArmed=false;this.clearPower(player);/* power state is carried in snapshots */}
     } else if(kind==="blaster"){
-      if(player.blasterActive)this.normalJump(player);else{player.blasterActive=true;player.nextShotAt=0;player.powerExpiresAt=now+this.config.weaponLifetimeMs;this.event("power",{playerId:player.id,powerKind:"blaster"})}
+      if(player.blasterActive)this.normalJump(player);else{player.blasterActive=true;player.nextShotAt=0;player.powerExpiresAt=now+this.config.weaponLifetimeMs;/* power state is carried in snapshots */}
     } else if(kind==="superspeed"){
-      if(now<player.speedUntil)this.normalJump(player);else{player.speedUntil=now+this.config.weaponLifetimeMs;player.powerExpiresAt=player.speedUntil;this.event("power",{playerId:player.id,powerKind:"superspeed"})}
+      if(now<player.speedUntil)this.normalJump(player);else{player.speedUntil=now+this.config.weaponLifetimeMs;player.powerExpiresAt=player.speedUntil;/* power state is carried in snapshots */}
     }
   }
   snapshotInterval(){const n=this.players.size;return n<=24?33:n<=64?40:SNAPSHOT_MS}
   event(event,data){this.broadcast({t:"event",event,...data,at:Date.now()})}
+  playerEvent(player,event,data={}){const ws=this.clients.get(player.wallet);if(ws)this.send(ws,{t:"event",event,...data,at:Date.now()})}
   grounded(p){return Boolean(p.body)&&!p.airborne&&Math.abs(p.body.linvel().y)<.72}
-  normalJump(p,mult=1){const now=Date.now();if(!p.body||now<p.jumpReadyAt||!this.grounded(p))return false;const v=p.body.linvel();p.body.setLinvel({x:v.x,y:this.config.jumpImpulse*mult,z:v.z},true);p.jumpReadyAt=now+this.config.jumpCooldownMs;p.airborne=true;p.descending=false;this.event("jump",{playerId:p.id});return true}
+  normalJump(p,mult=1){const now=Date.now();if(!p.body||now<p.jumpReadyAt||!this.grounded(p))return false;const v=p.body.linvel();p.body.setLinvel({x:v.x,y:this.config.jumpImpulse*mult,z:v.z},true);p.jumpReadyAt=now+this.config.jumpCooldownMs;p.airborne=true;p.descending=false;this.playerEvent(p,"jump",{playerId:p.id});return true}
   clearPower(p){p.powerKind=null;p.powerExpiresAt=0;p.blasterActive=false;p.doubleJumpArmed=false}
-  grantPower(p,kind,now){p.powerKind=kind;p.powerExpiresAt=now+this.config.weaponLifetimeMs;p.blasterActive=false;p.doubleJumpArmed=false;this.event("pickup",{playerId:p.id,powerKind:kind})}
+  grantPower(p,kind,now){p.powerKind=kind;p.powerExpiresAt=now+this.config.weaponLifetimeMs;p.blasterActive=false;p.doubleJumpArmed=false;this.playerEvent(p,"pickup",{playerId:p.id,powerKind:kind})}
   buildWorld(){
     const players=[...this.players.values()].filter(p=>p.connected);if(players.length<2){this.liveAt=Date.now()+3000;return false}
     // Remove entrants who never connected before the synchronized start. They can spectate later but cannot enter mid-match.
@@ -142,7 +158,7 @@ class Room {
   updatePlayers(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=nextVelocity({x:v.x/speedMul,z:v.z/speedMul},p.input,p.profile),next={x:base.x*speedMul,z:base.z*speedMul};p.body.setLinvel({x:next.x,y:v.y,z:next.z},true)}}
   postStep(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=clampVelocity({x:v.x/speedMul,z:v.z/speedMul},p.profile),cl={x:base.x*speedMul,z:base.z*speedMul};if(cl.x!==v.x||cl.z!==v.z)p.body.setLinvel({x:cl.x,y:v.y,z:cl.z},true);const pos=p.body.translation();if(p.airborne){if(v.y<-.25)p.descending=true;if(p.descending&&Math.abs(v.y)<.16){p.airborne=false;p.descending=false}}if(p.powerKind&&now>=p.powerExpiresAt)this.clearPower(p);if(pos.y<-5){p.body.setTranslation({x:clamp(pos.x,-this.arenaHalf*.7,this.arenaHalf*.7),y:2,z:clamp(pos.z,-this.arenaHalf*.7,this.arenaHalf*.7)},true);p.body.setLinvel({x:0,y:0,z:0},true);p.health=Math.max(1,p.health-4)}}}
   facing(p){const v=p.body.linvel(),speed=Math.hypot(v.x,v.z);if(speed>.55)return{x:v.x/speed,z:v.z/speed};const i=p.input,m=Math.hypot(i.x,i.z);return m>.1?{x:i.x/m,z:i.z/m}:{x:0,z:-1}}
-  fire(p,now){const dir=this.facing(p),pos=p.body.translation();this.projectiles.push({id:`b${++this.seq}`,x:pos.x+dir.x*.95,y:pos.y+.06,z:pos.z+dir.z*.95,vx:dir.x*14,vz:dir.z*14,owner:p,born:now,life:1200});this.event("shot",{playerId:p.id})}
+  fire(p,now){const dir=this.facing(p),pos=p.body.translation();this.projectiles.push({id:`b${++this.seq}`,x:pos.x+dir.x*.95,y:pos.y+.06,z:pos.z+dir.z*.95,vx:dir.x*14,vz:dir.z*14,owner:p,born:now,life:1200});}
   updateProjectiles(now){for(const p of this.players.values())if(p.alive&&p.blasterActive&&p.powerKind==="blaster"&&now<p.powerExpiresAt&&now>=p.nextShotAt){this.fire(p,now);p.nextShotAt=now+145}
     for(let i=this.projectiles.length-1;i>=0;i--){const b=this.projectiles[i];if(now-b.born>b.life){this.projectiles.splice(i,1);continue}b.x+=b.vx*FIXED;b.z+=b.vz*FIXED;let hit=false;for(const t of this.players.values()){if(!t.alive||t===b.owner||!t.body)continue;const p=t.body.translation();if(Math.hypot(p.x-b.x,p.y-b.y,p.z-b.z)>BALL_RADIUS+.22*this.config.courseScale)continue;const inv=now<t.speedUntil,damage=inv?0:8,before=t.health;t.health=Math.max(0,t.health-damage);const actualDamage=before-t.health;if(actualDamage>0)b.owner.damageDealt+=actualDamage;if(!inv){const m=Math.hypot(b.vx,b.vz)||1;t.body.applyImpulse({x:b.vx/m*.75,y:.08,z:b.vz/m*.75},true)}this.event("hit",{playerId:t.id,attackerId:b.owner.id,attackKind:"blaster",damage});if(t.health<=0)this.eliminate(t,"BLASTED",b.owner);hit=true;break}if(hit)this.projectiles.splice(i,1)}
   }
@@ -178,24 +194,70 @@ class Room {
       }
     }
   }
-  pickupsTick(now){const elapsed=(now-this.startedAt)/1000,respawn=elapsed>=this.config.overchargeAt?.38:elapsed>=this.config.suddenDeathAt?.58:1,s=this.config.courseScale;for(const pick of this.pickups){if(now<pick.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body)continue;const pos=p.body.translation();if(Math.hypot(pos.x-pick.x,pos.z-pick.z)>1.5*s||Math.abs(pos.y-pick.y)>2.4)continue;pick.readyAt=now+this.config.ringRespawnMs*respawn;if(pick.kind==="recovery"){const before=p.health;p.health=Math.min(100,p.health+this.config.recoveryAmount);this.event("recover",{playerId:p.id,amount:p.health-before})}else this.grantPower(p,pick.kind,now);break}}
+  pickupsTick(now){const elapsed=(now-this.startedAt)/1000,respawn=elapsed>=this.config.overchargeAt?.38:elapsed>=this.config.suddenDeathAt?.58:1,s=this.config.courseScale;for(const pick of this.pickups){if(now<pick.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body)continue;const pos=p.body.translation();if(Math.hypot(pos.x-pick.x,pos.z-pick.z)>1.5*s||Math.abs(pos.y-pick.y)>2.4)continue;pick.readyAt=now+this.config.ringRespawnMs*respawn;if(pick.kind==="recovery"){const before=p.health;p.health=Math.min(100,p.health+this.config.recoveryAmount);this.playerEvent(p,"recover",{playerId:p.id,amount:p.health-before})}else this.grantPower(p,pick.kind,now);break}}
     for(const ped of this.pedestals){if(now<ped.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body||p.powerKind)continue;const pos=p.body.translation();if(Math.hypot(pos.x-ped.x,pos.z-ped.z)>1.55*s||pos.y<1.35)continue;ped.readyAt=now+this.config.pedestalRespawnMs*respawn;this.grantPower(p,ped.kind,now);break}}
   }
   abort(reason){if(this.phase==="finished"||this.phase==="aborted")return;this.phase="aborted";this.completedAt=Date.now();this.abortReason=reason;console.error(`[arena] match aborted orb=${this.orbId} match=${this.matchId}: ${reason}`);this.broadcast({t:"aborted",reason,completedAt:this.completedAt});}
-  eliminate(p,reason,attacker=null){if(!p.alive)return;p.alive=false;if(attacker&&attacker!==p)attacker.knockouts=(attacker.knockouts||0)+1;if(p.body)p.body.setEnabled(false);this.event("eliminated",{playerId:p.id,reason,attackerId:attacker?.id||null});this.maybeFinish()}
+  eliminate(p,reason,attacker=null){if(!p.alive)return;p.alive=false;if(attacker&&attacker!==p)attacker.knockouts=(attacker.knockouts||0)+1;if(p.body)p.body.setEnabled(false);this.playerEvent(p,"eliminated",{playerId:p.id,reason,attackerId:attacker?.id||null});this.maybeFinish()}
   maybeFinish(){const alive=[...this.players.values()].filter(p=>p.alive);if(this.phase!=="live"||alive.length>1)return;if(alive.length===1)this.finish(alive[0]);else this.finish(null)}
   finish(winner){if(this.phase==="finished")return;this.phase="finished";this.completedAt=Date.now();this.winner=winner||null;this.broadcast({t:"finished",winnerId:winner?.id||null,completedAt:this.completedAt});if(winner)void this.postResult(winner)}
   async postResult(winner){if(this.resultPosted||this.resultPosting)return;this.resultPosting=true;const body=JSON.stringify({schemaVersion:1,version:VERSION,matchId:this.matchId,orbId:this.orbId,slug:this.slug,startedAt:this.startedAt,completedAt:this.completedAt,participantCount:this.players.size,commitment:this.commitment,winnerWallet:winner.wallet,winnerXUserId:winner.xUserId,winnerUsername:winner.username});const ts=String(Date.now()),sig=createHmac("sha256",HMAC_KEY).update(`${ts}.${body}`,"utf8").digest("base64url");try{const r=await fetch(`${SITE_URL}/api/arena/runtime/result`,{method:"POST",headers:{"content-type":"application/json","x-arena-timestamp":ts,"x-arena-signature":sig},body});if(!r.ok)throw new Error(`result callback ${r.status}: ${await r.text()}`);this.resultPosted=true}catch(e){console.error("[arena] winner callback failed",e);this.resultRetryTimer=setTimeout(()=>{this.resultRetryTimer=null;this.resultPosting=false;void this.postResult(winner)},3000);return}this.resultPosting=false}
-  tick(){const now=Date.now();if(this.phase==="lobby"){if(now>this.startsAt+LOBBY_CLOSE_MS){this.abort("Arena could not start with at least two connected entrants in the launch window");return}if(now>=this.liveAt){try{if(this.buildWorld())return}catch(error){const message=error instanceof Error?error.stack||error.message:String(error);lastArenaError={at:Date.now(),stage:"buildWorld",message:String(message).slice(0,1200),orbId:this.orbId};console.error("[arena] authoritative world build failed",message);this.abort("Arena authority could not initialize the match safely. No winner was recorded.");return}}if(now-this.lastSnapshot>=SNAPSHOT_MS){this.lastSnapshot=now;this.broadcast({t:"lobby",phase:this.phase,liveAt:this.liveAt,connected:[...this.players.values()].filter(p=>p.connected).length})}return}if(this.phase!=="live")return;
+  loop(){
+    const perfNow=performance.now(),loopDeltaMs=perfNow-this.lastLoopAt;
+    const frameSeconds=clamp(loopDeltaMs/1000,0,.1);
+    this.loopLagMs=this.loopLagMs*.92+Math.max(0,loopDeltaMs-LOOP_INTERVAL_MS)*.08;
+    this.lastLoopAt=perfNow;
+    const now=Date.now();
+
+    if(this.phase==="lobby"){
+      this.simAccumulator=0;
+      if(now>this.startsAt+LOBBY_CLOSE_MS){this.abort("Arena could not start with at least two connected entrants in the launch window");return}
+      if(now>=this.liveAt){
+        try{if(this.buildWorld()){this.lastLoopAt=performance.now();return}}
+        catch(error){const message=error instanceof Error?error.stack||error.message:String(error);lastArenaError={at:Date.now(),stage:"buildWorld",message:String(message).slice(0,1200),orbId:this.orbId};console.error("[arena] authoritative world build failed",message);this.abort("Arena authority could not initialize the match safely. No winner was recorded.");return}
+      }
+      if(now-this.lastSnapshot>=SNAPSHOT_MS){this.lastSnapshot=now;this.broadcast({t:"lobby",phase:this.phase,liveAt:this.liveAt,connected:[...this.players.values()].filter(p=>p.connected).length})}
+      return
+    }
+    if(this.phase!=="live")return;
+
     for(const p of this.players.values())if(p.alive&&!p.connected&&p.disconnectedAt&&now-p.disconnectedAt>=DISCONNECT_GRACE_MS)this.eliminate(p,"CONNECTION LOST");
     if(this.phase!=="live")return;
-    this.updatePlayers(now);this.world.step();this.impacts(now);this.updateProjectiles(now);this.pickupsTick(now);this.postStep(now);const elapsed=now-this.startedAt;if(elapsed>=HARD_CAP_MS){const alive=[...this.players.values()].filter(p=>p.alive).sort((a,b)=>(b.knockouts||0)-(a.knockouts||0)||(b.damageDealt||0)-(a.damageDealt||0)||b.health-a.health);if(alive.length>1){const a=alive[0],b=alive[1],exactTie=(a.knockouts||0)===(b.knockouts||0)&&Math.abs((a.damageDealt||0)-(b.damageDealt||0))<.001&&Math.abs(a.health-b.health)<.001;if(exactTie){this.abort("Arena ended in an exact sudden-death tie; no winner was recorded");return}for(const p of alive.slice(1))this.eliminate(p,"SUDDEN DEATH",a)}this.maybeFinish()}if(now-this.lastSnapshot>=this.snapshotInterval()){this.lastSnapshot=now;this.snapshot(now)}}
-  snapshot(now){this.broadcast({t:"snapshot",phase:this.phase,matchId:this.matchId,startedAt:this.startedAt,serverNow:now,maxSeconds:this.config.maxSeconds,courseScale:this.config.courseScale,players:[...this.players.values()].map(p=>{const pos=p.body?.translation(),q=p.body?.rotation(),v=p.body?.linvel();return{id:p.id,p:pos?[pos.x,pos.y,pos.z]:null,q:q?[q.x,q.y,q.z,q.w]:null,v:v?[v.x,v.y,v.z]:null,h:Math.round(p.health),ko:p.knockouts||0,dmg:Math.round((p.damageDealt||0)*10)/10,alive:p.alive,power:p.powerKind,exp:p.powerExpiresAt,speed:p.speedUntil}}),projectiles:this.projectiles.map(b=>({id:b.id,p:[b.x,b.y,b.z]})),pickups:this.pickups.map(p=>({id:p.id,ready:now>=p.readyAt})),pedestals:this.pedestals.map(p=>({id:p.id,ready:now>=p.readyAt}))})}
+
+    // Mirror the admin sandbox's fixed-step accumulator. Short GC/network stalls catch up
+    // a bounded number of 60 Hz Rapier steps instead of permanently losing simulation time.
+    this.simAccumulator+=frameSeconds;
+    let steps=0;
+    while(this.simAccumulator>=FIXED&&steps<MAX_CATCHUP_STEPS&&this.phase==="live"){
+      this.stepSimulation(now);
+      this.simAccumulator-=FIXED;
+      steps+=1
+    }
+    if(steps===MAX_CATCHUP_STEPS&&this.simAccumulator>FIXED*MAX_CATCHUP_STEPS)this.simAccumulator=FIXED;
+    if(this.phase!=="live")return;
+
+    const elapsed=now-this.startedAt;
+    if(elapsed>=HARD_CAP_MS){
+      const alive=[...this.players.values()].filter(p=>p.alive).sort((a,b)=>(b.knockouts||0)-(a.knockouts||0)||(b.damageDealt||0)-(a.damageDealt||0)||b.health-a.health);
+      if(alive.length>1){const a=alive[0],b=alive[1],exactTie=(a.knockouts||0)===(b.knockouts||0)&&Math.abs((a.damageDealt||0)-(b.damageDealt||0))<.001&&Math.abs(a.health-b.health)<.001;if(exactTie){this.abort("Arena ended in an exact sudden-death tie; no winner was recorded");return}for(const p of alive.slice(1))this.eliminate(p,"SUDDEN DEATH",a)}
+      this.maybeFinish()
+    }
+    if(this.phase==="live"&&now-this.lastSnapshot>=this.snapshotInterval()){this.lastSnapshot=now;this.snapshot(now)}
+  }
+  stepSimulation(now){
+    this.updatePlayers(now);
+    this.world.step();
+    this.impacts(now);
+    this.updateProjectiles(now);
+    this.pickupsTick(now);
+    this.postStep(now)
+  }
+  snapshot(now){this.broadcastSnapshot({t:"snapshot",phase:this.phase,matchId:this.matchId,startedAt:this.startedAt,serverNow:now,maxSeconds:this.config.maxSeconds,courseScale:this.config.courseScale,players:[...this.players.values()].map(p=>{const pos=p.body?.translation(),q=p.body?.rotation(),v=p.body?.linvel();return{id:p.id,p:pos?[round3(pos.x),round3(pos.y),round3(pos.z)]:null,q:q?[round4(q.x),round4(q.y),round4(q.z),round4(q.w)]:null,v:v?[round3(v.x),round3(v.y),round3(v.z)]:null,h:Math.round(p.health),alive:p.alive,power:p.powerKind,exp:p.powerExpiresAt,speed:p.speedUntil}}),projectiles:this.projectiles.map(b=>({id:b.id,p:[round3(b.x),round3(b.y),round3(b.z)]})),pickups:this.pickups.map(p=>({id:p.id,ready:now>=p.readyAt})),pedestals:this.pedestals.map(p=>({id:p.id,ready:now>=p.readyAt}))})}
   close(){clearInterval(this.timer);if(this.resultRetryTimer)clearTimeout(this.resultRetryTimer);for(const ws of this.clients.values())try{ws.close()}catch{}}
 }
 
 const rooms=new Map();
-const server=http.createServer((req,res)=>{if(req.url==="/health"){const roomList=[...rooms.values()];res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify({ok:true,version:VERSION,rooms:roomList.length,liveRooms:roomList.filter(r=>r.phase==="live").length,lobbyRooms:roomList.filter(r=>r.phase==="lobby").length,allowedOrigins:[...SITE_ORIGINS],lastArenaError}));return}res.writeHead(404);res.end("Not found")});
+const server=http.createServer((req,res)=>{if(req.url==="/health"){const roomList=[...rooms.values()];res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify({ok:true,version:VERSION,rooms:roomList.length,liveRooms:roomList.filter(r=>r.phase==="live").length,lobbyRooms:roomList.filter(r=>r.phase==="lobby").length,snapshotDrops:roomList.reduce((sum,r)=>sum+(r.snapshotDrops||0),0),loopLagMs:Math.round(roomList.reduce((max,r)=>Math.max(max,r.loopLagMs||0),0)*10)/10,allowedOrigins:[...SITE_ORIGINS],lastArenaError}));return}res.writeHead(404);res.end("Not found")});
 const wss=new WebSocketServer({noServer:true,maxPayload:16*1024});
 server.on("upgrade",(req,socket,head)=>{try{const url=new URL(req.url||"/",`http://${req.headers.host||"localhost"}`);if(url.pathname!=="/arena")throw new Error("Not found");const origin=String(req.headers.origin||"");if(!SITE_ORIGINS.has(origin))throw new Error(`Forbidden origin: ${origin||"(missing)"}`);wss.handleUpgrade(req,socket,head,ws=>wss.emit("connection",ws,req))}catch(error){const message=error instanceof Error?error.message:String(error);lastArenaError={at:Date.now(),stage:"upgrade",message};console.warn("[arena] websocket upgrade rejected",message);socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");socket.destroy()}});
 wss.on("connection",ws=>{
@@ -205,7 +267,7 @@ wss.on("connection",ws=>{
     const now=Date.now();if(now-windowStarted>=1000){windowStarted=now;messageCount=0;actionCount=0}messageCount++;if(messageCount>MAX_MESSAGES_PER_SECOND){strikes++;if(strikes>=3)ws.close(1008,"Arena input rate exceeded");return}
     if(raw.length>8192)return;const msg=safeJson(raw.toString());if(!msg)return;
     if(!authed){if(msg.t!=="auth")return;const p=verifyToken(msg.token);if(!p){ws.close(1008,"Invalid Arena token");return}room=rooms.get(p.orbId);if(!room){if(Date.now()>p.startsAt+120_000){ws.close(1008,"Arena start window closed");return}room=new Room(p);rooms.set(p.orbId,room)}try{room.add(ws,p)}catch(e){ws.close(1008,e instanceof Error?e.message:"Arena rejected");return}authed=true;clearTimeout(authTimer);return}
-    if(!ws.player||!room)return;if(msg.t==="input")room.input(ws.player,msg);else if(msg.t==="action"){actionCount++;if(actionCount<=MAX_ACTIONS_PER_SECOND)room.action(ws.player)}else if(msg.t==="ping")room.send(ws,{t:"pong",at:Date.now()});
+    if(!ws.player||!room)return;if(msg.t==="input")room.input(ws.player,msg);else if(msg.t==="action"){actionCount++;if(actionCount<=MAX_ACTIONS_PER_SECOND)room.action(ws.player)}else if(msg.t==="ping")room.send(ws,{t:"pong",at:Date.now(),clientAt:Number(msg.clientAt)||0});
   });
   ws.on("close",()=>{clearTimeout(authTimer);room?.remove(ws)});ws.on("error",()=>{clearTimeout(authTimer);room?.remove(ws)});
 });

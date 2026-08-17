@@ -42,17 +42,30 @@ export class ArenaAudioEngine {
     return this.ctx;
   }
 
-  startMusic() {
-    const ctx = this.ensure();
-    if (!ctx || this.musicElement) return;
-
-    // The approved 48 kbps AAC render is already the finished music.
-    // Route it around the SFX compressor so its dynamics/timbre remain untouched.
-    const element = new Audio("/audio/arena-theme.m4a");
+  preloadMusic() {
+    if (typeof window === "undefined" || this.musicElement) return;
+    const element = new Audio();
+    element.src = "/audio/arena-theme.m4a";
     element.loop = true;
     element.preload = "auto";
     element.setAttribute("playsinline", "");
+    element.load();
+    this.musicElement = element;
+  }
 
+  startMusic() {
+    const ctx = this.ensure();
+    if (!ctx) return;
+    this.preloadMusic();
+    const element = this.musicElement;
+    if (!element) return;
+    if (this.musicSource) {
+      void element.play().catch(() => undefined);
+      return;
+    }
+
+    // The approved 48 kbps AAC render is already the finished music.
+    // Route it around the SFX compressor so its dynamics/timbre remain untouched.
     const source = ctx.createMediaElementSource(element);
     const gain = ctx.createGain();
     // The approved track measures about -22.3 LUFS integrated / -6.3 dBFS peak.
@@ -63,7 +76,6 @@ export class ArenaAudioEngine {
     source.connect(gain);
     gain.connect(ctx.destination);
 
-    this.musicElement = element;
     this.musicSource = source;
     this.musicGain = gain;
     void element.play().catch(() => {
