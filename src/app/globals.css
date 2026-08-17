@@ -571,3 +571,7 @@ html:not(.dark) .real-orb-hero>.waiting-orb-showcase{
 @media(max-width:760px){.how-game-links,.how-play-device-copy{grid-template-columns:1fr}.practice-game{height:520px;min-height:500px;border-radius:22px}.practice-status{top:12px;max-width:calc(100% - 110px);padding:8px 11px}.practice-status strong{font-size:9px;white-space:normal}.practice-reset{top:12px;right:10px;font-size:7px;padding:7px}.practice-orb{width:44px;height:44px;margin:-22px 0 0 -22px}.practice-ramp{width:112px;height:52px}.how-play-rules,.how-play-rules.arena-rules{grid-template-columns:1fr 1fr}.practice-key-hint{display:none}}
 @media(max-width:480px){.how-play-rules,.how-play-rules.arena-rules{grid-template-columns:1fr}.practice-game{height:480px;min-height:460px}.practice-joystick{width:104px;height:104px}.practice-action{width:86px;height:86px;font-size:10px}}
 .qualify-how-play{display:inline-flex;margin:4px 0 14px;color:#7cf5e8;font-size:10px;font-weight:900;letter-spacing:.035em;text-decoration:none}.qualify-how-play:hover{text-decoration:underline}
+
+/* Live Arena must own the full game viewport. Its canvas/HUD children are absolutely positioned,
+   so the root cannot rely on intrinsic content height (admin capture supplies this separately). */
+.game-page>.arena-sandbox-game{width:100%;height:100%;min-height:100dvh}
