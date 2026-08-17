@@ -1,9 +1,16 @@
 import type { GameStyle } from "./types";
 
-export const ARENA_GAME_VERSION = "orb-arena-v9" as const;
+export const ARENA_GAME_VERSION = "orb-arena-v10" as const;
+
+export const ARENA_CLOAK_DURATION_MS = 12_000;
+export const ARENA_BOMB_LIFETIME_MS = 20_000;
+export const ARENA_BOMB_ARM_MS = 1_000;
+export const ARENA_BOMB_DAMAGE = 75;
+export const ARENA_BLASTER_VOLLEY_MS = 280;
+export const ARENA_BLASTER_LIFE_MS = 1_800;
 
 export type ArenaPace = "demo" | "production";
-export type ArenaPowerKind = "superjump" | "blaster" | "superspeed";
+export type ArenaPowerKind = "superjump" | "blaster" | "superspeed" | "cloak" | "bomb";
 
 export type ArenaConfig = {
   version: typeof ARENA_GAME_VERSION;

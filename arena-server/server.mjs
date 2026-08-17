@@ -19,7 +19,7 @@ const SITE_ORIGINS = new Set([SITE_ORIGIN]);
 }
 let lastArenaError = null;
 
-const VERSION = "orb-arena-v9";
+const VERSION = "orb-arena-v10";
 const FIXED = 1 / 60;
 const BALL_RADIUS = .42;
 const GRAVITY = 9.81;
@@ -31,6 +31,12 @@ const MOBILE_MAX = 4.55;
 const JUMP_IMPULSE = 7.35;
 const JUMP_COOLDOWN = 720;
 const WEAPON_LIFETIME = 8000;
+const CLOAK_DURATION = 12_000;
+const BOMB_LIFETIME = 20_000;
+const BOMB_ARM_MS = 1_000;
+const BOMB_DAMAGE = 75;
+const BLASTER_VOLLEY_MS = 280;
+const BLASTER_LIFE_MS = 1_800;
 const RING_RESPAWN = 8500;
 const PEDESTAL_RESPAWN = 11500;
 const RECOVERY_AMOUNT = 28;
@@ -50,6 +56,8 @@ const POWER_META = {
   superjump:{label:"DOUBLE JUMP",color:"#FFD86B"},
   blaster:{label:"BLASTER",color:"#FF8A4C"},
   superspeed:{label:"SUPER SPEED",color:"#72F7FF"},
+  cloak:{label:"CLOAK",color:"#B89CFF"},
+  bomb:{label:"SKULL BOMB",color:"#FF4D5E"},
 };
 
 function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
@@ -83,7 +91,7 @@ function clampVelocity(v,profile){const limit=profile==="mobile"?MOBILE_MAX:DESK
 class Room {
   constructor(payload){
     this.orbId=payload.orbId;this.slug=payload.slug;this.commitment=payload.commitment;this.style=payload.style;this.startsAt=payload.startsAt;this.endsAt=payload.endsAt;
-    this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.pickups=[];this.pedestals=[];this.columnHazards=[];this.spikeHazards=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
+    this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.bombs=[];this.pickups=[];this.pedestals=[];this.columnHazards=[];this.spikeHazards=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
     this.abortReason=null;this.resultRetryTimer=null;this.simAccumulator=0;this.lastLoopAt=performance.now();this.snapshotDrops=0;this.loopLagMs=0;this.timer=setInterval(()=>this.loop(),LOOP_INTERVAL_MS);
   }
   compatible(p){return p.orbId===this.orbId&&p.slug===this.slug&&p.commitment===this.commitment&&p.startsAt===this.startsAt&&p.endsAt===this.endsAt}
@@ -93,7 +101,7 @@ class Room {
     if(this.phase!=="lobby"&&!player)throw new Error("Arena entry is closed");
     if(!player){
       if(this.players.size>=MAX_PLAYERS)throw new Error("Arena is full");
-      player={id:`p${this.players.size+1}`,wallet:p.wallet,xUserId:p.xUserId,username:p.username,profileImageUrl:p.profileImageUrl||null,color:p.orbColor,glow:p.orbGlow||p.orbColor,body:null,alive:true,health:100,input:{x:0,z:0},profile:"desktop",jumpReadyAt:0,airborne:false,descending:false,powerKind:null,powerExpiresAt:0,speedUntil:0,blasterActive:false,nextShotAt:0,doubleJumpArmed:false,connected:true,disconnectedAt:0,lastSeq:-1,damageDealt:0,knockouts:0,hazardReadyAt:0};
+      player={id:`p${this.players.size+1}`,wallet:p.wallet,xUserId:p.xUserId,username:p.username,profileImageUrl:p.profileImageUrl||null,color:p.orbColor,glow:p.orbGlow||p.orbColor,body:null,alive:true,health:100,input:{x:0,z:0},profile:"desktop",jumpReadyAt:0,airborne:false,descending:false,powerKind:null,powerExpiresAt:0,speedUntil:0,blasterActive:false,nextShotAt:0,doubleJumpArmed:false,connected:true,disconnectedAt:0,lastSeq:-1,damageDealt:0,knockouts:0,hazardReadyAt:0,cloakedUntil:0};
       this.players.set(p.wallet,player);
     }
     const prior=this.clients.get(p.wallet);if(prior&&prior!==ws)try{prior.close(4001,"Arena reconnected elsewhere")}catch{}
@@ -125,6 +133,10 @@ class Room {
       if(player.blasterActive)this.normalJump(player);else{player.blasterActive=true;player.nextShotAt=0;player.powerExpiresAt=now+this.config.weaponLifetimeMs;/* power state is carried in snapshots */}
     } else if(kind==="superspeed"){
       if(now<player.speedUntil)this.normalJump(player);else{player.speedUntil=now+this.config.weaponLifetimeMs;player.powerExpiresAt=player.speedUntil;/* power state is carried in snapshots */}
+    } else if(kind==="cloak"){
+      if(now<player.cloakedUntil)this.normalJump(player);else{player.cloakedUntil=now+CLOAK_DURATION;player.powerExpiresAt=player.cloakedUntil;this.playerEvent(player,"cloakActivated",{playerId:player.id,until:player.cloakedUntil})}
+    } else if(kind==="bomb"){
+      if(!this.grounded(player))return;this.dropBomb(player,now);this.clearPower(player)
     }
   }
   snapshotInterval(){const n=this.players.size;return n<=24?33:n<=64?40:SNAPSHOT_MS}
@@ -132,8 +144,8 @@ class Room {
   playerEvent(player,event,data={}){const ws=this.clients.get(player.wallet);if(ws)this.send(ws,{t:"event",event,...data,at:Date.now()})}
   grounded(p){return Boolean(p.body)&&!p.airborne&&Math.abs(p.body.linvel().y)<.72}
   normalJump(p,mult=1){const now=Date.now();if(!p.body||now<p.jumpReadyAt||!this.grounded(p))return false;const v=p.body.linvel();p.body.setLinvel({x:v.x,y:this.config.jumpImpulse*mult,z:v.z},true);p.jumpReadyAt=now+this.config.jumpCooldownMs;p.airborne=true;p.descending=false;this.playerEvent(p,"jump",{playerId:p.id});return true}
-  clearPower(p){p.powerKind=null;p.powerExpiresAt=0;p.blasterActive=false;p.doubleJumpArmed=false}
-  grantPower(p,kind,now){p.powerKind=kind;p.powerExpiresAt=now+this.config.weaponLifetimeMs;p.blasterActive=false;p.doubleJumpArmed=false;this.playerEvent(p,"pickup",{playerId:p.id,powerKind:kind})}
+  clearPower(p){if(p.powerKind==="cloak")p.cloakedUntil=0;p.powerKind=null;p.powerExpiresAt=0;p.blasterActive=false;p.doubleJumpArmed=false}
+  grantPower(p,kind,now){p.powerKind=kind;p.powerExpiresAt=now+this.config.weaponLifetimeMs;p.blasterActive=false;p.doubleJumpArmed=false;p.cloakedUntil=0;this.playerEvent(p,"pickup",{playerId:p.id,powerKind:kind})}
   buildWorld(){
     const players=[...this.players.values()].filter(p=>p.connected);if(players.length<2){this.liveAt=Date.now()+3000;return false}
     // Remove entrants who never connected before the synchronized start. They can spectate later but cannot enter mid-match.
@@ -158,7 +170,7 @@ class Room {
       {axis:"x",cx:d,cz:3.25*s,half:5*s,dir:-1},{axis:"x",cx:d,cz:-3.25*s,half:5*s,dir:-1},
     ];
     [[-9,-16],[9,-16],[-16,-9],[16,9],[-9,16],[9,16],[16,-9],[-16,9]].forEach(([xx,zz])=>{const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(xx*s,1.05,zz*s));world.createCollider(RAPIER.ColliderDesc.cylinder(1.05,.72*s).setRestitution(.7).setFriction(.2),body)});
-    const pedKinds=["superjump","blaster","superspeed","superjump","blaster","superspeed"],pedLoc=[[-14,-7],[14,-7],[-14,7],[14,7],[0,-15],[0,15]];this.pedestals=pedLoc.map(([xx,zz],i)=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,.72,z));world.createCollider(RAPIER.ColliderDesc.cylinder(.72,1.75*s).setFriction(.52).setRestitution(.06),body);return{id:`ped-${i}`,x,z,kind:pedKinds[i],readyAt:0}});
+    const pedKinds=["superjump","blaster","cloak","bomb","superspeed","blaster"],pedLoc=[[-14,-7],[14,-7],[-14,7],[14,7],[0,-15],[0,15]];this.pedestals=pedLoc.map(([xx,zz],i)=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,.72,z));world.createCollider(RAPIER.ColliderDesc.cylinder(.72,1.75*s).setFriction(.52).setRestitution(.06),body);return{id:`ped-${i}`,x,z,kind:pedKinds[i],readyAt:0}});
     const addPickup=(id,rx,rz,y,kind)=>this.pickups.push({id,x:rx*s,z:rz*s,y:y+.16,kind,readyAt:0});this.pickups=[];
     addPickup("pick-sj-1",-21,-8,0,"superjump");addPickup("pick-sj-2",21,8,0,"superjump");addPickup("pick-bl-1",-8,-21,0,"blaster");addPickup("pick-bl-2",8,21,0,"blaster");addPickup("pick-sp-1",-20,14,0,"superspeed");addPickup("pick-sp-2",20,-14,0,"superspeed");addPickup("pick-hp-1",-16,-17,0,"recovery");addPickup("pick-hp-2",16,17,0,"recovery");addPickup("pick-sj-hi",-2.4,0,1.61,"superjump");addPickup("pick-bl-hi",2.4,0,1.61,"blaster");addPickup("pick-sp-hi",0,2.4,1.61,"superspeed");
     const list=[...this.players.values()];for(let i=0;i<list.length;i++){const p=list[i],a=Math.PI/4+i/list.length*Math.PI*2,spawnR=(i%2===0?23.5:21.5)*s,x=Math.cos(a)*spawnR,z=Math.sin(a)*spawnR,body=world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x,1.05,z).setLinearDamping(LINEAR_DAMPING).setAngularDamping(ANGULAR_DAMPING).setCcdEnabled(true));world.createCollider(RAPIER.ColliderDesc.ball(BALL_RADIUS).setDensity(1).setFriction(FRICTION).setRestitution(.14),body);p.body=body;p.health=100;p.alive=true}
@@ -176,10 +188,13 @@ class Room {
       }
     }}
   facing(p){const v=p.body.linvel(),speed=Math.hypot(v.x,v.z);if(speed>.55)return{x:v.x/speed,z:v.z/speed};const i=p.input,m=Math.hypot(i.x,i.z);return m>.1?{x:i.x/m,z:i.z/m}:{x:0,z:-1}}
-  fire(p,now){const dir=this.facing(p),pos=p.body.translation();this.projectiles.push({id:`b${++this.seq}`,x:pos.x+dir.x*.95,y:pos.y+.06,z:pos.z+dir.z*.95,vx:dir.x*13.5,vz:dir.z*13.5,owner:p,born:now,life:1700});}
-  updateProjectiles(now){for(const p of this.players.values())if(p.alive&&p.blasterActive&&p.powerKind==="blaster"&&now<p.powerExpiresAt&&now>=p.nextShotAt){this.fire(p,now);p.nextShotAt=now+180}
-    for(let i=this.projectiles.length-1;i>=0;i--){const b=this.projectiles[i];if(now-b.born>b.life){this.projectiles.splice(i,1);continue}b.x+=b.vx*FIXED;b.z+=b.vz*FIXED;let hit=false;for(const t of this.players.values()){if(!t.alive||t===b.owner||!t.body)continue;const p=t.body.translation();const hitRadius=BALL_RADIUS+clamp(.58*this.config.courseScale,.52,.9);if(Math.hypot(p.x-b.x,p.y-b.y,p.z-b.z)>hitRadius)continue;const inv=now<t.speedUntil,damage=inv?0:8,before=t.health;t.health=Math.max(0,t.health-damage);const actualDamage=before-t.health;if(actualDamage>0)b.owner.damageDealt+=actualDamage;if(!inv){const m=Math.hypot(b.vx,b.vz)||1;t.body.applyImpulse({x:b.vx/m*.75,y:.08,z:b.vz/m*.75},true)}this.event("hit",{playerId:t.id,attackerId:b.owner.id,attackKind:"blaster",damage});if(t.health<=0)this.eliminate(t,"BLASTED",b.owner);hit=true;break}if(hit)this.projectiles.splice(i,1)}
+  fire(p,now){const dir=this.facing(p),pos=p.body.translation();this.projectiles.push({id:`v${++this.seq}`,x:pos.x+dir.x*.98,y:pos.y+.06,z:pos.z+dir.z*.98,vx:dir.x*14,vz:dir.z*14,owner:p,born:now,life:BLASTER_LIFE_MS});}
+  updateProjectiles(now){for(const p of this.players.values())if(p.alive&&p.blasterActive&&p.powerKind==="blaster"&&now<p.powerExpiresAt&&now>=p.nextShotAt){this.fire(p,now);p.nextShotAt=now+BLASTER_VOLLEY_MS}
+    const s=this.config.courseScale;
+    for(let i=this.projectiles.length-1;i>=0;i--){const b=this.projectiles[i];const age=now-b.born;if(age>b.life){this.projectiles.splice(i,1);continue}b.x+=b.vx*FIXED;b.z+=b.vz*FIXED;const m=Math.hypot(b.vx,b.vz)||1,fx=b.vx/m,fz=b.vz/m,px=-fz,pz=fx,progress=clamp(age/b.life,0,1),spread=clamp(.95*s,.75,1.6)*progress,dotRadius=clamp(.25*s,.22,.5);let hit=false;for(const target of this.players.values()){if(!target.alive||target===b.owner||!target.body)continue;const tp=target.body.translation();let touches=false;for(const lateral of [-spread,0,spread]){const lx=b.x+px*lateral,lz=b.z+pz*lateral;if(Math.hypot(tp.x-lx,tp.y-b.y,tp.z-lz)<=BALL_RADIUS+dotRadius){touches=true;break}}if(!touches)continue;const inv=now<target.speedUntil,damage=inv?0:8,before=target.health;target.health=Math.max(0,target.health-damage);const actualDamage=before-target.health;if(actualDamage>0)b.owner.damageDealt+=actualDamage;if(!inv)target.body.applyImpulse({x:fx*.82,y:.09,z:fz*.82},true);this.event("hit",{playerId:target.id,attackerId:b.owner.id,attackKind:"blaster",damage:actualDamage});if(target.health<=0)this.eliminate(target,"BLASTED",b.owner);hit=true;break}if(hit)this.projectiles.splice(i,1)}
   }
+  dropBomb(p,now){const dir=this.facing(p),pos=p.body.translation(),x=pos.x-dir.x*.92,z=pos.z-dir.z*.92;this.bombs.push({id:`m${++this.seq}`,x,y:Math.max(.12,pos.y-.34),z,owner:p,born:now,armedAt:now+BOMB_ARM_MS,expiresAt:now+BOMB_LIFETIME});this.playerEvent(p,"bombDropped",{playerId:p.id});}
+  updateBombs(now){const s=this.config.courseScale,triggerRadius=clamp(.82*s,.7,1.25);for(let i=this.bombs.length-1;i>=0;i--){const bomb=this.bombs[i];if(now>=bomb.expiresAt){this.bombs.splice(i,1);continue}if(now<bomb.armedAt)continue;let triggered=null;for(const target of this.players.values()){if(!target.alive||target===bomb.owner||!target.body)continue;const p=target.body.translation();if(Math.abs(p.y-bomb.y)>1.25||Math.hypot(p.x-bomb.x,p.z-bomb.z)>triggerRadius+BALL_RADIUS)continue;triggered=target;break}if(!triggered)continue;const target=triggered,inv=now<target.speedUntil,before=target.health;if(!inv)target.health=Math.max(0,target.health-BOMB_DAMAGE);const actualDamage=before-target.health;if(actualDamage>0)bomb.owner.damageDealt+=actualDamage;const p=target.body.translation(),dx=p.x-bomb.x,dz=p.z-bomb.z,mag=Math.hypot(dx,dz)||1;if(!inv)target.body.applyImpulse({x:dx/mag*2.35,y:.78,z:dz/mag*2.35},true);this.event("bombExplosion",{bombId:bomb.id,x:round3(bomb.x),y:round3(bomb.y),z:round3(bomb.z),playerId:target.id});this.event("hit",{playerId:target.id,attackerId:bomb.owner.id,attackKind:"bomb",damage:actualDamage});if(target.health<=0)this.eliminate(target,"BOMBED",bomb.owner);this.bombs.splice(i,1)} }
   impacts(now){
     // Broad-phase the gameplay damage pass with a small spatial hash instead of comparing
     // every Orb to every other Orb. Rapier still owns physical collision resolution; this
@@ -262,10 +277,11 @@ class Room {
     this.world.step();
     this.impacts(now);
     this.updateProjectiles(now);
+    this.updateBombs(now);
     this.pickupsTick(now);
     this.postStep(now)
   }
-  snapshot(now){this.broadcastSnapshot({t:"snapshot",phase:this.phase,matchId:this.matchId,startedAt:this.startedAt,serverNow:now,maxSeconds:this.config.maxSeconds,courseScale:this.config.courseScale,players:[...this.players.values()].map(p=>{const pos=p.body?.translation(),q=p.body?.rotation(),v=p.body?.linvel();return{id:p.id,p:pos?[round3(pos.x),round3(pos.y),round3(pos.z)]:null,q:q?[round4(q.x),round4(q.y),round4(q.z),round4(q.w)]:null,v:v?[round3(v.x),round3(v.y),round3(v.z)]:null,h:Math.round(p.health),alive:p.alive,power:p.powerKind,exp:p.powerExpiresAt,speed:p.speedUntil}}),projectiles:this.projectiles.map(b=>({id:b.id,p:[round3(b.x),round3(b.y),round3(b.z)]})),pickups:this.pickups.map(p=>({id:p.id,ready:now>=p.readyAt})),pedestals:this.pedestals.map(p=>({id:p.id,ready:now>=p.readyAt}))})}
+  snapshot(now){this.broadcastSnapshot({t:"snapshot",phase:this.phase,matchId:this.matchId,startedAt:this.startedAt,serverNow:now,maxSeconds:this.config.maxSeconds,courseScale:this.config.courseScale,players:[...this.players.values()].map(p=>{const pos=p.body?.translation(),q=p.body?.rotation(),v=p.body?.linvel();return{id:p.id,p:pos?[round3(pos.x),round3(pos.y),round3(pos.z)]:null,q:q?[round4(q.x),round4(q.y),round4(q.z),round4(q.w)]:null,v:v?[round3(v.x),round3(v.y),round3(v.z)]:null,h:Math.round(p.health),alive:p.alive,power:p.powerKind,exp:p.powerExpiresAt,speed:p.speedUntil,cloak:p.cloakedUntil}}),projectiles:this.projectiles.map(b=>({id:b.id,p:[round3(b.x),round3(b.y),round3(b.z)],d:[round3(b.vx),round3(b.vz)],born:b.born,life:b.life})),bombs:this.bombs.map(b=>({id:b.id,p:[round3(b.x),round3(b.y),round3(b.z)],armed:now>=b.armedAt,exp:b.expiresAt})),pickups:this.pickups.map(p=>({id:p.id,ready:now>=p.readyAt})),pedestals:this.pedestals.map(p=>({id:p.id,ready:now>=p.readyAt}))})}
   close(){clearInterval(this.timer);if(this.resultRetryTimer)clearTimeout(this.resultRetryTimer);for(const ws of this.clients.values())try{ws.close()}catch{}}
 }
 

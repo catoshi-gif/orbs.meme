@@ -141,18 +141,18 @@ export class ArenaAudioEngine {
     this.sfxTone(420, 0.065, 0.024, "sine", 0.045);
   }
 
-  powerPickup(kind: "superjump" | "blaster" | "superspeed" | "recovery") {
+  powerPickup(kind: "superjump" | "blaster" | "superspeed" | "cloak" | "bomb" | "recovery") {
     this.duckMusic(0.8, 0.07, 0.15);
-    const base = kind === "superjump" ? 285 : kind === "blaster" ? 205 : kind === "superspeed" ? 410 : 330;
+    const base = kind === "superjump" ? 285 : kind === "blaster" ? 205 : kind === "superspeed" ? 410 : kind === "cloak" ? 360 : kind === "bomb" ? 155 : 330;
     this.sfxTone(base, 0.09, 0.06, "triangle");
     this.sfxTone(base * 1.5, 0.16, 0.05, "sine", 0.045);
     this.sfxTone(base * 2, 0.2, 0.035, "triangle", 0.09);
   }
 
-  powerUse(kind: "superjump" | "blaster" | "superspeed") {
+  powerUse(kind: "superjump" | "blaster" | "superspeed" | "cloak" | "bomb") {
     this.duckMusic(0.78, 0.065, 0.14);
-    const base = kind === "superjump" ? 240 : kind === "blaster" ? 310 : 520;
-    this.sfxTone(base, 0.14, 0.09, kind === "superspeed" ? "triangle" : "sawtooth");
+    const base = kind === "superjump" ? 240 : kind === "blaster" ? 310 : kind === "superspeed" ? 520 : kind === "cloak" ? 390 : 125;
+    this.sfxTone(base, 0.14, 0.09, kind === "superspeed" || kind === "cloak" ? "triangle" : "sawtooth");
     this.sfxTone(base * 2.2, 0.09, 0.05, "triangle", 0.012);
   }
 
@@ -160,6 +160,13 @@ export class ArenaAudioEngine {
     this.duckMusic(0.93, 0.018, 0.055);
     this.sfxTone(430, 0.045, 0.04, "square");
     this.sfxTone(185, 0.07, 0.022, "triangle", 0.008);
+  }
+
+  bombExplosion() {
+    this.duckMusic(0.68, 0.11, 0.22);
+    this.sfxTone(82, 0.24, 0.12, "sine");
+    this.sfxTone(164, 0.12, 0.075, "square", 0.012);
+    this.sfxTone(310, 0.08, 0.045, "triangle", 0.026);
   }
 
   recover() {

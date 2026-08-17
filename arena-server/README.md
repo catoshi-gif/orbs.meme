@@ -45,7 +45,7 @@ Before enabling a real-money Arena:
 2. Set `ORBS_SITE_URL` to the exact production origin (the WebSocket server rejects other browser origins).
 3. Set the same 32+ character `ARENA_RUNTIME_HMAC_KEY` on the authority and web app.
 4. Set `NEXT_PUBLIC_ARENA_REALTIME_URL` to the authority's public `wss://` origin.
-5. Confirm `GET /health` returns `{ ok: true, version: "orb-arena-v9" }` from the public internet.
+5. Confirm `GET /health` returns `{ ok: true, version: "orb-arena-v10" }` from the public internet.
 6. Redeploy the web app. Arena creation now performs a live health/version preflight and fails closed if the authority is unavailable or mismatched.
 7. Run a two-wallet, zero/low-value operational rehearsal before increasing prize sizes.
 
