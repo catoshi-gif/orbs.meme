@@ -903,6 +903,7 @@ export default function GlassRoller({ slug, difficulty, style, manifestOverride,
 
       changePhase("ready");
       setLoadingLabel("Ready");
+      if (competitiveSession && !sandboxMode) begin();
 
       const renderFrame = (nowMs: number) => {
         frame = requestAnimationFrame(renderFrame);
