@@ -163,12 +163,13 @@ class Room {
     // The colonnade itself is the perimeter. Open arches between columns are real ring-out lanes.
     const wallR=this.arenaHalf*.965,columnCount=32,columnR=wallR*1.025;this.columnHazards=[];
     for(let i=0;i<columnCount;i++){const a=i/columnCount*Math.PI*2,x=Math.cos(a)*columnR,z=Math.sin(a)*columnR,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,2.1,z));world.createCollider(RAPIER.ColliderDesc.cylinder(2.1,.74*s).setFriction(.42).setRestitution(.34),body);this.columnHazards.push({x,z,r:.74*s})}
-    // Two opposite banks have visible spike rails on their outside edges. One simple hazard strip
-    // per rail keeps the authority cheap while the renderer can draw several decorative spikes.
-    this.spikeHazards=[
-      {axis:"x",cx:-d,cz:3.25*s,half:5*s,dir:1},{axis:"x",cx:-d,cz:-3.25*s,half:5*s,dir:1},
-      {axis:"x",cx:d,cz:3.25*s,half:5*s,dir:-1},{axis:"x",cx:d,cz:-3.25*s,half:5*s,dir:-1},
-    ];
+    // Match the visible cones one-for-one so spike damage only occurs when an orb actually
+    // reaches a spike, rather than anywhere inside a broad invisible rail-shaped strip.
+    this.spikeHazards=[];
+    for(const [cx,dir] of [[-d,1],[d,-1]])for(const side of [-1,1])for(let j=0;j<8;j++){
+      const x=cx-4.25*s+j*(8.5*s/7),z=side*3.25*s,rampT=clamp(dir>0?(x-(cx-5*s))/(10*s):((cx+5*s)-x)/(10*s),0,1),y=rampT*2.2*s+.24*s;
+      this.spikeHazards.push({x,y,z});
+    }
     [[-9,-16],[9,-16],[-16,-9],[16,9],[-9,16],[9,16],[16,-9],[-16,9]].forEach(([xx,zz])=>{const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(xx*s,1.05,zz*s));world.createCollider(RAPIER.ColliderDesc.cylinder(1.05,.72*s).setRestitution(.7).setFriction(.2),body)});
     const pedKinds=["superjump","blaster","cloak","bomb","superspeed","blaster"],pedLoc=[[-14,-7],[14,-7],[-14,7],[14,7],[0,-15],[0,15]];this.pedestals=pedLoc.map(([xx,zz],i)=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,.72,z));world.createCollider(RAPIER.ColliderDesc.cylinder(.72,1.75*s).setFriction(.52).setRestitution(.06),body);return{id:`ped-${i}`,x,z,kind:pedKinds[i],readyAt:0}});
     const addPickup=(id,rx,rz,y,kind)=>this.pickups.push({id,x:rx*s,z:rz*s,y:y+.16,kind,readyAt:0});this.pickups=[];
@@ -183,7 +184,7 @@ class Room {
       if(now>=p.hazardReadyAt){
         let hazard=null,normalX=0,normalZ=0,damage=0,kind="";
         if(Math.hypot(pos.x,pos.z)>this.arenaHalf*.84)for(const c of this.columnHazards){const dx=pos.x-c.x,dz=pos.z-c.z,dist=Math.hypot(dx,dz);if(dist<c.r+BALL_RADIUS*.7){const center=Math.hypot(c.x,c.z)||1;hazard=c;normalX=-c.x/center;normalZ=-c.z/center;damage=3;kind="column";break}}
-        if(!hazard)for(const h of this.spikeHazards){const rampT=clamp(h.dir>0?(pos.x-(h.cx-5*this.config.courseScale))/(10*this.config.courseScale):((h.cx+5*this.config.courseScale)-pos.x)/(10*this.config.courseScale),0,1),rampY=rampT*2.2*this.config.courseScale;if(h.axis==="x"&&Math.abs(pos.x-h.cx)<=h.half+BALL_RADIUS&&Math.abs(pos.z-h.cz)<=.46*this.config.courseScale+BALL_RADIUS&&pos.y<=rampY+.9*this.config.courseScale){hazard=h;normalZ=(pos.z-h.cz)>=0?1:-1;damage=4;kind="spikes";break}}
+        if(!hazard)for(const h of this.spikeHazards){const dx=pos.x-h.x,dy=pos.y-h.y,dz=pos.z-h.z,contactRadius=BALL_RADIUS+.2*this.config.courseScale;if(dx*dx+dy*dy+dz*dz>contactRadius*contactRadius)continue;hazard=h;normalZ=(pos.z-h.z)>=0?1:-1;damage=4;kind="spikes";break}
         if(hazard){p.hazardReadyAt=now+850;const inv=now<p.speedUntil,before=p.health;if(!inv)p.health=Math.max(0,p.health-damage);if(!inv)p.body.applyImpulse({x:normalX*.72,y:.12,z:normalZ*.72},true);const actual=before-p.health;if(actual>0)this.event("hit",{playerId:p.id,attackerId:null,attackKind:kind,damage:actual});if(p.health<=0){this.eliminate(p,kind==="column"?"ZAPPED":"SPIKED");continue}}
       }
     }}
