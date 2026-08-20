@@ -10,6 +10,7 @@ import { orbEndsAt } from "@/lib/orbLifecycle";
 import { assignArenaEntrantProfile, getArenaEntrantProfile } from "@/lib/arenaEntrants";
 import { arenaRealtimeUrl, arenaRuntimeConfigured, arenaRuntimeHealthy, issueArenaJoinToken } from "@/lib/arenaRuntime";
 import { ARENA_GAME_VERSION } from "@/game/arena";
+import { COMPETITION_RESTRICTION_MESSAGE, getCompetitionRestriction } from "@/lib/gameIntegrity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,13 +35,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const body = await request.json().catch(() => ({})) as { wallet?: unknown };
   const wallet = walletOf(body.wallet);
   if (!wallet) return NextResponse.json({ ok:false,error:"Invalid wallet" }, { status:400 });
+  if (await getCompetitionRestriction(wallet, x.user.id)) return NextResponse.json({ ok:false,error:COMPETITION_RESTRICTION_MESSAGE,code:"COMPETITION_RESTRICTED" }, { status:403 });
   if (!await hasEligibilityReceipt(wallet)) return NextResponse.json({ ok:false,error:"Confirm 18+ eligibility for this wallet before entering an Orb" }, { status:403 });
   const [followed,walletVerified,humanVerified,shared] = await Promise.all([
     hasFollowProof(x.user.id,orb.hostX.id), hasWalletProof(slug,x.user.id,wallet), hasHumanProof(slug,x.user.id,wallet), hasShareProof(slug,x.user.id,wallet),
   ]);
   if (!followed || !walletVerified || !humanVerified || !shared) return NextResponse.json({ ok:false,error:"Arena registration is not complete" }, { status:403 });
   let profile = await getArenaEntrantProfile(slug,wallet);
-  if (!profile || profile.xUserId !== x.user.id) profile = await assignArenaEntrantProfile(slug,wallet,x.user);
+  if (!profile || profile.xUserId !== x.user.id || profile.followersCount !== (Number.isFinite(x.user.followersCount) ? Number(x.user.followersCount) : null)) profile = await assignArenaEntrantProfile(slug,wallet,x.user);
   const issued = issueArenaJoinToken({ orbId:orb.id,slug,profile,startsAt:orb.startsAt,endsAt,commitment:orb.commitment,style:orb.style });
   return NextResponse.json({ ok:true,realtimeUrl:arenaRealtimeUrl(),token:issued.token,profile,startsAt:orb.startsAt,endsAt }, { headers:{"Cache-Control":"private, no-store"} });
 }

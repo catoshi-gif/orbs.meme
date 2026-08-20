@@ -16,6 +16,7 @@ export type ArenaJoinPayload = {
   xUserId: string;
   username: string;
   profileImageUrl?: string | null;
+  followersCount?: number | null;
   orbColor: string;
   orbGlow: string;
   startsAt: number;
@@ -99,6 +100,7 @@ export function issueArenaJoinToken(input: {
     xUserId: input.profile.xUserId,
     username: input.profile.username,
     profileImageUrl: input.profile.profileImageUrl || null,
+    followersCount: Number.isFinite(input.profile.followersCount) ? Number(input.profile.followersCount) : null,
     orbColor: input.profile.orbColor,
     orbGlow: input.profile.orbGlow,
     startsAt: input.startsAt,
@@ -110,6 +112,33 @@ export function issueArenaJoinToken(input: {
   };
   const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   return { token: `${encoded}.${sign(encoded)}`, payload };
+}
+
+function arenaHttpUrl(pathname: string) {
+  const ws = new URL(arenaRealtimeUrl());
+  ws.protocol = ws.protocol === "wss:" ? "https:" : "http:";
+  ws.pathname = pathname;
+  ws.search = "";
+  ws.hash = "";
+  return ws.toString();
+}
+
+export async function sendArenaIntegrityControl(input: { action: "ban" | "unban"; wallet?: string | null; xUserId?: string | null }) {
+  if (!arenaRuntimeConfigured()) return { ok: false, kicked: 0 };
+  const body = JSON.stringify({ schemaVersion: 1, ...input });
+  const timestamp = String(Date.now());
+  const signature = createHmac("sha256", hmacKey()).update(`${timestamp}.${body}`, "utf8").digest("base64url");
+  try {
+    const response = await fetch(arenaHttpUrl("/admin/control"), {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-arena-timestamp": timestamp, "x-arena-signature": signature },
+      body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(3500),
+    });
+    const payload = await response.json().catch(() => null) as { ok?: boolean; kicked?: number } | null;
+    return { ok: response.ok && payload?.ok === true, kicked: Number(payload?.kicked || 0) };
+  } catch { return { ok: false, kicked: 0 }; }
 }
 
 export function verifyArenaRuntimeRequest(rawBody: string, timestamp: string | null, supplied: string | null) {

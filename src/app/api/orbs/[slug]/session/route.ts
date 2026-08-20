@@ -8,6 +8,7 @@ import { hasHumanProof } from "@/lib/turnstile";
 import { getCurrentXSession } from "@/lib/xAuth";
 import { orbEndsAt } from "@/lib/orbLifecycle";
 import { getWinner } from "@/lib/upstashWinner";
+import { COMPETITION_RESTRICTION_MESSAGE, getCompetitionRestriction } from "@/lib/gameIntegrity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const body = await request.json().catch(() => ({})) as { wallet?: unknown };
   const wallet = normalizeWallet(body.wallet);
   if (!wallet) return NextResponse.json({ ok: false, error: "Invalid wallet" }, { status: 400 });
+  if (await getCompetitionRestriction(wallet, x.user.id)) return NextResponse.json({ ok:false,error:COMPETITION_RESTRICTION_MESSAGE,code:"COMPETITION_RESTRICTED" }, { status:403 });
 
   if (!await hasEligibilityReceipt(wallet)) return NextResponse.json({ ok: false, error: "Confirm 18+ eligibility for this wallet before entering an Orb" }, { status: 403 });
 

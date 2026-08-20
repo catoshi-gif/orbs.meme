@@ -51,6 +51,12 @@ const HEARTBEAT_MS = 15_000;
 const LOOP_INTERVAL_MS = 8;
 const MAX_CATCHUP_STEPS = 4;
 const MAX_SNAPSHOT_BUFFERED_BYTES = 192 * 1024;
+const INTEGRITY_REPORT_MS = 15_000;
+const INTEGRITY_INPUT_SAMPLE_MS = 220;
+const INTEGRITY_POSITION_SAMPLE_MS = 500;
+const INTEGRITY_MAX_INPUT_SAMPLES = 180;
+const INTEGRITY_MAX_POSITION_SAMPLES = 140;
+const INTEGRITY_MAX_ACTIONS = 100;
 
 const POWER_META = {
   superjump:{label:"DOUBLE JUMP",color:"#FFD86B"},
@@ -87,12 +93,28 @@ function nextVelocity(current,input,profile){
   return{x:current.x+(desiredX-current.x)*blend,z:current.z+(desiredZ-current.z)*blend};
 }
 function clampVelocity(v,profile){const limit=profile==="mobile"?MOBILE_MAX:DESKTOP_MAX,s=Math.hypot(v.x,v.z);if(s<=limit||s<1e-9)return{x:v.x,z:v.z};const f=limit/s;return{x:v.x*f,z:v.z*f}}
+function pushBounded(list,value,max){list.push(value);if(list.length>max)list.splice(0,list.length-max)}
+function inputToken(input){const x=Math.abs(input.x)<.16?0:Math.sign(input.x),z=Math.abs(input.z)<.16?0:Math.sign(input.z);return `${x},${z}`}
+function repeatedTailScore(tokens,minPeriod=2,maxPeriod=24){
+  if(tokens.length<16)return 0;let best=0;
+  for(let period=minPeriod;period<=Math.min(maxPeriod,Math.floor(tokens.length/4));period++){
+    const length=period*4,start=tokens.length-length,window=tokens.slice(start),unique=new Set(window);if(unique.size<3)continue;
+    let matches=0,total=0;for(let i=period;i<window.length;i++){total++;if(window[i]===window[i-period])matches++}
+    if(total>0)best=Math.max(best,matches/total);
+  }
+  return best;
+}
+function actionRegularity(times){if(times.length<11)return 0;const recent=times.slice(-25),intervals=[];for(let i=1;i<recent.length;i++)intervals.push(recent[i]-recent[i-1]);const mean=intervals.reduce((a,b)=>a+b,0)/intervals.length;if(mean<120||mean>3500)return 0;const variance=intervals.reduce((a,b)=>a+(b-mean)*(b-mean),0)/intervals.length,cv=Math.sqrt(variance)/mean;return clamp(1-cv/.18,0,1)}
+function positionToken(pos){return `${Math.round(pos.x/.85)},${Math.round(pos.z/.85)}`}
+
+const blockedWallets=new Set();
+const blockedXUserIds=new Set();
 
 class Room {
   constructor(payload){
     this.orbId=payload.orbId;this.slug=payload.slug;this.commitment=payload.commitment;this.style=payload.style;this.startsAt=payload.startsAt;this.endsAt=payload.endsAt;
     this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.bombs=[];this.pickups=[];this.pedestals=[];this.columnHazards=[];this.spikeHazards=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
-    this.abortReason=null;this.resultRetryTimer=null;this.simAccumulator=0;this.lastLoopAt=performance.now();this.snapshotDrops=0;this.loopLagMs=0;this.timer=setInterval(()=>this.loop(),LOOP_INTERVAL_MS);
+    this.abortReason=null;this.resultRetryTimer=null;this.simAccumulator=0;this.lastLoopAt=performance.now();this.snapshotDrops=0;this.loopLagMs=0;this.lastIntegrityReportAt=0;this.timer=setInterval(()=>this.loop(),LOOP_INTERVAL_MS);
   }
   compatible(p){return p.orbId===this.orbId&&p.slug===this.slug&&p.commitment===this.commitment&&p.startsAt===this.startsAt&&p.endsAt===this.endsAt}
   add(ws,p){
@@ -101,15 +123,16 @@ class Room {
     if(this.phase!=="lobby"&&!player)throw new Error("Arena entry is closed");
     if(!player){
       if(this.players.size>=MAX_PLAYERS)throw new Error("Arena is full");
-      player={id:`p${this.players.size+1}`,wallet:p.wallet,xUserId:p.xUserId,username:p.username,profileImageUrl:p.profileImageUrl||null,color:p.orbColor,glow:p.orbGlow||p.orbColor,body:null,alive:true,health:100,input:{x:0,z:0},profile:"desktop",jumpReadyAt:0,airborne:false,descending:false,powerKind:null,powerExpiresAt:0,speedUntil:0,blasterActive:false,nextShotAt:0,doubleJumpArmed:false,connected:true,disconnectedAt:0,lastSeq:-1,damageDealt:0,knockouts:0,hazardReadyAt:0,cloakedUntil:0};
+      player={id:`p${this.players.size+1}`,wallet:p.wallet,xUserId:p.xUserId,username:p.username,profileImageUrl:p.profileImageUrl||null,followersCount:Number.isFinite(p.followersCount)?Number(p.followersCount):null,color:p.orbColor,glow:p.orbGlow||p.orbColor,body:null,alive:true,health:100,input:{x:0,z:0},profile:"desktop",jumpReadyAt:0,airborne:false,descending:false,powerKind:null,powerExpiresAt:0,speedUntil:0,blasterActive:false,nextShotAt:0,doubleJumpArmed:false,connected:true,disconnectedAt:0,lastSeq:-1,damageDealt:0,knockouts:0,hazardReadyAt:0,cloakedUntil:0,ipHash:ws.ipHash||null,integrity:{inputTokens:[],positionTokens:[],recoveryZoneTokens:[],actionTimes:[],lastInputSampleAt:0,lastPositionSampleAt:0,recoveryPickups:0,blockedPickupAttempts:0,blockedAttemptKeys:new Set(),actions:0}};
       this.players.set(p.wallet,player);
     }
     const prior=this.clients.get(p.wallet);if(prior&&prior!==ws)try{prior.close(4001,"Arena reconnected elsewhere")}catch{}
-    player.connected=true;player.disconnectedAt=0;player.lastSeq=-1;this.clients.set(p.wallet,ws);ws.player=player;ws.room=this;
+    player.connected=true;player.disconnectedAt=0;player.lastSeq=-1;player.ipHash=ws.ipHash||player.ipHash||null;if(Number.isFinite(p.followersCount))player.followersCount=Number(p.followersCount);this.clients.set(p.wallet,ws);ws.player=player;ws.room=this;
     this.send(ws,{t:"welcome",matchId:this.matchId,playerId:player.id,phase:this.phase,liveAt:this.liveAt,version:VERSION,winnerId:this.winner?.id||null,abortReason:this.abortReason});
     this.broadcastRoster();
   }
   remove(ws){if(!ws.player)return;const p=ws.player;if(this.clients.get(p.wallet)!==ws)return;this.clients.delete(p.wallet);p.connected=false;p.disconnectedAt=Date.now();p.input={x:0,z:0};this.broadcastRoster()}
+  restrictIdentity(wallet,xUserId){let kicked=0;for(const [playerWallet,p] of [...this.players]){if((wallet&&p.wallet===wallet)||(xUserId&&p.xUserId===xUserId)){kicked++;const ws=this.clients.get(p.wallet);if(this.phase==="live"&&p.alive)this.eliminate(p,"FAIR PLAY");else if(this.phase==="lobby"){this.players.delete(playerWallet);this.clients.delete(playerWallet);this.broadcastRoster()}if(ws)setTimeout(()=>{try{ws.close(1008,"Competition access restricted")}catch{}},120)}}return kicked}
   send(ws,msg){if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(msg))}
   broadcast(msg){const raw=JSON.stringify(msg);for(const ws of this.clients.values())if(ws.readyState===WebSocket.OPEN)ws.send(raw)}
   broadcastSnapshot(msg){
@@ -123,9 +146,9 @@ class Room {
     }
   }
   broadcastRoster(){this.broadcast({t:"roster",players:[...this.players.values()].map(p=>({id:p.id,wallet:p.wallet,username:p.username,profileImageUrl:p.profileImageUrl,color:p.color,glow:p.glow,connected:p.connected}))})}
-  input(player,msg){if(!player.alive)return;const seq=Math.trunc(Number(msg.seq)||0);if(seq<=player.lastSeq)return;player.lastSeq=seq;player.input=normalizeInput(msg.x,msg.z);// Mobile means normalized onscreen-joystick input; the authority accepts planar input only.
+  input(player,msg){if(!player.alive)return;const seq=Math.trunc(Number(msg.seq)||0);if(seq<=player.lastSeq)return;player.lastSeq=seq;player.input=normalizeInput(msg.x,msg.z);const now=Date.now();if(now-player.integrity.lastInputSampleAt>=INTEGRITY_INPUT_SAMPLE_MS){player.integrity.lastInputSampleAt=now;pushBounded(player.integrity.inputTokens,inputToken(player.input),INTEGRITY_MAX_INPUT_SAMPLES)}// Mobile means normalized onscreen-joystick input; the authority accepts planar input only.
     player.profile=msg.profile==="mobile"?"mobile":"desktop"}
-  action(player){if(this.phase!=="live"||!player.alive||!player.body)return;const now=Date.now();if(player.powerKind&&now>=player.powerExpiresAt)this.clearPower(player);const kind=player.powerKind;if(!kind){this.normalJump(player);return}
+  action(player){if(this.phase!=="live"||!player.alive||!player.body)return;const now=Date.now();player.integrity.actions+=1;pushBounded(player.integrity.actionTimes,now,INTEGRITY_MAX_ACTIONS);if(player.powerKind&&now>=player.powerExpiresAt)this.clearPower(player);const kind=player.powerKind;if(!kind){this.normalJump(player);return}
     if(kind==="superjump"){
       if(this.grounded(player)){if(this.normalJump(player,1.18))player.doubleJumpArmed=true}
       else if(player.doubleJumpArmed){const v=player.body.linvel();player.body.setLinvel({x:v.x,y:this.config.jumpImpulse*1.42,z:v.z},true);player.doubleJumpArmed=false;this.clearPower(player);/* power state is carried in snapshots */}
@@ -171,14 +194,14 @@ class Room {
       this.spikeHazards.push({x,y,z});
     }
     [[-9,-16],[9,-16],[-16,-9],[16,9],[-9,16],[9,16],[16,-9],[-16,9]].forEach(([xx,zz])=>{const body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(xx*s,1.05,zz*s));world.createCollider(RAPIER.ColliderDesc.cylinder(1.05,.72*s).setRestitution(.7).setFriction(.2),body)});
-    const pedKinds=["superjump","blaster","cloak","bomb","superspeed","blaster"],pedLoc=[[-14,-7],[14,-7],[-14,7],[14,7],[0,-15],[0,15]];this.pedestals=pedLoc.map(([xx,zz],i)=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,.72,z));world.createCollider(RAPIER.ColliderDesc.cylinder(.72,1.75*s).setFriction(.52).setRestitution(.06),body);return{id:`ped-${i}`,x,z,kind:pedKinds[i],readyAt:0}});
-    const addPickup=(id,rx,rz,y,kind)=>this.pickups.push({id,x:rx*s,z:rz*s,y:y+.16,kind,readyAt:0});this.pickups=[];
+    const pedKinds=["superjump","blaster","cloak","bomb","superspeed","blaster"],pedLoc=[[-14,-7],[14,-7],[-14,7],[14,7],[0,-15],[0,15]];this.pedestals=pedLoc.map(([xx,zz],i)=>{const x=xx*s,z=zz*s,body=world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x,.72,z));world.createCollider(RAPIER.ColliderDesc.cylinder(.72,1.75*s).setFriction(.52).setRestitution(.06),body);return{id:`ped-${i}`,x,z,kind:pedKinds[i],readyAt:0,blockedBy:new Set()}});
+    const addPickup=(id,rx,rz,y,kind)=>this.pickups.push({id,x:rx*s,z:rz*s,y:y+.16,kind,readyAt:0,blockedBy:new Set()});this.pickups=[];
     addPickup("pick-sj-1",-21,-8,0,"superjump");addPickup("pick-sj-2",21,8,0,"superjump");addPickup("pick-bl-1",-8,-21,0,"blaster");addPickup("pick-bl-2",8,21,0,"blaster");addPickup("pick-sp-1",-20,14,0,"superspeed");addPickup("pick-sp-2",20,-14,0,"superspeed");addPickup("pick-hp-1",-16,-17,0,"recovery");addPickup("pick-hp-2",16,17,0,"recovery");addPickup("pick-sj-hi",-2.4,0,1.61,"superjump");addPickup("pick-bl-hi",2.4,0,1.61,"blaster");addPickup("pick-sp-hi",0,2.4,1.61,"superspeed");
     const list=[...this.players.values()];for(let i=0;i<list.length;i++){const p=list[i],a=Math.PI/4+i/list.length*Math.PI*2,spawnR=(i%2===0?23.5:21.5)*s,x=Math.cos(a)*spawnR,z=Math.sin(a)*spawnR,body=world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x,1.05,z).setLinearDamping(LINEAR_DAMPING).setAngularDamping(ANGULAR_DAMPING).setCcdEnabled(true));world.createCollider(RAPIER.ColliderDesc.ball(BALL_RADIUS).setDensity(1).setFriction(FRICTION).setRestitution(.14),body);p.body=body;p.health=100;p.alive=true}
     this.phase="live";this.startedAt=Date.now();console.log(`[arena] match started orb=${this.orbId} match=${this.matchId} players=${this.players.size} scale=${this.config.courseScale.toFixed(3)}`);this.broadcastRoster();this.event("start",{startedAt:this.startedAt,courseScale:this.config.courseScale,playerCount:this.players.size});return true;
   }
   updatePlayers(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=nextVelocity({x:v.x/speedMul,z:v.z/speedMul},p.input,p.profile),next={x:base.x*speedMul,z:base.z*speedMul};p.body.setLinvel({x:next.x,y:v.y,z:next.z},true)}}
-  postStep(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=clampVelocity({x:v.x/speedMul,z:v.z/speedMul},p.profile),cl={x:base.x*speedMul,z:base.z*speedMul};if(cl.x!==v.x||cl.z!==v.z)p.body.setLinvel({x:cl.x,y:v.y,z:cl.z},true);const pos=p.body.translation();if(p.airborne){if(v.y<-.25)p.descending=true;if(p.descending&&Math.abs(v.y)<.16){p.airborne=false;p.descending=false}}if(p.powerKind&&now>=p.powerExpiresAt)this.clearPower(p);
+  postStep(now){for(const p of this.players.values()){if(!p.alive||!p.body)continue;const v=p.body.linvel(),speedMul=now<p.speedUntil?5:1,base=clampVelocity({x:v.x/speedMul,z:v.z/speedMul},p.profile),cl={x:base.x*speedMul,z:base.z*speedMul};if(cl.x!==v.x||cl.z!==v.z)p.body.setLinvel({x:cl.x,y:v.y,z:cl.z},true);const pos=p.body.translation();if(now-p.integrity.lastPositionSampleAt>=INTEGRITY_POSITION_SAMPLE_MS){p.integrity.lastPositionSampleAt=now;pushBounded(p.integrity.positionTokens,positionToken(pos),INTEGRITY_MAX_POSITION_SAMPLES);const nearRecovery=this.pickups.some(item=>item.kind==="recovery"&&Math.hypot(pos.x-item.x,pos.z-item.z)<=1.65*this.config.courseScale&&Math.abs(pos.y-item.y)<=2.6);pushBounded(p.integrity.recoveryZoneTokens,nearRecovery?1:0,INTEGRITY_MAX_POSITION_SAMPLES)}if(p.airborne){if(v.y<-.25)p.descending=true;if(p.descending&&Math.abs(v.y)<.16){p.airborne=false;p.descending=false}}if(p.powerKind&&now>=p.powerExpiresAt)this.clearPower(p);
       // Falling through a colonnade arch is a clean authoritative ring-out.
       if(pos.y<-3.6){this.eliminate(p,"FELL");continue}
       if(now>=p.hazardReadyAt){
@@ -188,6 +211,8 @@ class Room {
         if(hazard){p.hazardReadyAt=now+850;const inv=now<p.speedUntil,before=p.health;if(!inv)p.health=Math.max(0,p.health-damage);if(!inv)p.body.applyImpulse({x:normalX*.72,y:.12,z:normalZ*.72},true);const actual=before-p.health;if(actual>0)this.event("hit",{playerId:p.id,attackerId:null,attackKind:kind,damage:actual});if(p.health<=0){this.eliminate(p,kind==="column"?"ZAPPED":"SPIKED");continue}}
       }
     }}
+  integrityRow(p,now){const i=p.integrity,movement=repeatedTailScore(i.inputTokens),position=repeatedTailScore(i.positionTokens,4,20),action=actionRegularity(i.actionTimes),positionSamples=i.positionTokens.length,recoveryShare=i.recoveryZoneTokens.length?i.recoveryZoneTokens.reduce((sum,value)=>sum+value,0)/i.recoveryZoneTokens.length:0,sameIpPeers=p.ipHash?[...this.players.values()].filter(other=>other!==p&&other.ipHash===p.ipHash).length:0;let score=0;const signals=[];if(i.inputTokens.length>=40&&movement>=.9){score+=35;signals.push(`repeating input cycle ${Math.round(movement*100)}%`)}else if(i.inputTokens.length>=50&&movement>=.8){score+=18;signals.push(`repetitive input ${Math.round(movement*100)}%`)}if(positionSamples>=32&&position>=.88){score+=30;signals.push(`repeating path ${Math.round(position*100)}%`)}else if(positionSamples>=40&&position>=.76){score+=15;signals.push(`recurrent path ${Math.round(position*100)}%`)}if(i.actionTimes.length>=11&&action>=.86){score+=25;signals.push(`machine-like action cadence ${Math.round(action*100)}%`)}else if(i.actionTimes.length>=14&&action>=.7){score+=12;signals.push(`regular action cadence ${Math.round(action*100)}%`)}if(positionSamples>=30&&recoveryShare>=.65){score+=20;signals.push(`health-zone occupancy ${Math.round(recoveryShare*100)}%`)}if(i.blockedPickupAttempts>=2){score+=25;signals.push(`${i.blockedPickupAttempts} blocked pickup-camping attempts`)}if(p.followersCount===0){score+=10;signals.push("0 X followers") }else if(Number.isFinite(p.followersCount)&&p.followersCount<5){score+=4;signals.push(`${p.followersCount} X followers`)}if(sameIpPeers>=2){score+=10;signals.push(`${sameIpPeers+1} entrants share IP fingerprint`)}else if(sameIpPeers===1){score+=4;signals.push("2 entrants share IP fingerprint")}score=Math.min(100,score);return{schemaVersion:1,version:VERSION,matchId:this.matchId,orbId:this.orbId,slug:this.slug,sampledAt:now,phase:this.phase,playerId:p.id,wallet:p.wallet,xUserId:p.xUserId,username:p.username,followersCount:Number.isFinite(p.followersCount)?Number(p.followersCount):null,ipHash:p.ipHash||null,sameIpPeers,alive:p.alive,health:Math.round(p.health),score,level:score>=65?"high":score>=35?"watch":"normal",signals,movementPatternScore:round3(movement),positionLoopScore:round3(position),actionRegularityScore:round3(action),recoveryZoneShare:round3(recoveryShare),recoveryPickups:i.recoveryPickups,blockedPickupAttempts:i.blockedPickupAttempts,actions:i.actions,inputSamples:i.inputTokens.length,positionSamples}}
+  async reportIntegrity(now=Date.now()){if(this.reportingIntegrity)return;this.reportingIntegrity=true;const rows=[...this.players.values()].map(p=>this.integrityRow(p,now)),body=JSON.stringify({schemaVersion:1,version:VERSION,rows}),ts=String(Date.now()),sig=createHmac("sha256",HMAC_KEY).update(`${ts}.${body}`,"utf8").digest("base64url");try{const r=await fetch(`${SITE_URL}/api/arena/runtime/integrity`,{method:"POST",headers:{"content-type":"application/json","x-arena-timestamp":ts,"x-arena-signature":sig},body,signal:AbortSignal.timeout(5000)});if(!r.ok)console.warn(`[arena] integrity callback ${r.status}`)}catch(e){console.warn("[arena] integrity callback failed",e instanceof Error?e.message:e)}finally{this.reportingIntegrity=false}}
   facing(p){const v=p.body.linvel(),speed=Math.hypot(v.x,v.z);if(speed>.55)return{x:v.x/speed,z:v.z/speed};const i=p.input,m=Math.hypot(i.x,i.z);return m>.1?{x:i.x/m,z:i.z/m}:{x:0,z:-1}}
   fire(p,now){const dir=this.facing(p),pos=p.body.translation();this.projectiles.push({id:`v${++this.seq}`,x:pos.x+dir.x*.98,y:pos.y+.06,z:pos.z+dir.z*.98,vx:dir.x*14,vz:dir.z*14,owner:p,born:now,life:BLASTER_LIFE_MS});}
   updateProjectiles(now){for(const p of this.players.values())if(p.alive&&p.blasterActive&&p.powerKind==="blaster"&&now<p.powerExpiresAt&&now>=p.nextShotAt){this.fire(p,now);p.nextShotAt=now+BLASTER_VOLLEY_MS}
@@ -228,13 +253,13 @@ class Room {
       }
     }
   }
-  pickupsTick(now){const elapsed=(now-this.startedAt)/1000,respawn=elapsed>=this.config.overchargeAt?.38:elapsed>=this.config.suddenDeathAt?.58:1,s=this.config.courseScale;for(const pick of this.pickups){if(now<pick.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body)continue;const pos=p.body.translation();if(Math.hypot(pos.x-pick.x,pos.z-pick.z)>1.5*s||Math.abs(pos.y-pick.y)>2.4)continue;pick.readyAt=now+this.config.ringRespawnMs*respawn;if(pick.kind==="recovery"){const before=p.health;p.health=Math.min(100,p.health+this.config.recoveryAmount);this.playerEvent(p,"recover",{playerId:p.id,amount:p.health-before})}else this.grantPower(p,pick.kind,now);break}}
-    for(const ped of this.pedestals){if(now<ped.readyAt)continue;for(const p of this.players.values()){if(!p.alive||!p.body||p.powerKind)continue;const pos=p.body.translation();if(Math.hypot(pos.x-ped.x,pos.z-ped.z)>1.55*s||pos.y<1.35)continue;ped.readyAt=now+this.config.pedestalRespawnMs*respawn;this.grantPower(p,ped.kind,now);break}}
+  pickupsTick(now){const elapsed=(now-this.startedAt)/1000,respawn=elapsed>=this.config.overchargeAt?.38:elapsed>=this.config.suddenDeathAt?.58:1,s=this.config.courseScale;for(const pick of this.pickups){for(const p of this.players.values()){if(!p.body)continue;const pos=p.body.translation(),inside=Math.hypot(pos.x-pick.x,pos.z-pick.z)<=1.5*s&&Math.abs(pos.y-pick.y)<=2.4;if(!inside){pick.blockedBy.delete(p.id);p.integrity.blockedAttemptKeys.delete(`${pick.id}:${pick.readyAt}`);continue}if(!p.alive||now<pick.readyAt)continue;if(pick.blockedBy.has(p.id)){const key=`${pick.id}:${pick.readyAt}`;if(!p.integrity.blockedAttemptKeys.has(key)){p.integrity.blockedAttemptKeys.add(key);p.integrity.blockedPickupAttempts+=1}continue}pick.readyAt=now+this.config.ringRespawnMs*respawn;pick.blockedBy.add(p.id);if(pick.kind==="recovery"){const before=p.health;p.health=Math.min(100,p.health+this.config.recoveryAmount);p.integrity.recoveryPickups+=1;this.playerEvent(p,"recover",{playerId:p.id,amount:p.health-before})}else this.grantPower(p,pick.kind,now);break}}
+    for(const ped of this.pedestals){for(const p of this.players.values()){if(!p.body)continue;const pos=p.body.translation(),inside=Math.hypot(pos.x-ped.x,pos.z-ped.z)<=1.55*s&&pos.y>=1.35;if(!inside){ped.blockedBy.delete(p.id);p.integrity.blockedAttemptKeys.delete(`${ped.id}:${ped.readyAt}`);continue}if(!p.alive||p.powerKind||now<ped.readyAt)continue;if(ped.blockedBy.has(p.id)){const key=`${ped.id}:${ped.readyAt}`;if(!p.integrity.blockedAttemptKeys.has(key)){p.integrity.blockedAttemptKeys.add(key);p.integrity.blockedPickupAttempts+=1}continue}ped.readyAt=now+this.config.pedestalRespawnMs*respawn;ped.blockedBy.add(p.id);this.grantPower(p,ped.kind,now);break}}
   }
-  abort(reason){if(this.phase==="finished"||this.phase==="aborted")return;this.phase="aborted";this.completedAt=Date.now();this.abortReason=reason;console.error(`[arena] match aborted orb=${this.orbId} match=${this.matchId}: ${reason}`);this.broadcast({t:"aborted",reason,completedAt:this.completedAt});}
+  abort(reason){if(this.phase==="finished"||this.phase==="aborted")return;this.phase="aborted";this.completedAt=Date.now();void this.reportIntegrity(this.completedAt);this.abortReason=reason;console.error(`[arena] match aborted orb=${this.orbId} match=${this.matchId}: ${reason}`);this.broadcast({t:"aborted",reason,completedAt:this.completedAt});}
   eliminate(p,reason,attacker=null){if(!p.alive)return;p.alive=false;if(attacker&&attacker!==p)attacker.knockouts=(attacker.knockouts||0)+1;if(p.body)p.body.setEnabled(false);this.event("eliminated",{playerId:p.id,reason,attackerId:attacker?.id||null});this.maybeFinish()}
   maybeFinish(){const alive=[...this.players.values()].filter(p=>p.alive);if(this.phase!=="live"||alive.length>1)return;if(alive.length===1)this.finish(alive[0]);else this.finish(null)}
-  finish(winner){if(this.phase==="finished")return;this.phase="finished";this.completedAt=Date.now();this.winner=winner||null;this.broadcast({t:"finished",winnerId:winner?.id||null,completedAt:this.completedAt});if(winner)void this.postResult(winner)}
+  finish(winner){if(this.phase==="finished")return;this.phase="finished";this.completedAt=Date.now();void this.reportIntegrity(this.completedAt);this.winner=winner||null;this.broadcast({t:"finished",winnerId:winner?.id||null,completedAt:this.completedAt});if(winner)void this.postResult(winner)}
   async postResult(winner){if(this.resultPosted||this.resultPosting)return;this.resultPosting=true;const body=JSON.stringify({schemaVersion:1,version:VERSION,matchId:this.matchId,orbId:this.orbId,slug:this.slug,startedAt:this.startedAt,completedAt:this.completedAt,participantCount:this.players.size,commitment:this.commitment,winnerWallet:winner.wallet,winnerXUserId:winner.xUserId,winnerUsername:winner.username});const ts=String(Date.now()),sig=createHmac("sha256",HMAC_KEY).update(`${ts}.${body}`,"utf8").digest("base64url");try{const r=await fetch(`${SITE_URL}/api/arena/runtime/result`,{method:"POST",headers:{"content-type":"application/json","x-arena-timestamp":ts,"x-arena-signature":sig},body});if(!r.ok)throw new Error(`result callback ${r.status}: ${await r.text()}`);this.resultPosted=true}catch(e){console.error("[arena] winner callback failed",e);this.resultRetryTimer=setTimeout(()=>{this.resultRetryTimer=null;this.resultPosting=false;void this.postResult(winner)},3000);return}this.resultPosting=false}
   loop(){
     const perfNow=performance.now(),loopDeltaMs=perfNow-this.lastLoopAt;
@@ -271,6 +296,7 @@ class Room {
     if(this.phase!=="live")return;
 
     if(now>=this.endsAt){this.abort("Arena reached the Orb refund window before a winner was decided. No winner was recorded.");return}
+    if(now-this.lastIntegrityReportAt>=INTEGRITY_REPORT_MS){this.lastIntegrityReportAt=now;void this.reportIntegrity(now)}
     if(this.phase==="live"&&now-this.lastSnapshot>=this.snapshotInterval()){this.lastSnapshot=now;this.snapshot(now)}
   }
   stepSimulation(now){
@@ -287,16 +313,23 @@ class Room {
 }
 
 const rooms=new Map();
-const server=http.createServer((req,res)=>{if(req.url==="/health"){const roomList=[...rooms.values()];res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify({ok:true,version:VERSION,rooms:roomList.length,liveRooms:roomList.filter(r=>r.phase==="live").length,lobbyRooms:roomList.filter(r=>r.phase==="lobby").length,snapshotDrops:roomList.reduce((sum,r)=>sum+(r.snapshotDrops||0),0),loopLagMs:Math.round(roomList.reduce((max,r)=>Math.max(max,r.loopLagMs||0),0)*10)/10,allowedOrigins:[...SITE_ORIGINS],lastArenaError}));return}res.writeHead(404);res.end("Not found")});
+function connectionIpHash(req){const forwarded=String(req.headers["x-forwarded-for"]||"").split(",").map(v=>v.trim()).filter(Boolean),ip=String(req.headers["cf-connecting-ip"]||req.headers["x-real-ip"]||forwarded[0]||req.socket.remoteAddress||"").trim();return ip?createHmac("sha256",HMAC_KEY).update(`ip:${ip}`,"utf8").digest("hex").slice(0,16):null}
+function verifySignedBody(raw,req){const ts=String(req.headers["x-arena-timestamp"]||""),supplied=String(req.headers["x-arena-signature"]||""),stamp=Number(ts);if(!ts||!supplied||!Number.isFinite(stamp)||Math.abs(Date.now()-stamp)>120_000)return false;const expected=createHmac("sha256",HMAC_KEY).update(`${ts}.${raw}`,"utf8").digest("base64url"),a=Buffer.from(expected),b=Buffer.from(supplied);return a.length===b.length&&timingSafeEqual(a,b)}
+function readBody(req,limit=16*1024){return new Promise((resolve,reject)=>{let size=0,chunks=[];req.on("data",chunk=>{size+=chunk.length;if(size>limit){reject(new Error("Request too large"));req.destroy();return}chunks.push(chunk)});req.on("end",()=>resolve(Buffer.concat(chunks).toString("utf8")));req.on("error",reject)})}
+const server=http.createServer(async(req,res)=>{
+  if(req.url==="/health"){const roomList=[...rooms.values()];res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify({ok:true,version:VERSION,rooms:roomList.length,liveRooms:roomList.filter(r=>r.phase==="live").length,lobbyRooms:roomList.filter(r=>r.phase==="lobby").length,snapshotDrops:roomList.reduce((sum,r)=>sum+(r.snapshotDrops||0),0),loopLagMs:Math.round(roomList.reduce((max,r)=>Math.max(max,r.loopLagMs||0),0)*10)/10,allowedOrigins:[...SITE_ORIGINS],lastArenaError}));return}
+  if(req.url==="/admin/control"&&req.method==="POST"){try{const raw=await readBody(req);if(!verifySignedBody(raw,req)){res.writeHead(401,{"content-type":"application/json"});res.end(JSON.stringify({ok:false,error:"Invalid signature"}));return}const body=safeJson(raw);if(!body||body.schemaVersion!==1||(body.action!=="ban"&&body.action!=="unban")||(!body.wallet&&!body.xUserId)){res.writeHead(400,{"content-type":"application/json"});res.end(JSON.stringify({ok:false,error:"Invalid control request"}));return}const wallet=typeof body.wallet==="string"?body.wallet:null,xUserId=typeof body.xUserId==="string"?body.xUserId:null;if(body.action==="ban"){if(wallet)blockedWallets.add(wallet);if(xUserId)blockedXUserIds.add(xUserId)}else{if(wallet)blockedWallets.delete(wallet);if(xUserId)blockedXUserIds.delete(xUserId)}let kicked=0;if(body.action==="ban")for(const room of rooms.values())kicked+=room.restrictIdentity(wallet,xUserId);res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify({ok:true,kicked}));return}catch(error){res.writeHead(500,{"content-type":"application/json"});res.end(JSON.stringify({ok:false,error:error instanceof Error?error.message:"Control failed"}));return}}
+  res.writeHead(404);res.end("Not found")
+});
 const wss=new WebSocketServer({noServer:true,maxPayload:16*1024});
 server.on("upgrade",(req,socket,head)=>{try{const url=new URL(req.url||"/",`http://${req.headers.host||"localhost"}`);if(url.pathname!=="/arena")throw new Error("Not found");const origin=String(req.headers.origin||"");if(!SITE_ORIGINS.has(origin))throw new Error(`Forbidden origin: ${origin||"(missing)"}`);wss.handleUpgrade(req,socket,head,ws=>wss.emit("connection",ws,req))}catch(error){const message=error instanceof Error?error.message:String(error);lastArenaError={at:Date.now(),stage:"upgrade",message};console.warn("[arena] websocket upgrade rejected",message);socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");socket.destroy()}});
-wss.on("connection",ws=>{
-  ws.isAlive=true;ws.on("pong",()=>{ws.isAlive=true});
+wss.on("connection",(ws,req)=>{
+  ws.isAlive=true;ws.ipHash=connectionIpHash(req);ws.on("pong",()=>{ws.isAlive=true});
   let room=null;let authed=false;let windowStarted=Date.now(),messageCount=0,actionCount=0,strikes=0;const authTimer=setTimeout(()=>{if(!authed)ws.close(1008,"Arena authentication timeout")},5000);
   ws.on("message",raw=>{
     const now=Date.now();if(now-windowStarted>=1000){windowStarted=now;messageCount=0;actionCount=0}messageCount++;if(messageCount>MAX_MESSAGES_PER_SECOND){strikes++;if(strikes>=3)ws.close(1008,"Arena input rate exceeded");return}
     if(raw.length>8192)return;const msg=safeJson(raw.toString());if(!msg)return;
-    if(!authed){if(msg.t!=="auth")return;const p=verifyToken(msg.token);if(!p){ws.close(1008,"Invalid Arena token");return}room=rooms.get(p.orbId);if(!room){if(Date.now()>p.startsAt+120_000){ws.close(1008,"Arena start window closed");return}room=new Room(p);rooms.set(p.orbId,room)}try{room.add(ws,p)}catch(e){ws.close(1008,e instanceof Error?e.message:"Arena rejected");return}authed=true;clearTimeout(authTimer);return}
+    if(!authed){if(msg.t!=="auth")return;const p=verifyToken(msg.token);if(!p){ws.close(1008,"Invalid Arena token");return}if(blockedWallets.has(p.wallet)||blockedXUserIds.has(p.xUserId)){ws.close(1008,"Competition access restricted");return}room=rooms.get(p.orbId);if(!room){if(Date.now()>p.startsAt+120_000){ws.close(1008,"Arena start window closed");return}room=new Room(p);rooms.set(p.orbId,room)}try{room.add(ws,p)}catch(e){ws.close(1008,e instanceof Error?e.message:"Arena rejected");return}authed=true;clearTimeout(authTimer);return}
     if(!ws.player||!room)return;if(msg.t==="input")room.input(ws.player,msg);else if(msg.t==="action"){actionCount++;if(actionCount<=MAX_ACTIONS_PER_SECOND)room.action(ws.player)}else if(msg.t==="ping")room.send(ws,{t:"pong",at:Date.now(),clientAt:Number(msg.clientAt)||0});
   });
   ws.on("close",()=>{clearTimeout(authTimer);room?.remove(ws)});ws.on("error",()=>{clearTimeout(authTimer);room?.remove(ws)});

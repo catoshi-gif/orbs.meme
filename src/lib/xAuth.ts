@@ -12,6 +12,7 @@ export type XProfile = {
   name: string;
   profileImageUrl?: string;
   protected: boolean;
+  followersCount?: number | null;
 };
 
 type XStoredSession = {
@@ -20,6 +21,7 @@ type XStoredSession = {
   refreshToken?: string;
   expiresAt: number;
   scope: string;
+  profileMetricsCheckedAt?: number;
 };
 
 type OAuthState = {
@@ -145,11 +147,20 @@ export async function finishXOAuth(state: string, code: string) {
     code_verifier: pending.verifier,
   }));
 
-  const meResponse = await fetch("https://api.x.com/2/users/me?user.fields=profile_image_url,protected", {
+  let meResponse = await fetch("https://api.x.com/2/users/me?user.fields=profile_image_url,protected,public_metrics", {
     headers: { Authorization: `Bearer ${token.access_token}` },
     cache: "no-store",
   });
-  const me = await meResponse.json() as { data?: { id?: string; username?: string; name?: string; profile_image_url?: string; protected?: boolean }; error?: string; detail?: string };
+  let me = await meResponse.json() as { data?: { id?: string; username?: string; name?: string; profile_image_url?: string; protected?: boolean; public_metrics?: { followers_count?: number } }; error?: string; detail?: string };
+  // Follower count is an integrity hint, never a prerequisite for X connection. If X rejects
+  // public_metrics for this app tier, retry the exact legacy profile read rather than breaking OAuth.
+  if (!meResponse.ok || !me.data?.id || !me.data.username) {
+    meResponse = await fetch("https://api.x.com/2/users/me?user.fields=profile_image_url,protected", {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+      cache: "no-store",
+    });
+    me = await meResponse.json() as typeof me;
+  }
   if (!meResponse.ok || !me.data?.id || !me.data.username) throw new Error(me.detail || me.error || "Could not read X profile");
 
   const sessionId = randomBytes(32).toString("base64url");
@@ -160,11 +171,13 @@ export async function finishXOAuth(state: string, code: string) {
       name: me.data.name || me.data.username,
       profileImageUrl: me.data.profile_image_url,
       protected: Boolean(me.data.protected),
+      followersCount: Number.isFinite(me.data.public_metrics?.followers_count) ? Number(me.data.public_metrics?.followers_count) : null,
     },
     accessToken: encrypt(token.access_token),
     refreshToken: token.refresh_token ? encrypt(token.refresh_token) : undefined,
     expiresAt: Date.now() + Math.max(60, Number(token.expires_in || 7200)) * 1000,
     scope: token.scope || "",
+    profileMetricsCheckedAt: Date.now(),
   };
   await redisSetJson(sessionKey(sessionId), stored, { exSeconds: SESSION_TTL_SECONDS });
   return { sessionId, returnTo: pending.returnTo, profile: stored.user };
@@ -187,6 +200,38 @@ async function refreshSession(sessionId: string, stored: XStoredSession) {
   return refreshed;
 }
 
+async function ensureStoredProfileMetrics(sessionId: string, stored: XStoredSession) {
+  if (stored.profileMetricsCheckedAt) return stored;
+  const checkedAt = Date.now();
+  try {
+    const accessToken = decrypt(stored.accessToken);
+    const response = await fetch("https://api.x.com/2/users/me?user.fields=profile_image_url,protected,public_metrics", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(6_000),
+    });
+    const payload = await response.json().catch(() => null) as { data?: { profile_image_url?: string; protected?: boolean; public_metrics?: { followers_count?: number } } } | null;
+    if (response.ok && payload?.data) {
+      stored = {
+        ...stored,
+        user: {
+          ...stored.user,
+          profileImageUrl: payload.data.profile_image_url || stored.user.profileImageUrl,
+          protected: Boolean(payload.data.protected),
+          followersCount: Number.isFinite(payload.data.public_metrics?.followers_count) ? Number(payload.data.public_metrics?.followers_count) : null,
+        },
+        profileMetricsCheckedAt: checkedAt,
+      };
+    } else {
+      stored = { ...stored, user: { ...stored.user, followersCount: stored.user.followersCount ?? null }, profileMetricsCheckedAt: checkedAt };
+    }
+  } catch {
+    stored = { ...stored, user: { ...stored.user, followersCount: stored.user.followersCount ?? null }, profileMetricsCheckedAt: checkedAt };
+  }
+  await redisSetJson(sessionKey(sessionId), stored, { exSeconds: SESSION_TTL_SECONDS }).catch(() => false);
+  return stored;
+}
+
 export async function getCurrentXSession(): Promise<{ id: string; user: XProfile; accessToken: string } | null> {
   if (!xConfigured()) return null;
   const jar = await cookies();
@@ -197,6 +242,7 @@ export async function getCurrentXSession(): Promise<{ id: string; user: XProfile
   if (stored.expiresAt < Date.now() + 90_000 && stored.refreshToken) {
     try { stored = await refreshSession(id, stored); } catch { return null; }
   }
+  stored = await ensureStoredProfileMetrics(id, stored);
   return { id, user: stored.user, accessToken: decrypt(stored.accessToken) };
 }
 

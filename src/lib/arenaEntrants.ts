@@ -9,6 +9,7 @@ export type ArenaEntrantProfile = {
   xUserId: string;
   username: string;
   profileImageUrl?: string | null;
+  followersCount?: number | null;
   orbColor: string;
   orbGlow: string;
   updatedAt: number;
@@ -52,7 +53,7 @@ export async function assignArenaEntrantProfile(slug: string, walletInput: strin
   const usedByOthers = used.filter((color) => color !== existing?.orbColor?.toUpperCase());
   const distinctAt = (candidate:string, minimum:number) => usedByOthers.every((usedColor) => colorDistance(candidate, usedColor) >= minimum);
   const requested = requestedColor ? cleanHex(requestedColor) : null;
-  let color = requested && distinctAt(requested, 24) ? requested : null;
+  let color = !requested && existing?.xUserId === x.id ? existing.orbColor : (requested && distinctAt(requested, 24) ? requested : null);
   const candidates = palette(`${slug}:${wallet}:${requested || "auto"}`);
   if (!color) {
     for (const minimum of [34, 24, 16, 8, 1]) {
@@ -62,12 +63,13 @@ export async function assignArenaEntrantProfile(slug: string, walletInput: strin
   }
   if (!color) color = candidates[0] || "#72F7FF";
   const requestedGlowHex = requestedGlow ? cleanHex(requestedGlow) : null;
-  const glow = requestedGlowHex || hslToHex((parseInt(color.slice(1, 3), 16) * 7 + parseInt(color.slice(3, 5), 16) * 3 + parseInt(color.slice(5, 7), 16) * 11) % 360, 96, 72);
+  const glow = requestedGlowHex || (!requested && existing?.xUserId === x.id ? existing.orbGlow : null) || hslToHex((parseInt(color.slice(1, 3), 16) * 7 + parseInt(color.slice(3, 5), 16) * 3 + parseInt(color.slice(5, 7), 16) * 11) % 360, 96, 72);
   const profile: ArenaEntrantProfile = {
     wallet,
     xUserId: x.id,
     username: x.username,
     profileImageUrl: x.profileImageUrl || null,
+    followersCount: Number.isFinite(x.followersCount) ? Number(x.followersCount) : null,
     orbColor: color,
     orbGlow: glow,
     updatedAt: Date.now(),
