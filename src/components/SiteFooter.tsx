@@ -20,6 +20,7 @@ export default function SiteFooter() {
         <div className="footer-links">
           <Link href="/how-it-works">How it works</Link>
           <Link href="/rules">Rules</Link>
+          <Link href="/fair-play">Fair Play</Link>
           <Link href="/terms">Terms</Link>
           <Link href="/privacy">Privacy</Link>
         </div>

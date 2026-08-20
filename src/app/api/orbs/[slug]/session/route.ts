@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { hasEligibilityReceipt } from "@/lib/eligibility";
+import { hasFairPlayReceipt } from "@/lib/fairPlay";
 import { PublicKey } from "@solana/web3.js";
 import { getCanonicalOrbManifest, getPublicOrb, orbGameType } from "@/lib/orbStore";
 import { issueCompetitiveSession, competitiveSessionsConfigured } from "@/lib/competitiveSession";
@@ -37,6 +38,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   if (await getCompetitionRestriction(wallet, x.user.id)) return NextResponse.json({ ok:false,error:COMPETITION_RESTRICTION_MESSAGE,code:"COMPETITION_RESTRICTED" }, { status:403 });
 
   if (!await hasEligibilityReceipt(wallet)) return NextResponse.json({ ok: false, error: "Confirm 18+ eligibility for this wallet before entering an Orb" }, { status: 403 });
+  if (!await hasFairPlayReceipt(wallet, x.user.id)) return NextResponse.json({ ok:false,error:"Accept the current Fair Play Policy before entering an Orb",code:"FAIR_PLAY_REQUIRED" }, { status:403 });
 
   const [followed, walletVerified, humanVerified, shared] = await Promise.all([
     hasFollowProof(x.user.id, orb.hostX.id),
