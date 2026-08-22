@@ -51,7 +51,8 @@ const HEARTBEAT_MS = 15_000;
 const LOOP_INTERVAL_MS = 8;
 const MAX_CATCHUP_STEPS = 4;
 const MAX_SNAPSHOT_BUFFERED_BYTES = 192 * 1024;
-const INTEGRITY_REPORT_MS = 15_000;
+const INTEGRITY_REPORT_MS = 30_000;
+const INTEGRITY_REPORT_MAX_LOOP_LAG_MS = 6;
 const INTEGRITY_INPUT_SAMPLE_MS = 220;
 const INTEGRITY_POSITION_SAMPLE_MS = 500;
 const INTEGRITY_MAX_INPUT_SAMPLES = 180;
@@ -114,7 +115,7 @@ class Room {
   constructor(payload){
     this.orbId=payload.orbId;this.slug=payload.slug;this.commitment=payload.commitment;this.style=payload.style;this.startsAt=payload.startsAt;this.endsAt=payload.endsAt;
     this.matchId=randomUUID();this.clients=new Map();this.players=new Map();this.phase="lobby";this.liveAt=Math.max(this.startsAt+LOBBY_GRACE_MS,Date.now()+5000);this.startedAt=0;this.completedAt=0;this.world=null;this.config=null;this.projectiles=[];this.bombs=[];this.pickups=[];this.pedestals=[];this.columnHazards=[];this.spikeHazards=[];this.pairHits=new Map();this.lastSnapshot=0;this.resultPosted=false;this.resultPosting=false;this.seq=0;
-    this.abortReason=null;this.resultRetryTimer=null;this.simAccumulator=0;this.lastLoopAt=performance.now();this.snapshotDrops=0;this.loopLagMs=0;this.lastIntegrityReportAt=0;this.timer=setInterval(()=>this.loop(),LOOP_INTERVAL_MS);
+    this.abortReason=null;this.resultRetryTimer=null;this.simAccumulator=0;this.lastLoopAt=performance.now();this.snapshotDrops=0;this.loopLagMs=0;this.lastIntegrityReportAt=0;this.integrityReportQueued=false;this.timer=setInterval(()=>this.loop(),LOOP_INTERVAL_MS);
   }
   compatible(p){return p.orbId===this.orbId&&p.slug===this.slug&&p.commitment===this.commitment&&p.startsAt===this.startsAt&&p.endsAt===this.endsAt}
   add(ws,p){
@@ -296,8 +297,14 @@ class Room {
     if(this.phase!=="live")return;
 
     if(now>=this.endsAt){this.abort("Arena reached the Orb refund window before a winner was decided. No winner was recorded.");return}
-    if(now-this.lastIntegrityReportAt>=INTEGRITY_REPORT_MS){this.lastIntegrityReportAt=now;void this.reportIntegrity(now)}
+    // Gameplay snapshots are latency-critical. Integrity telemetry is best-effort: send the
+    // snapshot first, then score/report only from an idle turn of the event loop. If the
+    // realtime loop is already lagging, defer telemetry rather than adding work to it.
     if(this.phase==="live"&&now-this.lastSnapshot>=this.snapshotInterval()){this.lastSnapshot=now;this.snapshot(now)}
+    if(now-this.lastIntegrityReportAt>=INTEGRITY_REPORT_MS&&!this.integrityReportQueued&&this.loopLagMs<=INTEGRITY_REPORT_MAX_LOOP_LAG_MS){
+      this.lastIntegrityReportAt=now;this.integrityReportQueued=true;
+      setImmediate(()=>{this.integrityReportQueued=false;if(this.phase==="live")void this.reportIntegrity(Date.now())})
+    }
   }
   stepSimulation(now){
     this.updatePlayers(now);
