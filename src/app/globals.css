@@ -604,7 +604,7 @@ html:not(.dark) .real-orb-hero>.waiting-orb-showcase{
 @keyframes arenaTrophyShine{0%,100%{transform:rotate(-2deg) scale(1)}50%{transform:rotate(2deg) scale(1.045)}}
 @media (prefers-reduced-motion:reduce){.arena-trophy,.arena-trophy-cup{animation:none}}
 
-/* Homepage hero: preserve the intended two-line headline on wide layouts. */
-.home-hero-title{position:relative;z-index:4;width:max-content;max-width:none}
+/* Homepage hero: intentional two-line headline without altering the hero grid width. */
+.home-hero-title{position:relative;z-index:4}
 .home-hero-line{display:block;white-space:nowrap}
-@media(max-width:900px){.home-hero-title{width:auto;max-width:100%}.home-hero-line{white-space:normal}}
+@media(max-width:900px){.home-hero-line{white-space:normal}}
