@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const RACE_GAME_VERSION = "orb-race-admin-v3" as const;
+export const RACE_GAME_VERSION = "orb-race-admin-v4" as const;
 export const RACE_LAPS = 3;
 export const RACE_MAX_PLAYERS = 50;
 export const RACE_RESCUE_MS = 3000;
@@ -147,7 +147,7 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
   // Keep the hero jump visually enormous without making the missing-road chasm impossible.
   // The Orb still spends several seconds airborne; the actual collider gap is intentionally
   // much shorter than V2 so a clean launch always reaches forgiving pavement.
-  const landT = plungeCenter + 0.074;
+  const landT = plungeCenter + 0.058;
   const widthPhase1 = rand() * Math.PI * 2;
   const widthPhase2 = rand() * Math.PI * 2;
 
@@ -174,17 +174,23 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
 
     // Missing-road section is ~24–34m on normal generated laps: dramatic, but safely
     // inside the launch envelope. Long airtime comes from the ballistic arc, not a lethal void.
-    const gap = t > launchT + 0.010 && t < landT - 0.016;
+    const gap = t > launchT + 0.012 && t < landT - 0.018;
     const landingWidth = windowPulse(t, landT - 0.024, landT + 0.024, landT + 0.108);
     // Smooth width topology: mostly generous, with occasional dramatic narrow and grandstand-wide sections.
     // Width changes are low-frequency so the road never pinches abruptly under a racer.
     const widthField =
-      Math.sin(a * 2 + widthPhase1) * 0.16 +
-      Math.sin(a * 4 + widthPhase2) * 0.10 +
-      Math.sin(a * 7 + widthPhase1 * 0.7) * 0.045;
-    const narrowPulse = windowPulse(t, 0.315, 0.355, 0.405) * 0.16;
-    const widePulse = windowPulse(t, 0.08, 0.13, 0.20) * 0.18;
-    const widthScale = Math.max(0.70, Math.min(1.36, 1 + widthField - narrowPulse + widePulse + landingWidth * 0.48));
+      Math.sin(a * 2 + widthPhase1) * 0.22 +
+      Math.sin(a * 4 + widthPhase2) * 0.15 +
+      Math.sin(a * 7 + widthPhase1 * 0.7) * 0.075;
+    // Deliberate visual rhythm: a couple of obvious squeeze/chicane sections and one broad
+    // "grandstand" section. These are smooth pulses, never abrupt width cliffs.
+    const narrowPulse =
+      windowPulse(t, 0.295, 0.345, 0.410) * 0.30 +
+      windowPulse(t, 0.735, 0.775, 0.825) * 0.20;
+    const widePulse =
+      windowPulse(t, 0.055, 0.125, 0.205) * 0.33 +
+      windowPulse(t, 0.455, 0.495, 0.545) * 0.22;
+    const widthScale = Math.max(0.56, Math.min(1.60, 1 + widthField - narrowPulse + widePulse + landingWidth * 0.62));
     const width = trackWidth * widthScale;
     const bank = (Math.sin(a * harmonic1 + phase1) * 0.14 + Math.sin(a * harmonic2 + phase2) * 0.08) * (1 - landingWidth * 0.6);
     raw.push({ x: Math.cos(aw) * r, y, z: Math.sin(aw) * r, bank, width, gap });
@@ -297,6 +303,26 @@ export function safeRaceRecoveryPoint(points: RacePoint[], hint: number, plungeL
   // Defensive fallback. Generator validation should make this unreachable.
   for (let i = 0; i < n; i++) if (safeRunway(i)) return i;
   return 0;
+}
+
+export function safeRaceGatePoint(points: RacePoint[], targetIndex: number, forbiddenCenter?: number) {
+  const n = points.length;
+  const wrap = (i: number) => ((i % n) + n) % n;
+  const circular = (a: number, b: number) => { const d = Math.abs(a - b); return Math.min(d, n - d); };
+  const safe = (i: number) => {
+    if (typeof forbiddenCenter === "number" && circular(i, forbiddenCenter) < 26) return false;
+    // Gate poles need actual pavement beneath them and several road samples on both sides.
+    for (let d = -5; d <= 7; d++) if (points[wrap(i + d)]!.gap) return false;
+    return true;
+  };
+  for (let radius = 0; radius < Math.min(64, n / 2); radius++) {
+    const forward = wrap(targetIndex + radius);
+    if (safe(forward)) return forward;
+    const backward = wrap(targetIndex - radius);
+    if (safe(backward)) return backward;
+  }
+  for (let i = 0; i < n; i++) if (safe(i)) return i;
+  return wrap(targetIndex);
 }
 
 export function nearestRacePoint(points: RacePoint[], x: number, y: number, z: number, hint?: number) {

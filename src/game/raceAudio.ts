@@ -19,7 +19,7 @@ export class RaceAudioEngine {
     master.gain.value = 0.19;
     master.connect(ctx.destination);
     const music = ctx.createGain();
-    music.gain.value = 0.115;
+    music.gain.value = 0.205;
     music.connect(master);
     this.ctx = ctx; this.master = master; this.music = music;
     return ctx;
@@ -92,7 +92,10 @@ export class RaceAudioEngine {
     o.connect(g); g.connect(this.master); o.start(); o.stop(ctx.currentTime + duration + 0.02);
   }
 
-  jump() { this.ping(250, 0.16, 0.08, "triangle", 520); }
+  jump() {
+    this.ping(300, 0.14, 0.105, "square", 650);
+    setTimeout(() => this.ping(620, 0.10, 0.060, "triangle", 780), 42);
+  }
   boost() { this.ping(180, 0.28, 0.10, "sawtooth", 860); }
   pickup() {
     // Deliberately unmistakable two-note item acquisition cue.
