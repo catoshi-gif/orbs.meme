@@ -5,6 +5,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import ConnectWallet from "@/components/ConnectWallet";
 import AdminGameSandbox from "@/components/AdminGameSandbox";
 import AdminArenaSandbox from "@/components/AdminArenaSandbox";
+import AdminRaceSandbox from "@/components/AdminRaceSandbox";
 import AdminIntegrityPanel from "@/components/AdminIntegrityPanel";
 
 function b64(bytes: Uint8Array) { let s=""; for (const b of bytes) s+=String.fromCharCode(b); return btoa(s); }
@@ -152,5 +153,6 @@ export default function AdminDashboard(){
     <AdminIntegrityPanel/>
     <AdminGameSandbox/>
     <AdminArenaSandbox/>
+    <AdminRaceSandbox/>
   </div>
 }
