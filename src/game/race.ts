@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const RACE_GAME_VERSION = "orb-race-admin-v9" as const;
+export const RACE_GAME_VERSION = "orb-race-admin-v11" as const;
 export const RACE_LAPS = 3;
 export const RACE_MAX_PLAYERS = 50;
 export const RACE_RESCUE_MS = 3000;
@@ -76,9 +76,9 @@ export type RaceConfig = {
 export function buildRaceConfig(playerCount: number): RaceConfig {
   return {
     playerCount: Math.max(2, Math.min(RACE_MAX_PLAYERS, Math.floor(playerCount))),
-    baseSpeed: 13.4,
-    maxSpeed: 18.2,
-    boostSpeed: 24.8,
+    baseSpeed: 17.82,
+    maxSpeed: 24.21,
+    boostSpeed: 32.98,
     jumpImpulse: 6.8,
     jumpCooldownMs: 520,
     steeringStrength: 1.18,
