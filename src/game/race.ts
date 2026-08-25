@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const RACE_GAME_VERSION = "orb-race-admin-v1" as const;
+export const RACE_GAME_VERSION = "orb-race-admin-v2" as const;
 export const RACE_LAPS = 3;
 export const RACE_MAX_PLAYERS = 50;
 export const RACE_RESCUE_MS = 3000;
@@ -74,13 +74,13 @@ export type RaceConfig = {
 export function buildRaceConfig(playerCount: number): RaceConfig {
   return {
     playerCount: Math.max(2, Math.min(RACE_MAX_PLAYERS, Math.floor(playerCount))),
-    baseSpeed: 12.6,
-    maxSpeed: 16.8,
-    boostSpeed: 22.8,
-    jumpImpulse: 6.55,
-    jumpCooldownMs: 540,
-    steeringStrength: 0.92,
-    trackWidth: playerCount > 36 ? 11.6 : 10.8,
+    baseSpeed: 13.4,
+    maxSpeed: 18.2,
+    boostSpeed: 24.8,
+    jumpImpulse: 6.8,
+    jumpCooldownMs: 520,
+    steeringStrength: 0.84,
+    trackWidth: playerCount > 36 ? 15.2 : 14.2,
     laps: RACE_LAPS,
   };
 }
@@ -126,7 +126,7 @@ function circularDiff(a: number, b: number) {
   return d;
 }
 
-export function generateRaceManifest(seed: string, style: GameStyle, trackWidth = 10.8): RaceManifest {
+export function generateRaceManifest(seed: string, style: GameStyle, trackWidth = 14.2): RaceManifest {
   const hash = xmur3(`${RACE_GAME_VERSION}:${seed}`);
   const rand = mulberry32(hash());
   const samples = 288;
@@ -144,7 +144,9 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
   const plungeCenter = 0.60 + (rand() - 0.5) * 0.055;
   const plungeStartT = plungeCenter - 0.105;
   const launchT = plungeCenter;
-  const landT = plungeCenter + 0.039;
+  const landT = plungeCenter + 0.112;
+  const widthPhase1 = rand() * Math.PI * 2;
+  const widthPhase2 = rand() * Math.PI * 2;
 
   const raw: Array<{x:number;y:number;z:number;bank:number;width:number;gap:boolean}> = [];
   for (let i = 0; i < samples; i++) {
@@ -165,11 +167,20 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
     // Keeping this module smooth prevents a valid random seed from creating a near-vertical launch wall.
     const plungeRise = smoothstep(plungeStartT - 0.24, plungeStartT - 0.05, t);
     const plungeFall = smoothstep(plungeStartT - 0.048, launchT - 0.018, t);
-    y += Math.max(0, plungeRise - plungeFall) * 22;
+    y += Math.max(0, plungeRise - plungeFall) * 35;
 
-    const gap = t > launchT + 0.006 && t < landT - 0.006;
-    const landingWidth = windowPulse(t, landT - 0.016, landT + 0.018, landT + 0.075);
-    const width = trackWidth * (1 + landingWidth * 0.55);
+    const gap = t > launchT + 0.008 && t < landT - 0.010;
+    const landingWidth = windowPulse(t, landT - 0.026, landT + 0.022, landT + 0.095);
+    // Smooth width topology: mostly generous, with occasional dramatic narrow and grandstand-wide sections.
+    // Width changes are low-frequency so the road never pinches abruptly under a racer.
+    const widthField =
+      Math.sin(a * 2 + widthPhase1) * 0.16 +
+      Math.sin(a * 4 + widthPhase2) * 0.10 +
+      Math.sin(a * 7 + widthPhase1 * 0.7) * 0.045;
+    const narrowPulse = windowPulse(t, 0.315, 0.355, 0.405) * 0.16;
+    const widePulse = windowPulse(t, 0.08, 0.13, 0.20) * 0.18;
+    const widthScale = Math.max(0.70, Math.min(1.36, 1 + widthField - narrowPulse + widePulse + landingWidth * 0.48));
+    const width = trackWidth * widthScale;
     const bank = (Math.sin(a * harmonic1 + phase1) * 0.14 + Math.sin(a * harmonic2 + phase2) * 0.08) * (1 - landingWidth * 0.6);
     raw.push({ x: Math.cos(aw) * r, y, z: Math.sin(aw) * r, bank, width, gap });
   }
