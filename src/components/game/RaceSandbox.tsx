@@ -102,7 +102,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
   const manifest=useMemo(()=>generateRaceManifest(seed,style,config.trackWidth),[seed,style,config.trackWidth]);
 
   useEffect(()=>{
-    const mount=mountRef.current;if(!mount)return;let cancelled=false,frame=0,cleanupThree:(()=>void)|null=null;const audio=new RaceAudioEngine();
+    const mount=mountRef.current;if(!mount)return;let cancelled=false,frame=0,cleanupThree:(()=>void)|null=null;const audio=new RaceAudioEngine();audio.preloadMusic();
     setPhase("ready");setElapsed(0);setLap(1);setPlace(playerCount);setSpeed(0);setItem(null);setEventText("RACE");setRescueLeft(0);setWake(false);setWinner(null);
     const coarse=window.matchMedia("(pointer: coarse)").matches;if(coarse)setControlMode("touch");
     const onKey=(e:KeyboardEvent,down:boolean)=>{if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","KeyW","KeyA","KeyS","KeyD","Space"].includes(e.code))e.preventDefault();if(e.code==="ArrowLeft"||e.code==="KeyA")controlsRef.current.left=down;if(e.code==="ArrowRight"||e.code==="KeyD")controlsRef.current.right=down;if(e.code==="ArrowUp"||e.code==="KeyW")controlsRef.current.up=down;if(e.code==="ArrowDown"||e.code==="KeyS")controlsRef.current.down=down;if(e.code==="Space"&&down&&!e.repeat)actionRef.current()};
@@ -284,13 +284,6 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
             let sx=(k.right?1:0)-(k.left?1:0),sy=(k.up?1:0)-(k.down?1:0);
             if(coarse){sx=k.touchX;sy=k.up?1:(k.down?-1:0)}
 
-            // RACE is a forward track game rather than a free-roaming Arena.
-            // Keep Arena's proven movement/sign convention, but narrow lateral authority.
-            // Ground: ~30% calmer left/right.
-            // Air: only light correction so jumps preserve launch momentum.
-            const lateralAuthority=air?0.20:0.70;
-            sx*=lateralAuthority;
-
             const facingX=humanFacing.x,facingZ=humanFacing.z;
             const driverRightX=-facingZ,driverRightZ=facingX;
             const worldX=driverRightX*sx+facingX*sy;
@@ -301,7 +294,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
             // heading, then the camera follows it. The camera never creates that heading.
             if(Math.hypot(worldX,worldZ)>.2){
               const desiredHeading=new THREE.Vector3(worldX,0,worldZ).normalize();
-              humanFacing.lerp(desiredHeading,air?.006:.022).normalize();
+              humanFacing.lerp(desiredHeading,.030).normalize();
             }
 
             if(now<o.plungeLaunchLockUntil){
@@ -338,7 +331,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
               const actualMag=Math.hypot(nx,nz);
               if(actualMag>.75){
                 const actualHeading=new THREE.Vector3(nx/actualMag,0,nz/actualMag);
-                humanFacing.lerp(actualHeading,air?.018:.070).normalize();
+                humanFacing.lerp(actualHeading,.085).normalize();
               }
             }
           }else{
