@@ -105,6 +105,14 @@ export class RaceAudioEngine {
   overtake() { this.ping(880, 0.10, 0.045, "triangle", 1120); }
   missile() { this.ping(430, 0.16, 0.09, "square", 175); }
   bomb() { this.ping(95, 0.25, 0.10, "sawtooth", 38); }
+  explosion() {
+    this.ping(82, 0.34, 0.14, "sawtooth", 31);
+    setTimeout(() => this.ping(155, 0.18, 0.085, "square", 48), 28);
+  }
+  turbo() {
+    this.ping(170, 0.34, 0.12, "sawtooth", 920);
+    setTimeout(() => this.ping(440, 0.24, 0.075, "square", 1320), 80);
+  }
   hit() { this.ping(120, 0.18, 0.10, "square", 54); }
   rescue() { this.ping(520, 0.48, 0.07, "sine", 920); }
   lap() { this.ping(660, 0.22, 0.085, "triangle", 990); setTimeout(() => this.ping(990, 0.24, 0.075, "triangle", 1320), 120); }

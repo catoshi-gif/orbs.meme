@@ -1,11 +1,11 @@
 import type { GameStyle } from "./types";
 
-export const RACE_GAME_VERSION = "orb-race-admin-v4" as const;
+export const RACE_GAME_VERSION = "orb-race-admin-v5" as const;
 export const RACE_LAPS = 3;
 export const RACE_MAX_PLAYERS = 50;
 export const RACE_RESCUE_MS = 3000;
 
-export type RaceItemKind = "missile" | "bomb";
+export type RaceItemKind = "missile" | "bomb" | "turbo";
 
 export type RacePoint = {
   index: number;
@@ -130,7 +130,7 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
   const hash = xmur3(`${RACE_GAME_VERSION}:${seed}`);
   const rand = mulberry32(hash());
   const samples = 288;
-  const baseRadius = 89 + rand() * 8;
+  const baseRadius = 108 + rand() * 10;
   const phase1 = rand() * Math.PI * 2;
   const phase2 = rand() * Math.PI * 2;
   const phase3 = rand() * Math.PI * 2;
@@ -249,7 +249,8 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
 
   const pickups: RacePickup[] = [];
   const pickupTs = [0.13, 0.255, 0.39, landT + 0.15, 0.73, 0.855];
-  pickupTs.forEach((t, i) => pickups.push({ id: `item-${i}`, kind: i % 2 ? "bomb" : "missile", pointIndex: reserve(idx(t)), lane: i % 3 === 0 ? -0.28 : i % 3 === 1 ? 0.28 : 0 }));
+  const pickupKinds: RaceItemKind[] = ["missile", "bomb", "turbo", "missile", "bomb", "turbo"];
+  pickupTs.forEach((t, i) => pickups.push({ id: `item-${i}`, kind: pickupKinds[i]!, pointIndex: reserve(idx(t)), lane: i % 3 === 0 ? -0.28 : i % 3 === 1 ? 0.28 : 0 }));
 
   const ramps: RaceRamp[] = [];
   [0.22, 0.425, 0.82].forEach((t, i) => ramps.push({ id: `ramp-${i}`, pointIndex: reserve(idx(t)), lane: i === 1 ? -0.18 : i === 2 ? 0.2 : 0 }));

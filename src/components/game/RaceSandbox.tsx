@@ -28,7 +28,7 @@ type Racer = {
   recovering:boolean; rescueStartedAt:number; rescueUntil:number; rescueFrom:import("three").Vector3; rescuePointIndex:number; rescueGraceUntil:number; cloud:import("three").Group;
   botLane:number; botLaneTarget:number; botThinkAt:number; lastHitAt:number; plungeAirUntil:number; plungeLaunchLockUntil:number;
 };
-type Missile = { mesh:import("three").Group; owner:Racer; born:number; life:number; position:import("three").Vector3; velocity:import("three").Vector3 };
+type Missile = { mesh:import("three").Group; owner:Racer; born:number; life:number; position:import("three").Vector3; progress:number; lane:number; speed:number };
 type Bomb = { mesh:import("three").Group; owner:Racer; born:number; armedAt:number; expiresAt:number; position:import("three").Vector3; hit:Set<string> };
 
 const clamp=(v:number,min:number,max:number)=>Math.max(min,Math.min(max,v));
@@ -130,7 +130,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
       const pickupVisuals=new Map<string,{group:import("three").Group;hiddenUntil:number;phase:number}>();
       const pickupCooldowns=new Map<string,number>();
       for(const [pickIndex,pick] of manifest.pickups.entries()){
-        const p=manifest.points[pick.pointIndex]!,g=new THREE.Group(),color=pick.kind==="missile"?"#FF9A3C":"#FF4D72";
+        const p=manifest.points[pick.pointIndex]!,g=new THREE.Group(),color=pick.kind==="missile"?"#FF9A3C":pick.kind==="bomb"?"#FF4D72":"#5EFFF2";
         const halo=new THREE.Mesh(new THREE.TorusGeometry(.78,.095,10,40),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false}));
         halo.rotation.y=Math.PI/2;g.add(halo);
         const inner=new THREE.Mesh(new THREE.OctahedronGeometry(.28,0),new THREE.MeshBasicMaterial({color:"#FFFFFF",transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false}));
@@ -153,11 +153,36 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
         racers.push({id:`racer-${i}`,username:human?"@you":`@${names[(i-1)%names.length]}`,color,body,mesh,core,label,isHuman:human,pointIndex:0,previousPointIndex:0,lap:0,lapArmed:false,finishedAt:null,jumpReadyAt:0,boostUntil:0,slowedUntil:0,item:null,pickupReady:new Map(),recovering:false,rescueStartedAt:0,rescueUntil:0,rescueFrom:new THREE.Vector3(),rescuePointIndex:0,rescueGraceUntil:0,cloud,botLane:lane,botLaneTarget:lane,botThinkAt:0,lastHitAt:0,plungeAirUntil:0,plungeLaunchLockUntil:0});
       }
       const human=racers[0]!;
-      const missiles:Missile[]=[],bombs:Bomb[]=[];const missileGeo=new THREE.SphereGeometry(.19,10,8),missileMat=new THREE.MeshBasicMaterial({color:"#FF9A3C",transparent:true,opacity:.96,blending:THREE.AdditiveBlending});const bombGeo=new THREE.SphereGeometry(.31,12,9),bombMat=new THREE.MeshBasicMaterial({color:"#28020A"}),bombRingGeo=new THREE.TorusGeometry(.6,.055,8,28),bombRingMat=new THREE.MeshBasicMaterial({color:"#FF4D72",transparent:true,opacity:.8,blending:THREE.AdditiveBlending,depthWrite:false});
+      const missiles:Missile[]=[],bombs:Bomb[]=[],explosions:Array<{mesh:import("three").Mesh;born:number}>=[];
+      const missileGeo=new THREE.SphereGeometry(.19,10,8),missileMat=new THREE.MeshBasicMaterial({color:"#FF9A3C",transparent:true,opacity:.96,blending:THREE.AdditiveBlending});
+      const bombGeo=new THREE.SphereGeometry(.31,12,9),bombMat=new THREE.MeshBasicMaterial({color:"#28020A"}),bombRingGeo=new THREE.TorusGeometry(.6,.055,8,28),bombRingMat=new THREE.MeshBasicMaterial({color:"#FF4D72",transparent:true,opacity:.8,blending:THREE.AdditiveBlending,depthWrite:false});
+      const explosionGeo=new THREE.SphereGeometry(1,14,10),explosionMat=new THREE.MeshBasicMaterial({color:"#FF6B54",transparent:true,opacity:.72,blending:THREE.AdditiveBlending,depthWrite:false});
       const makeMissile=()=>{const g=new THREE.Group();const m=new THREE.Mesh(missileGeo,missileMat);g.add(m);const tail=new THREE.Mesh(new THREE.ConeGeometry(.13,.65,8),missileMat);tail.rotation.x=-Math.PI/2;tail.position.z=.38;g.add(tail);scene.add(g);return g};
       const makeBomb=()=>{const g=new THREE.Group();const m=new THREE.Mesh(bombGeo,bombMat),r=new THREE.Mesh(bombRingGeo,bombRingMat);r.rotation.x=Math.PI/2;g.add(m,r);scene.add(g);return g};
       const hitRacer=(target:Racer,attacker:Racer,now:number,power=1)=>{if(target.recovering||target.finishedAt||now-target.lastHitAt<420)return;target.lastHitAt=now;const tp=target.body.translation(),ap=attacker.body.translation(),dx=tp.x-ap.x,dz=tp.z-ap.z,mag=Math.hypot(dx,dz)||1;target.body.applyImpulse({x:dx/mag*1.45*power,y:.8*power,z:dz/mag*1.45*power},true);const v=target.body.linvel();target.body.setLinvel({x:v.x*.64,y:v.y,z:v.z*.64},true);target.slowedUntil=now+760;if(target.isHuman){setEventText("HIT · HOLD YOUR LINE");audio.hit()}};
-      const useWeapon=(o:Racer,now:number)=>{const kind=o.item;if(!kind)return;const p=o.body.translation(),rp=manifest.points[o.pointIndex]!,forward=new THREE.Vector3(rp.tangentX,Math.max(-.05,rp.tangentY*.35),rp.tangentZ).normalize();if(kind==="missile"){const mesh=makeMissile(),pos=new THREE.Vector3(p.x,p.y+.12,p.z).addScaledVector(forward,1.0);mesh.position.copy(pos);missiles.push({mesh,owner:o,born:now,life:1900,position:pos,velocity:forward.multiplyScalar(25.5)});if(o.isHuman){audio.missile();setEventText("PULSE LANCE · FIRED")}}else{const mesh=makeBomb(),pos=new THREE.Vector3(p.x,p.y-.2,p.z).addScaledVector(forward,-1.25);mesh.position.copy(pos);bombs.push({mesh,owner:o,born:now,armedAt:now+620,expiresAt:now+9000,position:pos,hit:new Set()});if(o.isHuman){audio.bomb();setEventText("BOMB · DROPPED")}}o.item=null;if(o.isHuman)setItem(null)};
+      const makeExplosion=(position:{x:number;y:number;z:number})=>{const mesh=new THREE.Mesh(explosionGeo,explosionMat.clone());mesh.position.set(position.x,position.y+.35,position.z);mesh.scale.setScalar(.15);scene.add(mesh);explosions.push({mesh,born:performance.now()})};
+      const useWeapon=(o:Racer,now:number)=>{
+        const kind=o.item;if(!kind)return;
+        const p=o.body.translation(),rp=manifest.points[o.pointIndex]!,forward=new THREE.Vector3(rp.tangentX,0,rp.tangentZ).normalize();
+        if(kind==="missile"){
+          const mesh=makeMissile();
+          const center=new THREE.Vector3(rp.x,rp.y,rp.z),offset=new THREE.Vector3(p.x-rp.x,p.y-rp.y,p.z-rp.z);
+          const lane=clamp((offset.x*rp.rightX+offset.y*rp.rightY+offset.z*rp.rightZ)/Math.max(1,rp.width),-.42,.42);
+          const pos=pointPosition(THREE,rp,lane,.82).addScaledVector(forward,1.1);mesh.position.copy(pos);
+          missiles.push({mesh,owner:o,born:now,life:2600,position:pos,progress:o.pointIndex+1.0,lane,speed:29.5});
+          if(o.isHuman){audio.missile();setEventText("PULSE LANCE · TRACK LOCK")}
+        }else if(kind==="bomb"){
+          const mesh=makeBomb(),pos=new THREE.Vector3(p.x,p.y-.2,p.z).addScaledVector(forward,-1.25);mesh.position.copy(pos);
+          bombs.push({mesh,owner:o,born:now,armedAt:now+520,expiresAt:now+9000,position:pos,hit:new Set()});
+          if(o.isHuman){audio.bomb();setEventText("BOMB · DROPPED")}
+        }else{
+          o.boostUntil=Math.max(o.boostUntil,now+3400);
+          const v=o.body.linvel();const turboSpeed=config.boostSpeed*1.12;
+          o.body.setLinvel({x:forward.x*Math.max(turboSpeed,Math.hypot(v.x,v.z)),y:v.y,z:forward.z*Math.max(turboSpeed,Math.hypot(v.x,v.z))},true);
+          if(o.isHuman){audio.turbo();setEventText("TURBO · 3.4 SECONDS")}
+        }
+        o.item=null;if(o.isHuman)setItem(null)
+      };
       const grounded=(o:Racer)=>{if(o.recovering)return false;const p=o.body.translation(),rp=manifest.points[o.pointIndex]!,v=o.body.linvel();return !rp.gap&&Math.abs(p.y-rp.y)<1.55&&Math.abs(v.y)<2.4};
       const jump=(o:Racer,now:number)=>{if(now<o.jumpReadyAt)return false;const onGround=grounded(o);const onHeroRamp=circularPointDistance(o.pointIndex,manifest.plungeLaunchIndex,manifest.points.length)<=7&&(onGround||now<o.plungeLaunchLockUntil+220);if(!onGround&&!onHeroRamp)return false;const v=o.body.linvel();const jumpY=onHeroRamp?Math.max(v.y+config.jumpImpulse*1.15,config.jumpImpulse*1.9):Math.max(v.y,config.jumpImpulse);o.body.setLinvel({x:v.x,y:jumpY,z:v.z},true);o.jumpReadyAt=now+config.jumpCooldownMs;if(o.isHuman){audio.jump();if(onHeroRamp)setEventText("SUPER JUMP · EXTRA AIR")};return true};
       const action=(o:Racer)=>{if(phaseRef.current!=="playing"||o.recovering||o.finishedAt)return;const now=performance.now();jump(o,now);useWeapon(o,now)};actionRef.current=()=>action(human);
@@ -169,11 +194,55 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
       const beginRescue=(o:Racer,now:number)=>{if(o.recovering||o.finishedAt||now<o.rescueGraceUntil)return;o.recovering=true;o.rescueStartedAt=now;o.rescueUntil=now+RACE_RESCUE_MS;const p=o.body.translation();o.rescueFrom.set(p.x,p.y,p.z);o.rescuePointIndex=safeRaceRecoveryPoint(manifest.points,o.pointIndex,manifest.plungeLaunchIndex);o.body.setEnabled(false);if(o.isHuman){audio.rescue();setEventText("NIMBUS RESCUE · SAFE ROAD IN 3")}};
       const finishRescue=(o:Racer)=>{const rp=manifest.points[o.rescuePointIndex]!,safe=pointPosition(THREE,rp,0,1.18);o.body.setTranslation({x:safe.x,y:safe.y,z:safe.z},false);o.body.setRotation({x:0,y:0,z:0,w:1},false);o.body.setEnabled(true);o.body.setLinvel({x:o.isHuman?0:rp.tangentX*config.baseSpeed*.65,y:0,z:o.isHuman?0:rp.tangentZ*config.baseSpeed*.65},true);o.pointIndex=rp.index;o.previousPointIndex=rp.index;o.plungeAirUntil=0;o.plungeLaunchLockUntil=0;o.rescueGraceUntil=performance.now()+1450;o.recovering=false;o.cloud.visible=false;if(o.isHuman)setEventText("BACK ON TRACK · GO!")};
 
-      const updateItems=(o:Racer,now:number)=>{if(o.recovering||o.finishedAt)return;if(circularPointDistance(o.pointIndex,manifest.plungeLaunchIndex,manifest.points.length)<=3&&(o.pickupReady.get(`plunge-launch-${o.lap}`)||0)<=now){o.pickupReady.set(`plunge-launch-${o.lap}`,now+120000);const rp=manifest.points[manifest.plungeLaunchIndex]!,land=manifest.points[manifest.plungeLandIndex]!,dx=land.x-rp.x,dz=land.z-rp.z,horizontal=Math.hypot(dx,dz),flightSeconds=clamp(4.8+horizontal/95,4.8,5.65),dy=(land.y+1.15)-(rp.y+1.0),launchY=(dy+4.905*flightSeconds*flightSeconds)/flightSeconds,incomingY=Math.max(0,o.body.linvel().y),heroY=Math.max(launchY*1.12,launchY+incomingY*.92);o.body.setLinvel({x:dx/flightSeconds*1.055,y:heroY,z:dz/flightSeconds*1.055},true);o.plungeLaunchLockUntil=now+620;o.plungeAirUntil=now+(flightSeconds+1.0)*1000;o.boostUntil=Math.max(o.boostUntil,now+2100);if(o.isHuman){audio.boost();setEventText("ORBITAL PLUNGE · BIG AIR")}}for(const ramp of manifest.ramps){if(circularPointDistance(o.pointIndex,ramp.pointIndex,manifest.points.length)>2)continue;if((o.pickupReady.get(ramp.id)||0)>now)continue;const rp=manifest.points[o.pointIndex]!,p=o.body.translation(),center=pointPosition(THREE,rp,ramp.lane,0);if(Math.hypot(p.x-center.x,p.z-center.z)>rp.width*.24)continue;o.pickupReady.set(ramp.id,now+1800);o.boostUntil=Math.max(o.boostUntil,now+720);if(o.isHuman){audio.boost();setEventText("RAMP CHARGE · FLY")}}for(const [i,b] of manifest.boosts.entries()){if(circularPointDistance(o.pointIndex,b.pointIndex,manifest.points.length)>2)continue;if((o.pickupReady.get(b.id)||0)>now)continue;const rp=manifest.points[o.pointIndex]!,p=o.body.translation(),center=pointPosition(THREE,rp,b.lane,0),lateral=Math.hypot(p.x-center.x,p.z-center.z);if(lateral>rp.width*.22)continue;o.pickupReady.set(b.id,now+1600);o.boostUntil=now+1250;if(o.isHuman){audio.boost();setEventText("SPEED CHARGE")}}if(o.item)return;for(const pick of manifest.pickups){if(circularPointDistance(o.pointIndex,pick.pointIndex,manifest.points.length)>2)continue;if((pickupCooldowns.get(pick.id)||0)>now)continue;const rp=manifest.points[o.pointIndex]!,p=o.body.translation(),center=pointPosition(THREE,rp,pick.lane,1),d=Math.hypot(p.x-center.x,p.z-center.z);if(d>rp.width*.24)continue;o.item=pick.kind;const respawnAt=now+2600;pickupCooldowns.set(pick.id,respawnAt);const visual=pickupVisuals.get(pick.id);if(visual){visual.hiddenUntil=respawnAt;visual.group.visible=false;visual.group.scale.setScalar(.08)}if(o.isHuman){setItem(pick.kind);audio.pickup();setEventText(pick.kind==="missile"?"⚡ PULSE LANCE ACQUIRED":"💣 BOMB ACQUIRED")}break}};
+      const updateItems=(o:Racer,now:number)=>{if(o.recovering||o.finishedAt)return;if(circularPointDistance(o.pointIndex,manifest.plungeLaunchIndex,manifest.points.length)<=3&&(o.pickupReady.get(`plunge-launch-${o.lap}`)||0)<=now){o.pickupReady.set(`plunge-launch-${o.lap}`,now+120000);const rp=manifest.points[manifest.plungeLaunchIndex]!,touchdownIndex=(manifest.plungeLandIndex+14)%manifest.points.length,touchdown=manifest.points[touchdownIndex]!,bodyPos=o.body.translation(),dx=touchdown.x-bodyPos.x,dz=touchdown.z-bodyPos.z,horizontal=Math.hypot(dx,dz),flightSeconds=clamp(3.75+horizontal/170,3.75,4.55),dy=(touchdown.y+1.15)-bodyPos.y,launchY=(dy+4.905*flightSeconds*flightSeconds)/flightSeconds,incomingY=Math.max(0,o.body.linvel().y),heroY=Math.max(launchY*1.08,launchY+incomingY*.82),horizontalSpeed=Math.max(horizontal/flightSeconds*1.08,15.5),hm=Math.max(1e-6,horizontal);o.body.setLinvel({x:dx/hm*horizontalSpeed,y:heroY,z:dz/hm*horizontalSpeed},true);o.plungeLaunchLockUntil=now+900;o.plungeAirUntil=now+(flightSeconds+1.15)*1000;o.boostUntil=Math.max(o.boostUntil,now+2100);if(o.isHuman){audio.boost();setEventText("ORBITAL PLUNGE · BIG AIR")}}for(const ramp of manifest.ramps){if(circularPointDistance(o.pointIndex,ramp.pointIndex,manifest.points.length)>2)continue;if((o.pickupReady.get(ramp.id)||0)>now)continue;const rp=manifest.points[o.pointIndex]!,p=o.body.translation(),center=pointPosition(THREE,rp,ramp.lane,0);if(Math.hypot(p.x-center.x,p.z-center.z)>rp.width*.24)continue;o.pickupReady.set(ramp.id,now+1800);o.boostUntil=Math.max(o.boostUntil,now+720);if(o.isHuman){audio.boost();setEventText("RAMP CHARGE · FLY")}}for(const [i,b] of manifest.boosts.entries()){if(circularPointDistance(o.pointIndex,b.pointIndex,manifest.points.length)>2)continue;if((o.pickupReady.get(b.id)||0)>now)continue;const rp=manifest.points[o.pointIndex]!,p=o.body.translation(),center=pointPosition(THREE,rp,b.lane,0),lateral=Math.hypot(p.x-center.x,p.z-center.z);if(lateral>rp.width*.22)continue;o.pickupReady.set(b.id,now+1600);o.boostUntil=now+1250;if(o.isHuman){audio.boost();setEventText("SPEED CHARGE")}}if(o.item)return;for(const pick of manifest.pickups){if(circularPointDistance(o.pointIndex,pick.pointIndex,manifest.points.length)>2)continue;if((pickupCooldowns.get(pick.id)||0)>now)continue;const rp=manifest.points[o.pointIndex]!,p=o.body.translation(),center=pointPosition(THREE,rp,pick.lane,1),d=Math.hypot(p.x-center.x,p.z-center.z);if(d>rp.width*.24)continue;o.item=pick.kind;const respawnAt=now+2600;pickupCooldowns.set(pick.id,respawnAt);const visual=pickupVisuals.get(pick.id);if(visual){visual.hiddenUntil=respawnAt;visual.group.visible=false;visual.group.scale.setScalar(.08)}if(o.isHuman){setItem(pick.kind);audio.pickup();setEventText(pick.kind==="missile"?"⚡ PULSE LANCE ACQUIRED":pick.kind==="bomb"?"💣 BOMB ACQUIRED":"💨 TURBO ACQUIRED")}break}};
 
       const botSteer=(o:Racer,now:number)=>{if(now>=o.botThinkAt){const rank=racers.filter(r=>!r.finishedAt).sort((a,b)=>raceProgress(b.pointIndex,b.lap,manifest.points.length)-raceProgress(a.pointIndex,a.lap,manifest.points.length)).indexOf(o);const desperation=clamp(rank/Math.max(1,playerCount-1),0,1);o.botLaneTarget=clamp(o.botLaneTarget+(rand()-.5)*(.34+desperation*.18),-.68,.68);if(rand()<.16)o.botLaneTarget=(rand()-.5)*1.25;o.botThinkAt=now+420+rand()*650;if(o.item&&rand()<.32)action(o);else if(rand()<.055)jump(o,now)}o.botLane+=(o.botLaneTarget-o.botLane)*.028;return clamp(o.botLane*1.22,-1,1)};
 
-      const updateProjectiles=(now:number,dt:number)=>{for(let i=missiles.length-1;i>=0;i--){const m=missiles[i]!,age=now-m.born;if(age>m.life){scene.remove(m.mesh);missiles.splice(i,1);continue}m.position.addScaledVector(m.velocity,dt);m.mesh.position.copy(m.position);m.mesh.lookAt(m.position.clone().add(m.velocity));let hit=false;for(const o of racers){if(o===m.owner||o.recovering||o.finishedAt)continue;const p=o.body.translation();if(Math.hypot(p.x-m.position.x,p.y-m.position.y,p.z-m.position.z)<.85){hitRacer(o,m.owner,now,1);hit=true;break}}if(hit){scene.remove(m.mesh);missiles.splice(i,1);continue}const near=nearestRacePoint(manifest.points,m.position.x,m.position.y,m.position.z);if(near.distanceSq>24*24){scene.remove(m.mesh);missiles.splice(i,1)}}for(let i=bombs.length-1;i>=0;i--){const b=bombs[i]!;b.mesh.rotation.y+=dt*1.8;(b.mesh.children[1] as import("three").Mesh).rotation.z+=dt*2.5;if(now>=b.expiresAt){scene.remove(b.mesh);bombs.splice(i,1);continue}if(now<b.armedAt)continue;for(const o of racers){if(o===b.owner||o.recovering||o.finishedAt||b.hit.has(o.id))continue;const p=o.body.translation();if(Math.hypot(p.x-b.position.x,p.z-b.position.z)<1.45&&Math.abs(p.y-b.position.y)<2.0){b.hit.add(o.id);hitRacer(o,b.owner,now,1.18);b.expiresAt=Math.min(b.expiresAt,now+120)}}}};
+      const updateProjectiles=(now:number,dt:number)=>{
+        const avgStep=manifest.lapLength/manifest.points.length;
+        for(let i=missiles.length-1;i>=0;i--){
+          const m=missiles[i]!,age=now-m.born;
+          if(age>m.life){scene.remove(m.mesh);missiles.splice(i,1);continue}
+          m.progress+=m.speed*dt/Math.max(.5,avgStep);
+          const base=Math.floor(m.progress),frac=m.progress-base,p0=manifest.points[((base%manifest.points.length)+manifest.points.length)%manifest.points.length]!,p1=manifest.points[(p0.index+1)%manifest.points.length]!;
+          if(p0.gap||p1.gap){
+            // Pulse rides an invisible race-line bridge across the hero gap rather than diving into space.
+          }
+          const cx=p0.x+(p1.x-p0.x)*frac,cy=p0.y+(p1.y-p0.y)*frac,cz=p0.z+(p1.z-p0.z)*frac;
+          const rx=p0.rightX+(p1.rightX-p0.rightX)*frac,ry=p0.rightY+(p1.rightY-p0.rightY)*frac,rz=p0.rightZ+(p1.rightZ-p0.rightZ)*frac,width=p0.width+(p1.width-p0.width)*frac;
+          const next=new THREE.Vector3(cx+rx*width*m.lane,cy+ry*width*m.lane+.82,cz+rz*width*m.lane);
+          const direction=next.clone().sub(m.position).normalize();m.position.copy(next);m.mesh.position.copy(next);m.mesh.lookAt(next.clone().add(direction));
+          let hit=false;
+          for(const o of racers){if(o===m.owner||o.recovering||o.finishedAt)continue;const p=o.body.translation();if(Math.hypot(p.x-next.x,p.y-next.y,p.z-next.z)<1.0){hitRacer(o,m.owner,now,1.08);if(o.isHuman||m.owner.isHuman)audio.hit();hit=true;break}}
+          if(hit){scene.remove(m.mesh);missiles.splice(i,1)}
+        }
+        for(let i=bombs.length-1;i>=0;i--){
+          const b=bombs[i]!;b.mesh.rotation.y+=dt*1.8;(b.mesh.children[1] as import("three").Mesh).rotation.z+=dt*2.5;
+          if(now>=b.expiresAt){scene.remove(b.mesh);bombs.splice(i,1);continue}
+          if(now<b.armedAt)continue;
+          let detonated=false;
+          for(const o of racers){
+            if(o===b.owner||o.recovering||o.finishedAt||b.hit.has(o.id))continue;
+            const p=o.body.translation();
+            if(Math.hypot(p.x-b.position.x,p.z-b.position.z)<1.6&&Math.abs(p.y-b.position.y)<2.2){
+              b.hit.add(o.id);o.lastHitAt=now;
+              const v=o.body.linvel(),dx=p.x-b.position.x,dz=p.z-b.position.z,mag=Math.hypot(dx,dz)||1;
+              // Bombs are intentionally much more disruptive than Pulse hits: near-stop + pop + wobble.
+              o.body.setLinvel({x:v.x*.16,y:Math.max(v.y,2.2),z:v.z*.16},true);
+              o.body.applyImpulse({x:dx/mag*2.8,y:1.7,z:dz/mag*2.8},true);o.slowedUntil=now+1450;
+              makeExplosion(b.position);if(o.isHuman||b.owner.isHuman)audio.explosion();
+              if(o.isHuman)setEventText("💥 BOMB HIT · SPEED KILLED");
+              detonated=true;break
+            }
+          }
+          if(detonated){scene.remove(b.mesh);bombs.splice(i,1)}
+        }
+        for(let i=explosions.length-1;i>=0;i--){
+          const e=explosions[i]!,age=(now-e.born)/1000;
+          if(age>.48){scene.remove(e.mesh);(e.mesh.material as import("three").Material).dispose();explosions.splice(i,1);continue}
+          e.mesh.scale.setScalar(.15+age*5.8);(e.mesh.material as import("three").MeshBasicMaterial).opacity=Math.max(0,.72*(1-age/.48));
+        }
+      };
 
       const rankOf=(target:Racer)=>{const ordered=[...racers].sort((a,b)=>{if(a.finishedAt&&b.finishedAt)return a.finishedAt-b.finishedAt;if(a.finishedAt)return -1;if(b.finishedAt)return 1;return raceProgress(b.pointIndex,b.lap,manifest.points.length)-raceProgress(a.pointIndex,a.lap,manifest.points.length)});return ordered.indexOf(target)+1};
       const updateDraft=(now:number)=>{let active=false;const hp=human.body.translation(),hprog=raceProgress(human.pointIndex,human.lap,manifest.points.length);for(const o of racers){if(o===human||o.finishedAt||o.recovering)continue;const d=raceProgress(o.pointIndex,o.lap,manifest.points.length)-hprog;if(d<=0||d>6)continue;const p=o.body.translation();if(Math.hypot(p.x-hp.x,p.z-hp.z)<7.8){active=true;human.boostUntil=Math.max(human.boostUntil,now+260);break}}setWake(active)};
@@ -195,21 +264,21 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
   const touchStart=useCallback((e:React.PointerEvent<HTMLDivElement>)=>e.currentTarget.setPointerCapture(e.pointerId),[]);
   const touchMove=useCallback((e:React.PointerEvent<HTMLDivElement>)=>{if(!e.currentTarget.hasPointerCapture(e.pointerId))return;const r=e.currentTarget.getBoundingClientRect(),x=(e.clientX-(r.left+r.width/2))/(r.width*.42);controlsRef.current.touchX=clamp(x,-1,1)},[]);
   const touchEnd=useCallback((e:React.PointerEvent<HTMLDivElement>)=>{controlsRef.current.touchX=0;try{e.currentTarget.releasePointerCapture(e.pointerId)}catch{}},[]);
-  const itemLabel=item==="missile"?"PULSE":item==="bomb"?"BOMB":"EMPTY";
+  const itemLabel=item==="missile"?"PULSE":item==="bomb"?"BOMB":item==="turbo"?"TURBO":"EMPTY";
 
   return <div className="race-sandbox-game">
     <div ref={mountRef} className="race-sandbox-canvas"/>
     <div className="race-hud race-hud-top">
       <div><span>PLACE</span><strong>{place}<small>/{playerCount}</small></strong></div>
       <div className="race-event"><strong>{eventText}</strong><small>{fmt(elapsed)} · {Math.round(speed*3.6)} KM/H</small></div>
-      <div><span>LAP</span><strong>{lap}<small>/3</small></strong></div>
+      <div><span>LAP</span><strong>{lap}<small>/{config.laps}</small></strong></div>
     </div>
     <div className="race-item-hud"><span>ITEM</span><strong className={item?"loaded":""}>{itemLabel}</strong>{wake?<em>ORB WAKE</em>:null}</div>
     {rescueLeft>0?<div className="race-rescue-hud"><strong>NIMBUS RESCUE</strong><span>{rescueLeft.toFixed(1)}s</span></div>:null}
     {phase==="ready"?<div className="arena-center-card race-center-card"><span>ADMIN ONLY · LOCAL LAB</span><h3>RACE</h3><p>Three laps on a never-before-seen Orbital Prismway. Hold UP to accelerate, steer the line, draft other racers, hit speed charges, jump whenever you want, and use Space to jump + fire/drop a held weapon.</p><button className="btn-primary" onClick={()=>startRef.current()}>Start race test →</button></div>:null}
     {phase==="countdown"?<div className="arena-countdown race-countdown">{countdown||"GO"}</div>:null}
-    {(phase==="won"||phase==="finished")?<div className="arena-result-card race-result-card"><span>RACE COMPLETE</span><h3>{phase==="won"?"YOU WIN":winner?`${winner} WINS`:"FINISHED"}</h3><p>Three laps complete. First valid finisher would own the authoritative prize result in production.</p></div>:null}
-    {phase==="playing"?<div className="arena-jump-wrap race-action-wrap"><button className={`arena-jump race-action ${item?"armed":""}`} onClick={()=>actionRef.current()}><span>{item?`JUMP + ${item==="missile"?"FIRE":"DROP"}`:"JUMP"}</span></button></div>:null}
+    {(phase==="won"||phase==="finished")?<div className="arena-result-card race-result-card"><span>RACE COMPLETE</span><h3>{phase==="won"?"YOU WIN":winner?`${winner} WINS`:"FINISHED"}</h3><p>Lap 3 crossing of START / FINISH is the finish. First valid finisher would own the authoritative prize result in production.</p></div>:null}
+    {phase==="playing"?<div className="arena-jump-wrap race-action-wrap"><button className={`arena-jump race-action ${item?"armed":""}`} onClick={()=>actionRef.current()}><span>{item?`JUMP + ${item==="missile"?"FIRE":item==="bomb"?"DROP":"TURBO"}`:"JUMP"}</span></button></div>:null}
     {phase==="playing"&&controlMode==="touch"?<><div className="race-touch" onPointerDown={touchStart} onPointerMove={touchMove} onPointerUp={touchEnd} onPointerCancel={touchEnd}><i style={{transform:`translateX(${controlsRef.current.touchX*28}px)`}}/></div><button className="race-throttle" onPointerDown={(e)=>{e.preventDefault();controlsRef.current.up=true}} onPointerUp={()=>{controlsRef.current.up=false}} onPointerCancel={()=>{controlsRef.current.up=false}} onPointerLeave={()=>{controlsRef.current.up=false}}><span>GO</span></button></>:null}
     <div className="arena-control-hint race-control-hint"><span className="arena-desktop-hint">HOLD W / ↑ · ACCELERATE &nbsp;&nbsp; A / D OR ← / → · STEER &nbsp;&nbsp; S / ↓ · BRAKE &nbsp;&nbsp; SPACE · JUMP{item?" + USE ITEM":""}</span><span className="arena-mobile-hint">HOLD GO · STEER · JUMP{item?" + USE ITEM":""} · DRAFT · BOOST · 3 LAPS</span></div>
   </div>;
