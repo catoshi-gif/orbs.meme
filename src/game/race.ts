@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const RACE_GAME_VERSION = "orb-race-admin-v8" as const;
+export const RACE_GAME_VERSION = "orb-race-admin-v9" as const;
 export const RACE_LAPS = 3;
 export const RACE_MAX_PLAYERS = 50;
 export const RACE_RESCUE_MS = 3000;
@@ -57,6 +57,8 @@ export type RaceManifest = {
   plungeStartIndex: number;
   plungeLaunchIndex: number;
   plungeLandIndex: number;
+  gravityDiveCrestIndex: number;
+  gravityDiveCatchIndex: number;
 };
 
 export type RaceConfig = {
@@ -148,6 +150,14 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
   // The Orb still spends several seconds airborne; the actual collider gap is intentionally
   // much shorter than V2 so a clean launch always reaches forgiving pavement.
   const landT = plungeCenter + 0.058;
+
+  // A second guaranteed signature module, positioned differently for every seed.
+  // Unlike the chasm jump, this road stays continuous while dropping away beneath the Orb.
+  const gravityDiveCrestT = 0.285 + (rand() - 0.5) * 0.075;
+  const gravityDiveCatchT = gravityDiveCrestT + 0.058 + rand() * 0.012;
+  const gravityDiveRiseT = gravityDiveCrestT - 0.155 - rand() * 0.025;
+  const gravityDiveHeight = 38 + rand() * 9;
+
   const widthPhase1 = rand() * Math.PI * 2;
   const widthPhase2 = rand() * Math.PI * 2;
 
@@ -165,6 +175,13 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
     const aw = a + angularWarp;
 
     let y = 5.0 + Math.sin(a * 2 + elevationPhase) * 4.8 + Math.sin(a * 5 + phase1) * 2.1;
+
+    // GRAVITY DIVE: climb to a huge summit, then make the road plunge away beneath the racer.
+    // The road remains continuous; gameplay releases the Orb ballistically from the crest.
+    const gravityRise = smoothstep(gravityDiveRiseT, gravityDiveCrestT - 0.020, t);
+    const gravityDrop = smoothstep(gravityDiveCrestT - 0.010, gravityDiveCatchT, t);
+    y += Math.max(0, gravityRise - gravityDrop) * gravityDiveHeight;
+
     // Signature sequence is deliberately authored inside the random course envelope: a high crest,
     // long gravity-assisted descent, shallow kicker, open-air gap and forgiving broad landing.
     // Keeping this module smooth prevents a valid random seed from creating a near-vertical launch wall.
@@ -176,6 +193,7 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
     // inside the launch envelope. Long airtime comes from the ballistic arc, not a lethal void.
     const gap = t > launchT + 0.012 && t < landT - 0.018;
     const landingWidth = windowPulse(t, landT - 0.024, landT + 0.024, landT + 0.108);
+    const gravityCatchWidth = windowPulse(t, gravityDiveCatchT - 0.030, gravityDiveCatchT + 0.020, gravityDiveCatchT + 0.095);
     // Smooth width topology: mostly generous, with occasional dramatic narrow and grandstand-wide sections.
     // Width changes are low-frequency so the road never pinches abruptly under a racer.
     const widthField =
@@ -190,7 +208,7 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
     const widePulse =
       windowPulse(t, 0.055, 0.125, 0.205) * 0.33 +
       windowPulse(t, 0.455, 0.495, 0.545) * 0.22;
-    const widthScale = Math.max(0.56, Math.min(1.60, 1 + widthField - narrowPulse + widePulse + landingWidth * 0.62));
+    const widthScale = Math.max(0.56, Math.min(1.60, 1 + widthField - narrowPulse + widePulse + landingWidth * 0.62 + gravityCatchWidth * 0.42));
     const width = trackWidth * widthScale;
     const bank = (Math.sin(a * harmonic1 + phase1) * 0.14 + Math.sin(a * harmonic2 + phase2) * 0.08) * (1 - landingWidth * 0.6);
     raw.push({ x: Math.cos(aw) * r, y, z: Math.sin(aw) * r, bank, width, gap });
@@ -268,6 +286,8 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
     plungeStartIndex: idx(plungeStartT),
     plungeLaunchIndex: idx(launchT),
     plungeLandIndex: idx(landT),
+    gravityDiveCrestIndex: idx(gravityDiveCrestT),
+    gravityDiveCatchIndex: idx(gravityDiveCatchT),
   };
 }
 
