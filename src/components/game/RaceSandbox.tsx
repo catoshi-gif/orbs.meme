@@ -275,8 +275,11 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
             if(Math.abs(steer)>.001){
               // Steering authority increases gently with speed but remains controllable.
               // Negative here preserves the screen-left/screen-right behavior established in V2.
-              const speedFactor=clamp(currentSpeed/Math.max(1,config.baseSpeed),.42,1.18);
-              const yaw=steer*config.steeringStrength*1.72*PHYSICS.fixedStep*speedFactor;
+              // V7: steering must be strong enough to save the Orb at racing speed.
+              // Full keyboard input now gives ~190–235 deg/sec of heading authority,
+              // while low-speed steering remains calmer and predictable.
+              const speedFactor=clamp(.82+currentSpeed/Math.max(1,config.baseSpeed)*.28,.78,1.18);
+              const yaw=steer*config.steeringStrength*2.72*PHYSICS.fixedStep*speedFactor;
               const c=Math.cos(yaw),s=Math.sin(yaw),hx=heading.x,hz=heading.z;
               heading.set(hx*c-hz*s,0,hx*s+hz*c).normalize();
             }
@@ -284,7 +287,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
             // Extremely mild heading stabilization only. This intentionally does NOT pull
             // lateral position toward track center and is too weak to drive corners for you.
             if(throttle&&currentSpeed>1.2&&!air){
-              const assist=.0022;
+              const assist=.0030;
               heading.lerp(forward,assist).normalize();
             }
 
@@ -293,7 +296,12 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
             }else if(now<o.plungeAirUntil&&air){
               /* preserve ballistic horizontal velocity; Rapier gravity owns Y */
             }else{
-              const response=air?(throttle?.028:.008):(throttle?.105:.145);
+              // Turning changes actual travel direction quickly instead of only rotating
+              // an abstract desired heading while momentum keeps carrying the Orb straight.
+              const steerAmount=Math.min(1,Math.abs(steer));
+              const response=air
+                ? (throttle ? .030+steerAmount*.028 : .010)
+                : (throttle ? .112+steerAmount*.105 : .155+steerAmount*.055);
               const tx=heading.x*desiredSpeed,tz=heading.z*desiredSpeed;
               let nx=v.x+(tx-v.x)*response,nz=v.z+(tz-v.z)*response;
               if(throttle&&currentSpeed>desiredSpeed*1.10&&desiredSpeed>0){
@@ -349,7 +357,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
     </div>
     <div className="race-item-hud"><span>ITEM</span><strong className={item?"loaded":""}>{itemLabel}</strong>{wake?<em>ORB WAKE</em>:null}</div>
     {rescueLeft>0?<div className="race-rescue-hud"><strong>NIMBUS RESCUE</strong><span>{rescueLeft.toFixed(1)}s</span></div>:null}
-    {phase==="ready"?<div className="arena-center-card race-center-card"><span>ADMIN ONLY · LOCAL LAB</span><h3>RACE</h3><p>Three laps on a never-before-seen Orbital Prismway. Hold UP to accelerate and actively steer every bend — the course only gives a tiny stability assist. Draft other racers, hit speed charges, jump whenever you want, and use Space to jump + use a held weapon.</p><button className="btn-primary" onClick={()=>startRef.current()}>Start race test →</button></div>:null}
+    {phase==="ready"?<div className="arena-center-card race-center-card"><span>ADMIN ONLY · LOCAL LAB</span><h3>RACE</h3><p>Three laps on a never-before-seen Orbital Prismway. Hold UP to accelerate and actively steer every bend — the course only gives a tiny stability assist, while LEFT/RIGHT have strong recovery authority. Draft other racers, hit speed charges, jump whenever you want, and use Space to jump + use a held weapon.</p><button className="btn-primary" onClick={()=>startRef.current()}>Start race test →</button></div>:null}
     {phase==="countdown"?<div className="arena-countdown race-countdown">{countdown||"GO"}</div>:null}
     {(phase==="won"||phase==="finished")?<div className="arena-result-card race-result-card"><span>RACE COMPLETE</span><h3>{phase==="won"?"YOU WIN":winner?`${winner} WINS`:"FINISHED"}</h3><p>Lap 3 crossing of START / FINISH is the finish. First valid finisher would own the authoritative prize result in production.</p></div>:null}
     {phase==="playing"?<div className="arena-jump-wrap race-action-wrap"><button className={`arena-jump race-action ${item?"armed":""}`} onClick={()=>actionRef.current()}><span>{item?`JUMP + ${item==="missile"?"FIRE":item==="bomb"?"DROP":"TURBO"}`:"JUMP"}</span></button></div>:null}
