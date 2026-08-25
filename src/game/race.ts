@@ -1,6 +1,6 @@
 import type { GameStyle } from "./types";
 
-export const RACE_GAME_VERSION = "orb-race-admin-v2" as const;
+export const RACE_GAME_VERSION = "orb-race-admin-v3" as const;
 export const RACE_LAPS = 3;
 export const RACE_MAX_PLAYERS = 50;
 export const RACE_RESCUE_MS = 3000;
@@ -142,9 +142,12 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
   const harmonic3 = 6 + Math.floor(rand() * 3);
   const elevationPhase = rand() * Math.PI * 2;
   const plungeCenter = 0.60 + (rand() - 0.5) * 0.055;
-  const plungeStartT = plungeCenter - 0.105;
+  const plungeStartT = plungeCenter - 0.118;
   const launchT = plungeCenter;
-  const landT = plungeCenter + 0.112;
+  // Keep the hero jump visually enormous without making the missing-road chasm impossible.
+  // The Orb still spends several seconds airborne; the actual collider gap is intentionally
+  // much shorter than V2 so a clean launch always reaches forgiving pavement.
+  const landT = plungeCenter + 0.074;
   const widthPhase1 = rand() * Math.PI * 2;
   const widthPhase2 = rand() * Math.PI * 2;
 
@@ -169,8 +172,10 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
     const plungeFall = smoothstep(plungeStartT - 0.048, launchT - 0.018, t);
     y += Math.max(0, plungeRise - plungeFall) * 35;
 
-    const gap = t > launchT + 0.008 && t < landT - 0.010;
-    const landingWidth = windowPulse(t, landT - 0.026, landT + 0.022, landT + 0.095);
+    // Missing-road section is ~24–34m on normal generated laps: dramatic, but safely
+    // inside the launch envelope. Long airtime comes from the ballistic arc, not a lethal void.
+    const gap = t > launchT + 0.010 && t < landT - 0.016;
+    const landingWidth = windowPulse(t, landT - 0.024, landT + 0.024, landT + 0.108);
     // Smooth width topology: mostly generous, with occasional dramatic narrow and grandstand-wide sections.
     // Width changes are low-frequency so the road never pinches abruptly under a racer.
     const widthField =
@@ -257,6 +262,41 @@ export function generateRaceManifest(seed: string, style: GameStyle, trackWidth 
     plungeLaunchIndex: idx(launchT),
     plungeLandIndex: idx(landT),
   };
+}
+
+export function safeRaceRecoveryPoint(points: RacePoint[], hint: number, plungeLaunchIndex?: number) {
+  const n = points.length;
+  const wrap = (i: number) => ((i % n) + n) % n;
+  const safeRunway = (i: number) => {
+    // Require actual road under the drop point plus enough road on both sides to settle,
+    // accelerate and avoid being placed onto the lip of a chasm.
+    for (let d = -3; d <= 10; d++) if (points[wrap(i + d)]!.gap) return false;
+    return true;
+  };
+
+  // If the fall happened around the signature jump, prefer a known runway before the launch.
+  if (typeof plungeLaunchIndex === "number") {
+    const delta = Math.min(
+      (wrap(hint - plungeLaunchIndex) + n) % n,
+      (wrap(plungeLaunchIndex - hint) + n) % n,
+    );
+    if (delta < 42) {
+      for (let back = 12; back <= 42; back++) {
+        const i = wrap(plungeLaunchIndex - back);
+        if (safeRunway(i)) return i;
+      }
+    }
+  }
+
+  // Ordinary fall: walk backwards until we find a contiguous, non-gap recovery runway.
+  for (let back = 7; back <= Math.min(n - 1, 72); back++) {
+    const i = wrap(hint - back);
+    if (safeRunway(i)) return i;
+  }
+
+  // Defensive fallback. Generator validation should make this unreachable.
+  for (let i = 0; i < n; i++) if (safeRunway(i)) return i;
+  return 0;
 }
 
 export function nearestRacePoint(points: RacePoint[], x: number, y: number, z: number, hint?: number) {

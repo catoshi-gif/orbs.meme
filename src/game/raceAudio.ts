@@ -94,7 +94,12 @@ export class RaceAudioEngine {
 
   jump() { this.ping(250, 0.16, 0.08, "triangle", 520); }
   boost() { this.ping(180, 0.28, 0.10, "sawtooth", 860); }
-  pickup() { this.ping(680, 0.13, 0.075, "sine", 1040); }
+  pickup() {
+    // Deliberately unmistakable two-note item acquisition cue.
+    this.ping(720, 0.16, 0.105, "square", 1080);
+    setTimeout(() => this.ping(1080, 0.22, 0.095, "triangle", 1540), 72);
+  }
+  overtake() { this.ping(880, 0.10, 0.045, "triangle", 1120); }
   missile() { this.ping(430, 0.16, 0.09, "square", 175); }
   bomb() { this.ping(95, 0.25, 0.10, "sawtooth", 38); }
   hit() { this.ping(120, 0.18, 0.10, "square", 54); }
