@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PHYSICS } from "@/game/constants";
+import { nextPlanarVelocity } from "@/game/simulation";
 import {
   RACE_RESCUE_MS,
   buildRaceConfig,
@@ -254,7 +255,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
         if(live){const now=performance.now(),elapsedNow=(now-matchStart)/1000;acc+=dt;while(acc>=PHYSICS.fixedStep){simTime+=PHYSICS.fixedStep;for(const o of racers){if(o.finishedAt)continue;if(o.recovering){if(now>=o.rescueUntil)finishRescue(o);continue}const p=o.body.translation(),nearest=nearestRacePoint(manifest.points,p.x,p.y,p.z,o.pointIndex),rp=nearest.point;o.previousPointIndex=o.pointIndex;o.pointIndex=rp.index;if(o.pointIndex>manifest.points.length*.24)o.lapArmed=true;if(o.lapArmed&&isForwardLapWrap(o.previousPointIndex,o.pointIndex,manifest.points.length)){o.lap+=1;o.lapArmed=false;if(o.isHuman){audio.lap();setLap(Math.min(config.laps,o.lap+1));setEventText(o.lap>=config.laps-1?"FINAL LAP":"LAP COMPLETE")};if(o.lap>=config.laps){o.finishedAt=now;o.body.setLinvel({x:0,y:o.body.linvel().y,z:0},true);if(!resolved){resolved=true;setWinner(o.username);if(o.isHuman){setRacePhase("won");audio.victory()}else setEventText(`${o.username} WINS · FINISH YOUR RACE`)}else if(o.isHuman){setRacePhase("finished")}continue}}
           const trackDistance=Math.sqrt(nearest.distanceSq),fallThreshold=rp.y-8.5;if(now>=o.rescueGraceUntil&&now>=o.plungeAirUntil&&(p.y<fallThreshold||trackDistance>rp.width*2.25)){beginRescue(o,now);continue}
           updateItems(o,now);
-          const k=controlsRef.current,rawHumanSteer=coarse?k.touchX:(k.left?-1:0)+(k.right?1:0),steer=o.isHuman?-rawHumanSteer:botSteer(o,now);
+          const k=controlsRef.current,rawHumanSteer=coarse?k.touchX:(k.left?-1:0)+(k.right?1:0),steer=o.isHuman?rawHumanSteer:botSteer(o,now);
           const v=o.body.linvel(),air=!grounded(o),slow=now<o.slowedUntil?.72:1,boost=now<o.boostUntil,throttle=o.isHuman?(k.up?1:0):1,brake=o.isHuman&&k.down;
           let targetSpeed=throttle?(boost?config.boostSpeed:config.baseSpeed):0;
           if(throttle)targetSpeed+=Math.max(0,-rp.tangentY)*13;
@@ -265,48 +266,51 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
           const currentSpeed=Math.hypot(v.x,v.z),desiredSpeed=clamp(targetSpeed,0,boost?config.boostSpeed:config.maxSpeed+Math.max(0,-rp.tangentY)*12);
 
           if(o.isHuman){
-            // Human handling is momentum-led, not spline-led. UP supplies power; LEFT/RIGHT
-            // rotate the Orb's current travel heading. The course tangent is only a tiny
-            // stability assist, so an inattentive player will naturally miss bends.
-            const heading=currentSpeed>.55
-              ? new THREE.Vector3(v.x,0,v.z).normalize()
-              : forward.clone();
+            // V8: use Arena's exact shared planar steering model and sign convention.
+            // Input is camera/course-relative just like Arena: LEFT is screen-left,
+            // RIGHT is screen-right, UP is forward, DOWN is reverse/brake.
+            let sx=(k.right?1:0)-(k.left?1:0),sy=(k.up?1:0)-(k.down?1:0);
+            if(coarse){sx=k.touchX;sy=k.up?1:(k.down?-1:0)}
 
-            if(Math.abs(steer)>.001){
-              // Steering authority increases gently with speed but remains controllable.
-              // Negative here preserves the screen-left/screen-right behavior established in V2.
-              // V7: steering must be strong enough to save the Orb at racing speed.
-              // Full keyboard input now gives ~190–235 deg/sec of heading authority,
-              // while low-speed steering remains calmer and predictable.
-              const speedFactor=clamp(.82+currentSpeed/Math.max(1,config.baseSpeed)*.28,.78,1.18);
-              const yaw=steer*config.steeringStrength*2.72*PHYSICS.fixedStep*speedFactor;
-              const c=Math.cos(yaw),s=Math.sin(yaw),hx=heading.x,hz=heading.z;
-              heading.set(hx*c-hz*s,0,hx*s+hz*c).normalize();
-            }
-
-            // Extremely mild heading stabilization only. This intentionally does NOT pull
-            // lateral position toward track center and is too weak to drive corners for you.
-            if(throttle&&currentSpeed>1.2&&!air){
-              const assist=.0030;
-              heading.lerp(forward,assist).normalize();
-            }
+            // The RACE camera is track-following, so the current course tangent is the
+            // same forward basis the player sees on screen. Convert Arena-style local
+            // input into world-space input before calling nextPlanarVelocity().
+            const facingX=forward.x,facingZ=forward.z;
+            const cameraRightX=-facingZ,cameraRightZ=facingX;
+            const worldX=cameraRightX*sx+facingX*sy;
+            const worldZ=cameraRightZ*sx+facingZ*sy;
+            const inputX=worldX,inputY=-worldZ;
 
             if(now<o.plungeLaunchLockUntil){
               /* preserve authored hero takeoff while the rigid body clears the ramp */
             }else if(now<o.plungeAirUntil&&air){
               /* preserve ballistic horizontal velocity; Rapier gravity owns Y */
             }else{
-              // Turning changes actual travel direction quickly instead of only rotating
-              // an abstract desired heading while momentum keeps carrying the Orb straight.
-              const steerAmount=Math.min(1,Math.abs(steer));
-              const response=air
-                ? (throttle ? .030+steerAmount*.028 : .010)
-                : (throttle ? .112+steerAmount*.105 : .155+steerAmount*.055);
-              const tx=heading.x*desiredSpeed,tz=heading.z*desiredSpeed;
-              let nx=v.x+(tx-v.x)*response,nz=v.z+(tz-v.z)*response;
-              if(throttle&&currentSpeed>desiredSpeed*1.10&&desiredSpeed>0){
-                const f=desiredSpeed/currentSpeed;nx*=f;nz*=f;
+              const profile=coarse?"mobile":"desktop";
+              const arenaMax=profile==="desktop"?PHYSICS.desktopMaxSpeed:PHYSICS.mobileMaxSpeed;
+
+              // Run the exact Arena controller in normalized Arena-speed space,
+              // then scale the result back up to RACE pace.
+              const raceSpeed=boost?config.boostSpeed:(throttle?desiredSpeed:Math.min(desiredSpeed,config.baseSpeed));
+              const raceMul=Math.max(1,raceSpeed/Math.max(.01,arenaMax));
+              const steerBase=nextPlanarVelocity(
+                {x:v.x/raceMul,z:v.z/raceMul},
+                inputX,
+                inputY,
+                profile,
+              );
+              let nx=steerBase.x*raceMul,nz=steerBase.z*raceMul;
+
+              // Preserve the race's downhill speed reward without altering Arena's steering feel.
+              if(throttle&&!brake){
+                const downhillBonus=Math.max(0,-rp.tangentY)*5.5;
+                if(downhillBonus>0){
+                  const mag=Math.hypot(nx,nz)||1;
+                  const boosted=Math.min(config.maxSpeed+downhillBonus,mag+downhillBonus);
+                  nx=nx/mag*boosted;nz=nz/mag*boosted;
+                }
               }
+
               o.body.setLinvel({x:nx,y:v.y,z:nz},true);
             }
           }else{
@@ -357,7 +361,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
     </div>
     <div className="race-item-hud"><span>ITEM</span><strong className={item?"loaded":""}>{itemLabel}</strong>{wake?<em>ORB WAKE</em>:null}</div>
     {rescueLeft>0?<div className="race-rescue-hud"><strong>NIMBUS RESCUE</strong><span>{rescueLeft.toFixed(1)}s</span></div>:null}
-    {phase==="ready"?<div className="arena-center-card race-center-card"><span>ADMIN ONLY · LOCAL LAB</span><h3>RACE</h3><p>Three laps on a never-before-seen Orbital Prismway. Hold UP to accelerate and actively steer every bend — the course only gives a tiny stability assist, while LEFT/RIGHT have strong recovery authority. Draft other racers, hit speed charges, jump whenever you want, and use Space to jump + use a held weapon.</p><button className="btn-primary" onClick={()=>startRef.current()}>Start race test →</button></div>:null}
+    {phase==="ready"?<div className="arena-center-card race-center-card"><span>ADMIN ONLY · LOCAL LAB</span><h3>RACE</h3><p>Three laps on a never-before-seen Orbital Prismway. Arena-style controls: UP/LEFT/RIGHT/DOWN move the Orb relative to the camera, with the same direct steering feel as Battle — scaled up for racing speed. Draft other racers, hit speed charges, jump whenever you want, and use Space to jump + use a held weapon.</p><button className="btn-primary" onClick={()=>startRef.current()}>Start race test →</button></div>:null}
     {phase==="countdown"?<div className="arena-countdown race-countdown">{countdown||"GO"}</div>:null}
     {(phase==="won"||phase==="finished")?<div className="arena-result-card race-result-card"><span>RACE COMPLETE</span><h3>{phase==="won"?"YOU WIN":winner?`${winner} WINS`:"FINISHED"}</h3><p>Lap 3 crossing of START / FINISH is the finish. First valid finisher would own the authoritative prize result in production.</p></div>:null}
     {phase==="playing"?<div className="arena-jump-wrap race-action-wrap"><button className={`arena-jump race-action ${item?"armed":""}`} onClick={()=>actionRef.current()}><span>{item?`JUMP + ${item==="missile"?"FIRE":item==="bomb"?"DROP":"TURBO"}`:"JUMP"}</span></button></div>:null}
