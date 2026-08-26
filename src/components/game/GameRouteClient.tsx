@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import GlassRoller from "./GlassRoller";
 import ArenaLiveGame from "./ArenaLiveGame";
+import RaceLiveGame from "./RaceLiveGame";
 import { DEFAULT_GAME_STYLE, GAME_STYLE_PRESETS } from "@/game/constants";
 import { normalizeDifficulty } from "@/game/maze";
 import { safeColor } from "@/game/theme";
@@ -29,10 +30,11 @@ type PublicOrb = {
   difficulty: DifficultyKey;
   style: GameStyle;
   hostX: { username: string };
-  gameType?: "maze" | "arena";
+  gameType?: "maze" | "arena" | "race";
 };
 
 type ArenaSessionPayload = { ok?:boolean; error?:string; realtimeUrl?:string; token?:string; startsAt?:number; endsAt?:number };
+type RaceSessionPayload = ArenaSessionPayload;
 
 type SessionPayload = {
   ok?: boolean;
@@ -80,6 +82,8 @@ export default function GameRouteClient(props: Props) {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [arenaSession, setArenaSession] = useState<{realtimeUrl:string;token:string}|null>(null);
   const [arenaLoading, setArenaLoading] = useState(false);
+  const [raceSession, setRaceSession] = useState<{realtimeUrl:string;token:string}|null>(null);
+  const [raceLoading, setRaceLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
   const runStartReportedRef = useRef(false);
 
@@ -118,7 +122,7 @@ export default function GameRouteClient(props: Props) {
   }, [competitiveSession, orb, props.slug, props.wallet]);
 
   const requestSession = useCallback(async () => {
-    if (!orb || orb.gameType === "arena" || !props.wallet || Date.now() < orb.startsAt || sessionLoading || competitiveSession) return;
+    if (!orb || orb.gameType === "arena" || orb.gameType === "race" || !props.wallet || Date.now() < orb.startsAt || sessionLoading || competitiveSession) return;
     setSessionLoading(true); setSessionError(null);
     try {
       const response = await fetch(`/api/orbs/${encodeURIComponent(props.slug)}/session`, {
@@ -140,7 +144,7 @@ export default function GameRouteClient(props: Props) {
   }, [competitiveSession, orb, props.slug, props.wallet, sessionLoading]);
 
   useEffect(() => {
-    if (!orb || orb.gameType === "arena" || now < orb.startsAt || competitiveSession || sessionLoading) return;
+    if (!orb || orb.gameType === "arena" || orb.gameType === "race" || now < orb.startsAt || competitiveSession || sessionLoading) return;
     void requestSession();
   }, [competitiveSession, now, orb, requestSession, sessionLoading]);
 
@@ -163,6 +167,23 @@ export default function GameRouteClient(props: Props) {
     void requestArenaSession();
   }, [arenaLoading, arenaSession, now, orb, props.wallet, requestArenaSession]);
 
+  const requestRaceSession = useCallback(async () => {
+    if (!orb || orb.gameType !== "race" || !props.wallet || Date.now() < orb.startsAt - 60_000 || raceLoading || raceSession) return;
+    setRaceLoading(true); setSessionError(null);
+    try {
+      const response = await fetch(`/api/orbs/${encodeURIComponent(props.slug)}/race-session`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({wallet:props.wallet}), cache:"no-store" });
+      const payload = await response.json() as RaceSessionPayload;
+      if (!response.ok || !payload.ok || !payload.realtimeUrl || !payload.token) throw new Error(payload.error || "Could not enter the Race");
+      setRaceSession({ realtimeUrl: payload.realtimeUrl, token: payload.token });
+    } catch (error) { setSessionError(error instanceof Error ? error.message : "Could not enter the Race"); }
+    finally { setRaceLoading(false); }
+  }, [orb, props.slug, props.wallet, raceLoading, raceSession]);
+
+  useEffect(() => {
+    if (!orb || orb.gameType !== "race" || !props.wallet || now < orb.startsAt - 60_000 || raceSession || raceLoading) return;
+    void requestRaceSession();
+  }, [now, orb, props.wallet, raceLoading, raceSession, requestRaceSession]);
+
   const applyLab = () => {
     setDifficulty(draftDifficulty);
     setStyle({ ...draftStyle });
@@ -176,6 +197,14 @@ export default function GameRouteClient(props: Props) {
   }
 
   if (orb) {
+    if (orb.gameType === "race") {
+      if (!props.wallet) return <div className="game-route-shell game-jit-state"><span className="eyebrow">RACE</span><h1>Enter through the lobby.</h1><p>Your qualified wallet, X identity and grid priority must be bound before live multiplayer begins.</p><Link className="btn-primary" href={`/orb/${props.slug}`}>Return to Orb →</Link></div>;
+      if (now >= orb.endsAt) return <div className="game-route-shell game-jit-state"><span className="eyebrow">RACE</span><h1>This Race has closed.</h1><Link className="btn-primary" href={`/orb/${props.slug}/results`}>View result →</Link></div>;
+      if (now < orb.startsAt - 60_000) return <div className="game-route-shell game-jit-state"><span className="eyebrow">RACE</span><h1>{formatCountdown(orb.startsAt - now)}</h1><p>Come back before launch. Orbs prepares your authoritative starting-grid connection automatically in the final minute.</p><div className="sealed-orb game-jit-commitment"><span>GAME COMMITMENT</span><code>{orb.commitment}</code></div></div>;
+      if (sessionError === "ORB_CLOSED") return <div className="game-route-shell game-jit-state"><span className="eyebrow">RACE</span><h1>This Race is complete.</h1><Link className="btn-primary" href={`/orb/${props.slug}/results`}>View result →</Link></div>;
+      if (!raceSession) return <div className="game-route-shell game-jit-state"><div className="game-loader-orb"/><span className="eyebrow">RACE</span><h1>{raceLoading ? "Joining the authoritative Race…" : "Preparing your Race session…"}</h1><p>{sessionError || "Binding your registration time, Orb identity and live Race authority."}</p>{sessionError?<div className="game-ready-actions"><button className="btn-primary" onClick={()=>void requestRaceSession()}>Retry Race entry</button><Link className="btn-secondary" href={`/orb/${props.slug}`}>Waiting room</Link></div>:null}</div>;
+      return <RaceLiveGame slug={props.slug} wallet={props.wallet} realtimeUrl={raceSession.realtimeUrl} token={raceSession.token} style={orb.style} seed={orb.commitment}/>;
+    }
     if (orb.gameType === "arena") {
       if (!props.wallet) return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA</span><h1>Enter through the lobby.</h1><p>Your qualified wallet and Arena Orb identity must be bound before live multiplayer begins.</p><Link className="btn-primary" href={`/orb/${props.slug}`}>Return to Orb →</Link></div>;
       if (now >= orb.endsAt) return <div className="game-route-shell game-jit-state"><span className="eyebrow">ARENA</span><h1>This Arena has closed.</h1><Link className="btn-primary" href={`/orb/${props.slug}/results`}>View result →</Link></div>;

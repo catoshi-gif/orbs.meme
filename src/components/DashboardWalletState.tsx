@@ -16,7 +16,7 @@ type Orb = {
   prizeTokenAmount: number;
   prizeUsd: number;
   hostX: { username: string };
-  gameType?: "maze" | "arena";
+  gameType?: "maze" | "arena" | "race";
 };
 
 type Activity = {
@@ -41,10 +41,10 @@ function finishTime(ms: number | null) {
 }
 
 function status(activity: Activity) {
-  const gameType = activity.orb.gameType === "arena" ? "arena" : "maze";
-  if (activity.outcome === "won") return { label: gameType === "arena" ? "Won · ARENA" : `Won · ${finishTime(activity.verifiedElapsedMs)}`, tone: "won" };
-  if (activity.outcome === "dnf") return { label: gameType === "arena" ? "Did not win" : "DNF", tone: "dnf" };
-  if (activity.outcome === "racing") return { label: gameType === "arena" ? "Playing now" : "Racing now", tone: "live" };
+  const gameType = activity.orb.gameType === "arena" ? "arena" : activity.orb.gameType === "race" ? "race" : "maze";
+  if (activity.outcome === "won") return { label: gameType === "arena" ? "Won · ARENA" : gameType === "race" ? "Won · RACE" : `Won · ${finishTime(activity.verifiedElapsedMs)}`, tone: "won" };
+  if (activity.outcome === "dnf") return { label: gameType === "arena" || gameType === "race" ? "Did not win" : "DNF", tone: "dnf" };
+  if (activity.outcome === "racing") return { label: gameType === "arena" ? "Playing now" : gameType === "race" ? "Racing now" : "Racing now", tone: "live" };
   if (activity.outcome === "entered") return { label: "Entered", tone: "entered" };
   if (activity.phase === "completed") return { label: "Winner verified", tone: "complete" };
   if (activity.phase === "expired") return { label: "Expired", tone: "dnf" };
@@ -58,7 +58,7 @@ function ActivityRow({ activity, role, onRetrieved }: { activity: Activity; role
   const href = activity.phase === "completed" || activity.phase === "expired" ? `/orb/${orb.slug}/results` : `/orb/${orb.slug}`;
   return <div className="hosted-orb-row-wrap">
     <Link className="hosted-orb-row" href={href}>
-      <div className="hosted-orb-token">{orb.token.logoURI ? <img src={orb.token.logoURI} alt="" referrerPolicy="no-referrer" /> : <span>{orb.token.symbol.slice(0, 2)}</span>}<div><strong>{amount(orb.prizeTokenAmount)} {orb.token.symbol}</strong><small>{money(orb.prizeUsd)} · hosted by @{orb.hostX.username}</small><div className="activity-tags"><em>{(orb.gameType === "arena" ? "ARENA" : "MAZE")}</em><em>{role}</em><em className={state.tone}>{state.label}</em></div></div></div>
+      <div className="hosted-orb-token">{orb.token.logoURI ? <img src={orb.token.logoURI} alt="" referrerPolicy="no-referrer" /> : <span>{orb.token.symbol.slice(0, 2)}</span>}<div><strong>{amount(orb.prizeTokenAmount)} {orb.token.symbol}</strong><small>{money(orb.prizeUsd)} · hosted by @{orb.hostX.username}</small><div className="activity-tags"><em>{(orb.gameType === "arena" ? "ARENA" : orb.gameType === "race" ? "RACE" : "MAZE")}</em><em>{role}</em><em className={state.tone}>{state.label}</em></div></div></div>
       <div className="hosted-orb-launch"><strong>{activity.phase === "upcoming" ? "Launches" : activity.phase === "live" ? "Closes" : "Closed"}</strong><small>{new Date(activity.phase === "upcoming" ? orb.startsAt : orb.endsAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></div>
       <span className="hosted-orb-open">{activity.phase === "completed" || activity.phase === "expired" ? "Result" : "Open"} →</span>
     </Link>

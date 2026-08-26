@@ -1,0 +1,16 @@
+import { NextResponse } from "next/server";
+import { PublicKey } from "@solana/web3.js";
+import { getPublicOrb, orbGameType } from "@/lib/orbStore";
+import { assignRaceEntrantProfile, getRaceEntrantProfile, getRaceGridRank } from "@/lib/raceEntrants";
+import { hasFollowProof, hasShareProof, hasWalletProof } from "@/lib/qualification";
+import { getCurrentXSession } from "@/lib/xAuth";
+import { hasEligibilityReceipt } from "@/lib/eligibility";
+import { hasFairPlayReceipt } from "@/lib/fairPlay";
+import { hasHumanProof } from "@/lib/turnstile";
+import { COMPETITION_RESTRICTION_MESSAGE, getCompetitionRestriction } from "@/lib/gameIntegrity";
+
+export const runtime="nodejs";export const dynamic="force-dynamic";
+function walletOf(value:unknown){if(typeof value!=="string")return null;try{return new PublicKey(value).toBase58()}catch{return null}}
+async function authorize(slug:string,wallet:string){const [orb,x]=await Promise.all([getPublicOrb(slug),getCurrentXSession()]);if(!orb||orbGameType(orb)!=="race")return{error:NextResponse.json({ok:false,error:"Race not found"},{status:404})};if(!x)return{error:NextResponse.json({ok:false,error:"Connect X first"},{status:401})};if(await getCompetitionRestriction(wallet,x.user.id))return{error:NextResponse.json({ok:false,error:COMPETITION_RESTRICTION_MESSAGE,code:"COMPETITION_RESTRICTED"},{status:403})};const [eligible,fairPlay,followed,walletVerified,humanVerified,shared]=await Promise.all([hasEligibilityReceipt(wallet),hasFairPlayReceipt(wallet,x.user.id),hasFollowProof(x.user.id,orb.hostX.id),hasWalletProof(slug,x.user.id,wallet),hasHumanProof(slug,x.user.id,wallet),hasShareProof(slug,x.user.id,wallet)]);if(!eligible||!fairPlay||!followed||!walletVerified||!humanVerified||!shared)return{error:NextResponse.json({ok:false,error:"Complete every Race registration step before a starting-grid time can be reserved"},{status:403})};return{orb,x}}
+export async function GET(request:Request,{params}:{params:Promise<{slug:string}>}){const{slug}=await params,wallet=walletOf(new URL(request.url).searchParams.get("wallet"));if(!wallet)return NextResponse.json({ok:false,error:"Invalid wallet"},{status:400});const auth=await authorize(slug,wallet);if("error"in auth)return auth.error;const profile=await getRaceEntrantProfile(slug,wallet)||await assignRaceEntrantProfile(slug,wallet,auth.x.user);const gridRank=await getRaceGridRank(slug,wallet);return NextResponse.json({ok:true,profile:{...profile,gridRank}},{headers:{"Cache-Control":"private, no-store"}})}
+export async function POST(request:Request,{params}:{params:Promise<{slug:string}>}){const{slug}=await params,body=await request.json().catch(()=>({}))as{wallet?:unknown;color?:unknown;glow?:unknown};const wallet=walletOf(body.wallet);if(!wallet)return NextResponse.json({ok:false,error:"Invalid wallet"},{status:400});const auth=await authorize(slug,wallet);if("error"in auth)return auth.error;const profile=await assignRaceEntrantProfile(slug,wallet,auth.x.user,typeof body.color==="string"?body.color:null,typeof body.glow==="string"?body.glow:null);return NextResponse.json({ok:true,profile},{headers:{"Cache-Control":"private, no-store"}})}

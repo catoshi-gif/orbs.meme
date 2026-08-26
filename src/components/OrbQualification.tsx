@@ -8,6 +8,7 @@ import FairPlayGate from "@/components/FairPlayGate";
 import TurnstileGate from "@/components/TurnstileGate";
 import XConnect, { type XUser } from "@/components/XConnect";
 import ArenaOrbIdentity from "@/components/ArenaOrbIdentity";
+import RaceOrbIdentity from "@/components/RaceOrbIdentity";
 import type { OrbGameType } from "@/lib/orbStore";
 import { canonicalPublicSiteUrl } from "@/lib/siteUrl";
 import { xCashtag } from "@/lib/xShareText";
@@ -158,7 +159,9 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
 
     const postText = gameType === "arena"
       ? `${line}\n\nI’m entering @${hostUsername}’s ARENA for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). #contest`
-      : `${line}\n\nI’m entering @${hostUsername}’s MAZE for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
+      : gameType === "race"
+        ? `${line}\n\nI’m entering @${hostUsername}’s RACE for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). Three laps. First across wins. #contest`
+        : `${line}\n\nI’m entering @${hostUsername}’s MAZE for ${amount(prizeTokenAmount)} ${xCashtag(tokenSymbol.slice(0, 16))} (≈${money(prizeUsd)}). First verified finish wins. #contest`;
     const params = new URLSearchParams({ text: postText, url: orbShareUrl });
     const composeUrl = `https://x.com/intent/post?${params.toString()}`;
 
@@ -297,6 +300,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   const live = now >= startsAt;
   const prepareOpen = now >= startsAt - 60_000;
   const arenaPrepareOpen = gameType === "arena" && prepareOpen;
+  const racePrepareOpen = gameType === "race" && prepareOpen;
   const mazePrepareOpen = gameType === "maze" && prepareOpen;
   const closed = now >= endsAt;
 
@@ -307,14 +311,15 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
   }, [closed, prepareOpen, qualified, slug, wallet]);
 
   if (closed) return <aside className="card qualify orb-closed-card"><span className="eyebrow">Competition closed</span><h3>This Orb has expired.</h3><p className="muted">The competition window ended. New registration and competitive entry are closed.</p><a className="btn-primary" href={`/orb/${slug}/results`}>View result →</a></aside>;
-  if (gameType === "arena" && live && !qualified) return <aside className="card qualify orb-closed-card"><span className="eyebrow">ARENA LIVE</span><h3>Registration is closed.</h3><p className="muted">Arena rosters lock at launch. Registered players can reconnect to the authoritative match from the same wallet and X account.</p></aside>;
+  if ((gameType === "arena" || gameType === "race") && live && !qualified) return <aside className="card qualify orb-closed-card"><span className="eyebrow">{gameType === "race" ? "RACE LIVE" : "ARENA LIVE"}</span><h3>Registration is closed.</h3><p className="muted">{gameType === "race" ? "Race grid priority is frozen for registered entrants at launch." : "Arena rosters lock at launch."} Registered players can reconnect from the same wallet and X account.</p></aside>;
   if (gameType === "arena" && qualified && arenaPrepareOpen) return <aside className="card qualify"><span className="eyebrow">ARENA</span><h3>Getting your Orb ready…</h3><p className="muted">You&apos;re registered. Orbs is connecting you to the authoritative Arena automatically.</p><div className="game-loader-orb" /></aside>;
+  if (gameType === "race" && qualified && racePrepareOpen) return <aside className="card qualify"><span className="eyebrow">RACE</span><h3>Rolling onto the starting grid…</h3><p className="muted">You&apos;re registered. Orbs is connecting you to the authoritative Race automatically. No start button is needed.</p><div className="game-loader-orb" /></aside>;
   if (gameType === "maze" && qualified && mazePrepareOpen) return <aside className="card qualify"><span className="eyebrow">MAZE</span><h3>Getting your Maze ready…</h3><p className="muted">You&apos;re registered. Stay here — the sealed Maze opens and starts automatically at launch.</p><div className="game-loader-orb" /></aside>;
 
   return <aside id="qualify" className="card qualify">
     <span className="eyebrow">Before you play</span><h3>Register for this Orb.</h3>
     <p className="muted">Registration is required to play for the prize. Complete one X identity, one verified wallet, one 18+ eligibility receipt, the Fair Play agreement, one human check, and one real entry post. Nothing here moves funds.</p>
-    <a className="qualify-how-play" href={gameType === "arena" ? "/how-to-play/arena" : "/how-to-play/maze"}>New here? Practice {gameType === "arena" ? "ARENA" : "MAZE"} controls →</a>
+    <a className="qualify-how-play" href={gameType === "arena" ? "/how-to-play/arena" : gameType === "race" ? "/how-to-play/race" : "/how-to-play/maze"}>New here? Practice {gameType === "arena" ? "ARENA" : gameType === "race" ? "RACE" : "MAZE"} controls →</a>
     <div className="q-list">
       <div className={`q-row ${xUser ? "ready" : ""}`}><span className="q-num">{xUser ? "✓" : "1"}</span><div style={{flex:1}}><strong>Connect X</strong><small>{xUser ? `@${xUser.username} connected` : "Your social identity for this competition"}</small></div><XConnect compact minimalConnected returnTo={`/orb/${slug}`} onChange={onXChange} /></div>
       <div className={`q-row ${followed ? "ready" : ""}`}><span className="q-num">{followed ? "✓" : "2"}</span><div style={{flex:1}}><strong>Follow @{hostUsername}</strong><small>{followed ? "Follow confirmed directly by X" : "One tap asks X to follow the Orb host from your connected account"}</small>{followError ? <small className="q-error">{followError}</small> : null}</div>{xUser && !followed ? <button className="mini-action" onClick={() => void followHost()} disabled={following}>{following ? "Following…" : "Follow on X"}</button> : null}</div>
@@ -325,6 +330,7 @@ export default function OrbQualification({ slug, hostXId, hostUsername, createdA
       <div className={`q-row q-share ${shareVerified ? "ready" : ""}`}><span className="q-num">{shareVerified ? "✓" : "7"}</span><div className="q-copy"><strong>Share your entry</strong><small>{shareVerified ? "Orb post verified directly from your X account" : recoveringShare ? "Checking your X account for the entry post you already made…" : readyForShare ? shareStarted ? "Already posted? Orbs can find and verify it without making you post again." : shareCardReady ? "Add your own line and post the waiting-room card. Orbs will check X when you return." : "Preparing the X card before posting…" : "Complete the human check first"}</small>{shareError ? <small className="q-error">{shareError}</small> : null}{shareVerified && verifiedPostUrl ? <a className="q-post-link" href={verifiedPostUrl} target="_blank" rel="noreferrer">View verified post ↗</a> : null}</div>{readyForShare && !shareVerified ? <div className="q-share-actions"><input value={shareLine} onChange={(event) => setShareLine(event.target.value.slice(0, 70))} maxLength={70} placeholder="Why are you going to win?" aria-label="Your original line for the X post" />{shareStarted ? <><button className="mini-action" onClick={() => void recoverShare(false)} disabled={recoveringShare || verifyingShare}>{recoveringShare ? "Checking X…" : "Check X for my post"}</button><div className="q-direct-post"><input value={directPostUrl} onChange={(event) => setDirectPostUrl(event.target.value.slice(0, 220))} placeholder="Can’t find it? Paste your X post link" aria-label="X post link" /><button className="q-compose-again" type="button" onClick={() => void verifyDirectShare()} disabled={verifyingShare || !directPostUrl.trim()}>{verifyingShare ? "Checking…" : "Verify pasted link"}</button></div><button className="q-compose-again" onClick={openShareComposer} disabled={!shareCardReady || shareLine.trim().length < 12}>Open composer again</button><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card if X delays preview</a></> : <><button className="mini-action" onClick={openShareComposer} disabled={!shareCardReady}>{shareCardReady ? "Post on X" : "Preparing card…"}</button><button className="q-compose-again" onClick={() => void recoverShare(false)} disabled={recoveringShare}>{recoveringShare ? "Checking X…" : "Already posted? Check X"}</button><div className="q-direct-post"><input value={directPostUrl} onChange={(event) => setDirectPostUrl(event.target.value.slice(0, 220))} placeholder="Or paste your X post link" aria-label="X post link" /><button className="q-compose-again" type="button" onClick={() => void verifyDirectShare()} disabled={verifyingShare || !directPostUrl.trim()}>{verifyingShare ? "Checking…" : "Verify link"}</button></div><a className="q-compose-again" href={shareCardUrl} download={`orbs-${slug}.jpg`} target="_blank" rel="noreferrer">Save card</a></>}</div> : null}</div>
     </div>
     {qualified && gameType === "arena" ? <ArenaOrbIdentity slug={slug} wallet={wallet} /> : null}
-    {gameType === "maze" ? <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · MAZE opens automatically in the final minute" : live ? "Finish registration to enter the live MAZE" : "Finish registration before launch"}</div> : <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · ARENA opens automatically in the final minute" : "Finish registration before launch"}</div>}
+    {qualified && gameType === "race" ? <RaceOrbIdentity slug={slug} wallet={wallet} /> : null}
+    {gameType === "maze" ? <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · MAZE opens automatically in the final minute" : live ? "Finish registration to enter the live MAZE" : "Finish registration before launch"}</div> : gameType === "race" ? <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · RACE opens automatically in the final minute · earlier completed registration starts farther forward" : "Finish registration to lock your starting-grid priority"}</div> : <div className="qualify-play arena-auto-entry-note">{qualified ? "Registered · ARENA opens automatically in the final minute" : "Finish registration before launch"}</div>}
   </aside>;
 }

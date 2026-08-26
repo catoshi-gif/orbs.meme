@@ -20,7 +20,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   if (!orb) return { title: "Orb not found" };
   const title = `${amount(orb.prizeTokenAmount)} ${orb.token.symbol.slice(0, 16)} Orb by @${orb.hostX.username}`;
   const gameType = orbGameType(orb);
-  const description = gameType === "arena" ? `${money(orb.prizeUsd)} prize. Join the waiting room, choose your Orb colors, and enter the live ARENA.` : `${money(orb.prizeUsd)} prize. Join the waiting room and race the same sealed MAZE. First verified finish wins.`;
+  const description = gameType === "arena" ? `${money(orb.prizeUsd)} prize. Join the waiting room, choose your Orb colors, and enter the live ARENA.` : gameType === "race" ? `${money(orb.prizeUsd)} prize. Join early for grid priority, then race three authoritative laps on a sealed procedural course.` : `${money(orb.prizeUsd)} prize. Join the waiting room and race the same sealed MAZE. First verified finish wins.`;
   const canonical = `${site}/orb/${encodeURIComponent(slug)}`;
   const image = `${site}/api/orbs/${encodeURIComponent(slug)}/share-card?v=${orb.createdAt}`;
   return {

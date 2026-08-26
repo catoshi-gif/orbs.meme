@@ -47,7 +47,7 @@ async function jsonPayload<T>(response: Response): Promise<T> {
   catch { throw new Error(response.ok ? "The server returned an invalid response" : `The server is temporarily unavailable (${response.status})`); }
 }
 
-export default function CreateWizard({ arenaLiveEnabled = false }: { arenaLiveEnabled?: boolean }) {
+export default function CreateWizard({ arenaLiveEnabled = false, raceLiveEnabled = false }: { arenaLiveEnabled?: boolean; raceLiveEnabled?: boolean }) {
   const initialLaunch = useMemo(() => localInputParts(new Date(Date.now() + 24 * 60 * 60 * 1000)), []);
   const [gameType, setGameType] = useState<OrbGameType | null>(null);
   const [step, setStep] = useState(0);
@@ -271,7 +271,9 @@ export default function CreateWizard({ arenaLiveEnabled = false }: { arenaLiveEn
   const shareCardUrl = createdOrb ? `${publicSiteUrl}/api/orbs/${encodeURIComponent(createdOrb.slug)}/share-card?v=${createdOrb.createdAt}` : "";
   const hostShareText = gameType === "arena"
     ? `${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")} is going into the ARENA.\n\nCome play 👇`
-    : `${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")}. One MAZE. First verified finish takes it.\n\nCome play 👇`;
+    : gameType === "race"
+      ? `${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")} is going into the RACE. Three laps. First across wins.\n\nCome play 👇`
+      : `${amount(prizeAmount)} ${xCashtag(token?.symbol || "SPL")}. One MAZE. First verified finish takes it.\n\nCome play 👇`;
   const hostShareParams = new URLSearchParams({ text: hostShareText, url: shareUrl });
 
   useEffect(() => {
@@ -311,13 +313,16 @@ export default function CreateWizard({ arenaLiveEnabled = false }: { arenaLiveEn
     <section className="create-game-select">
       <span className="eyebrow">Choose a game</span>
       <h2>What are you dropping?</h2>
-      <p className="muted">Two games. One prize. Choose how your community plays.</p>
+      <p className="muted">Three games. One prize. Choose how your community plays.</p>
       <div className="create-game-options">
         <button type="button" className="create-game-option" onClick={() => setGameType("maze")}>
           <span className="create-game-badge">MAZE</span><strong>Race the course.</strong><small>Same sealed challenge for everyone. First verified finish wins.</small>
         </button>
         <button type="button" className="create-game-option arena" onClick={() => arenaLiveEnabled && setGameType("arena")} disabled={!arenaLiveEnabled}>
           <span className="create-game-badge">ARENA</span><strong>Fight the field.</strong><small>{arenaLiveEnabled ? "Enter together. Use movement, terrain and powers to win." : "Production plumbing is ready; authoritative realtime play is being connected before prize-bearing creation unlocks."}</small>
+        </button>
+        <button type="button" className="create-game-option race" onClick={() => raceLiveEnabled && setGameType("race")} disabled={!raceLiveEnabled}>
+          <span className="create-game-badge">RACE</span><strong>Beat the field.</strong><small>{raceLiveEnabled ? "Three live laps on a sealed procedural Prismway. Earlier registration starts farther forward." : "Authoritative Race service must be healthy before prize-bearing RACE creation unlocks."}</small>
         </button>
       </div>
     </section>
@@ -340,14 +345,14 @@ export default function CreateWizard({ arenaLiveEnabled = false }: { arenaLiveEn
         </> : null}
 
         {step === 2 ? <>
-          <span className="eyebrow">Step 3 of 6 · {gameType.toUpperCase()}</span><h2>Design the game.</h2><p>{gameType === "maze" ? "Choose the target solve-time band and your community palette. These settings are frozen into every participant's canonical game." : "Choose the Arena world palette. Player Orb colors are selected individually in the waiting room."}</p>
+          <span className="eyebrow">Step 3 of 6 · {gameType.toUpperCase()}</span><h2>Design the game.</h2><p>{gameType === "maze" ? "Choose the target solve-time band and your community palette. These settings are frozen into every participant's canonical game." : gameType === "race" ? "Choose the Prismway palette. Racer Orb colors are selected individually in the waiting room." : "Choose the Arena world palette. Player Orb colors are selected individually in the waiting room."}</p>
           {gameType === "maze" ? <div className="difficulty">{profiles.map((profile) => <button key={profile.key} className={difficulty === profile.key ? "active" : ""} onClick={() => setDifficulty(profile.key)}><span className="difficulty-tag">{profile.label}</span><strong>{profile.name}</strong><small>{profile.time} target solve</small></button>)}</div> : null}
           <div className="game-style-builder"><div className="game-style-preview" style={{ background: `radial-gradient(circle at 35% 30%, ${style.marbleSecondary}, ${style.marble} 30%, ${style.accent} 66%, ${style.floor})`, borderColor: style.walls }}><div className="style-preview-orb" style={{ background: `radial-gradient(circle at 35% 28%, #fff, ${style.marbleSecondary} 14%, ${style.marble} 44%, ${style.accent} 72%, ${style.floor})` }} /><div className="style-preview-rail" style={{ background: style.walls, boxShadow: `0 0 28px ${style.walls}` }} /><span>LIVE PALETTE</span></div><div><div className="game-presets">{GAME_STYLE_PRESETS.map((preset) => <button key={preset.name} onClick={() => setStyle(preset.style)}>{preset.name}</button>)}</div><div className="fields game-color-grid">{colorField("marble", "Orb core")}{colorField("marbleSecondary", "Orb glow")}{colorField("walls", "Glass rails")}{colorField("floor", "World / floor")}{colorField("accent", "Goal / accent")}</div></div></div>
         </> : null}
 
         {step === 3 ? <>
           <span className="eyebrow">Step 4 of 6</span><h2>Schedule launch.</h2><p>Give the X post time to cook. The exact timestamp becomes immutable when the Anchor funding transaction succeeds.</p>
-          {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}<div className="fields"><div className="field"><label>Date</label><input type="date" value={launchDate} onChange={(event) => setLaunchDate(event.target.value)} /></div><div className="field"><label>Time · your local timezone</label><input type="time" value={launchTime} onChange={(event) => setLaunchTime(event.target.value)} /></div><div className="field full"><div className="launch-preview"><span>Scheduled start</span><strong>{launchReady ? new Date(launchMs).toLocaleString([], { dateStyle: "full", timeStyle: "short" }) : "Choose a future launch time"}</strong><small>{gameType === "maze" ? "The maze seed and geometry remain sealed until this moment." : "The Arena launch timestamp is shared by every entrant."}</small></div></div></div>
+          {reviewRefreshError ? <div className="form-error">{reviewRefreshError}</div> : null}<div className="fields"><div className="field"><label>Date</label><input type="date" value={launchDate} onChange={(event) => setLaunchDate(event.target.value)} /></div><div className="field"><label>Time · your local timezone</label><input type="time" value={launchTime} onChange={(event) => setLaunchTime(event.target.value)} /></div><div className="field full"><div className="launch-preview"><span>Scheduled start</span><strong>{launchReady ? new Date(launchMs).toLocaleString([], { dateStyle: "full", timeStyle: "short" }) : "Choose a future launch time"}</strong><small>{gameType === "maze" ? "The maze seed and geometry remain sealed until this moment." : gameType === "race" ? "The Race course seed remains sealed until the authoritative start." : "The Arena launch timestamp is shared by every entrant."}</small></div></div></div>
         </> : null}
 
         {step === 4 ? <>
@@ -361,7 +366,7 @@ export default function CreateWizard({ arenaLiveEnabled = false }: { arenaLiveEn
         {step === 5 && createdOrb ? <>
           <span className="eyebrow">Step 6 of 6</span><h2>Your Orb is sealed.</h2><p>Your share card is ready. Post it on X, then take the same waiting-room link to Discord, Telegram and every community you want at the starting line.</p>
           <div className="share-card-preview"><img src={shareCardUrl} alt={`${amount(prizeAmount)} ${token?.symbol || "SPL"} Orb share card`} onLoad={() => { setShareCardReady(true); setShareCardFailed(false); }} onError={() => { setShareCardReady(false); setShareCardFailed(true); }} /><div><strong>{shareCardReady ? "X card ready." : shareCardFailed ? "The X card could not be prepared." : "Preparing the X card…"}</strong><span>{shareCardReady ? "The exact canonical image is now warmed and ready for X to crawl." : shareCardFailed ? "Retry this page before sharing so X does not receive an incomplete link preview." : "The share button unlocks only after the image has loaded successfully."}</span></div></div>
-          <div className="sealed-orb"><span>GAME COMMITMENT</span><code>{createdOrb.commitment}</code><small>{gameType === "maze" ? "SHA-256 commitment · maze seed remains encrypted server-side until launch" : "Arena configuration committed before launch · authoritative realtime result"}</small></div>
+          <div className="sealed-orb"><span>GAME COMMITMENT</span><code>{createdOrb.commitment}</code><small>{gameType === "maze" ? "SHA-256 commitment · maze seed remains encrypted server-side until launch" : gameType === "race" ? "Race course seed remains encrypted until launch · authoritative Railway result" : "Arena configuration committed before launch · authoritative realtime result"}</small></div>
           <div className="fields"><div className="field full"><label>Waiting-room URL</label><input value={shareUrl} readOnly /></div><div className="share-actions field full"><button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied ✓" : "Copy link"}</button>{shareCardReady ? <button className="btn-secondary" type="button" onClick={openHostShare}>Post with card on X ↗</button> : <button className="btn-secondary" disabled>{shareCardFailed ? "Card unavailable" : "Preparing X card…"}</button>}<a className="btn-secondary" href={shareCardUrl} download={`orbs-${createdOrb.slug}.jpg`} target="_blank" rel="noreferrer">Download card</a></div></div>
           {hostShareStarted || hostShareVerified ? <div className={`host-share-proof ${hostShareVerified ? "verified" : ""}`}><div><strong>{hostShareVerified ? "Creator post verified ✓" : "Posted it?"}</strong><span>{hostShareVerified ? "This post is now linked to the Orb so private admin analytics can refresh its public X reach on demand." : "Verify once so Orbs can remember the host post ID for manual reach analytics. This does not affect the game."}</span></div>{hostShareVerified ? hostSharePostUrl ? <a href={hostSharePostUrl} target="_blank" rel="noreferrer">View post ↗</a> : null : <button className="mini-action" type="button" onClick={() => void verifyHostShare()} disabled={hostShareBusy}>{hostShareBusy ? "Checking…" : "Verify creator post"}</button>}{hostShareError ? <small className="q-error">{hostShareError}</small> : null}</div> : null}
           <p className="share-wide-note">Share it far and wide—the bigger the waiting room, the bigger the live moment.</p>

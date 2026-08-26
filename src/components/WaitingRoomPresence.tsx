@@ -17,7 +17,7 @@ function relativeTime(sentAt: number) {
   return `${Math.floor(minutes / 60)}h`;
 }
 
-export default function WaitingRoomPresence({ slug, gameType = "maze", details }: { slug: string; gameType?: "maze" | "arena"; details?: ReactNode }) {
+export default function WaitingRoomPresence({ slug, gameType = "maze", details }: { slug: string; gameType?: "maze" | "arena" | "race"; details?: ReactNode }) {
   const { publicKey } = useWallet();
   const [counts, setCounts] = useState<Counts>(EMPTY);
   const [available, setAvailable] = useState(false);
@@ -124,7 +124,7 @@ export default function WaitingRoomPresence({ slug, gameType = "maze", details }
     <div className="waiting-presence" aria-label={`${counts.total} people currently in the waiting room`}>
       <div className="waiting-presence-live"><span className="waiting-presence-dot"/><strong>{counts.total}</strong><span>in the waiting room</span></div>
       <div className="waiting-presence-split"><span><b>{counts.registered}</b> registered</span><span><b>{counts.unregistered}</b> watching</span></div>
-      <small>Registration is required to enter the live {gameType === "arena" ? "Arena" : "Maze"}.</small>
+      <small>Registration is required to enter the live {gameType === "arena" ? "Arena" : gameType === "race" ? "Race" : "Maze"}.</small>
     </div>
     {details ? <div className="waiting-room-priority">{details}</div> : null}
     <div className="waiting-chat">

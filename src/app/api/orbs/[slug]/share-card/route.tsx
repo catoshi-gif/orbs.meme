@@ -92,7 +92,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", width: 720, marginTop: 68 }}>
-          <div style={{ display: "flex", color: "#76F4EA", fontSize: 16, fontWeight: 900, letterSpacing: 2.4, marginBottom: 13 }}>{gameType === "arena" ? "LIVE SOLANA ARENA" : "LIVE SOLANA MAZE"}</div>
+          <div style={{ display: "flex", color: "#76F4EA", fontSize: 16, fontWeight: 900, letterSpacing: 2.4, marginBottom: 13 }}>{gameType === "arena" ? "LIVE SOLANA ARENA" : gameType === "race" ? "LIVE SOLANA RACE" : "LIVE SOLANA MAZE"}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
             <div style={{ width: 100, height: 100, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", background: `radial-gradient(circle at 35% 30%, #fff, ${orb.style.marbleSecondary} 18%, ${orb.style.marble} 62%, ${orb.style.floor})`, border: "3px solid #FFFFFF55", boxShadow: `0 0 44px ${orb.style.marble}99` }}>
               {tokenLogo ? <img src={tokenLogo} alt="" width={100} height={100} style={{ width: 100, height: 100, objectFit: "cover" }} /> : <span style={{ fontSize: 38, fontWeight: 900 }}>{tokenSymbol.slice(0, 2)}</span>}
@@ -102,7 +102,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
               <div style={{ display: "flex", marginTop: 10, color: "#C4CCE3", fontSize: 25, fontWeight: 700 }}>{money(orb.prizeUsd)} winner prize</div>
             </div>
           </div>
-          <div style={{ display: "flex", marginTop: 24, color: "#7FF9EE", fontSize: 31, fontWeight: 900, letterSpacing: -0.8, textShadow: "0 4px 24px #020512" }}>{gameType === "arena" ? "ENTER THE ARENA." : "FIRST VERIFIED FINISH WINS."}</div>
+          <div style={{ display: "flex", marginTop: 24, color: "#7FF9EE", fontSize: 31, fontWeight: 900, letterSpacing: -0.8, textShadow: "0 4px 24px #020512" }}>{gameType === "arena" ? "ENTER THE ARENA." : gameType === "race" ? "THREE LAPS. FIRST ACROSS WINS." : "FIRST VERIFIED FINISH WINS."}</div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto", borderTop: "1px solid #FFFFFF2B", paddingTop: 22 }}>

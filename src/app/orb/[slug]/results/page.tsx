@@ -34,9 +34,9 @@ export default async function Page({params}:{params:Promise<{slug:string}>}) {
 
   const eyebrow = claimed ? "Prize claimed" : winner ? `${gameType.toUpperCase()} winner verified` : expired ? "Orb expired" : "Orb result";
   const headline = claimed
-    ? (gameType === "arena" ? "The Arena has its winner." : "The prize found its winner.")
+    ? (gameType === "arena" ? "The Arena has its winner." : gameType === "race" ? "The Race has its winner." : "The prize found its winner.")
     : winner
-      ? (gameType === "arena" ? "The Arena has a winner." : "The first light was found.")
+      ? (gameType === "arena" ? "The Arena has a winner." : gameType === "race" ? "The Race has a winner." : "The first light was found.")
       : expired
         ? "This Orb closed without a winner."
         : "This Orb is still live.";
@@ -44,7 +44,9 @@ export default async function Page({params}:{params:Promise<{slug:string}>}) {
   const description = winner
     ? gameType === "arena"
       ? <>{winnerIdentity}winner verified by the authoritative Arena service.</>
-      : <>{winnerIdentity}server-verified MAZE finish.</>
+      : gameType === "race"
+        ? <>{winnerIdentity}first verified three-lap finisher from the authoritative Race service.</>
+        : <>{winnerIdentity}server-verified MAZE finish.</>
     : expired
       ? <>No verified winner was locked before this Orb&apos;s expiry. The on-chain refund path returns refundable prize funds only to the original host.</>
       : <>Winner state for <strong>{slug}</strong>. The prize remains in its isolated Anchor vault until Orbs locks one verified game winner.</>;
@@ -61,7 +63,9 @@ export default async function Page({params}:{params:Promise<{slug:string}>}) {
     <div className="metrics">
       {gameType === "arena"
         ? <><div className="metric"><span>Game</span><strong>ARENA</strong></div><div className="metric"><span>Match time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Result proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div></>
-        : <><div className="metric"><span>Finish time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Replay proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div><div className="metric"><span>Game</span><strong>MAZE</strong></div></>}
+        : gameType === "race"
+          ? <><div className="metric"><span>Game</span><strong>RACE · 3 LAPS</strong></div><div className="metric"><span>Race time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Result proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div></>
+          : <><div className="metric"><span>Finish time</span><strong>{formatTime(winner?.verifiedElapsedMs)}</strong></div><div className="metric"><span>Replay proof</span><strong>{winner?.replayHash ? winner.replayHash.slice(0,12).toUpperCase() : "—"}</strong></div><div className="metric"><span>Game</span><strong>MAZE</strong></div></>}
       <div className="metric"><span>Status</span><strong>{claimed ? "Claimed on-chain" : winner && !expired ? "Winner verified / claimable" : expired ? "Refund available" : "Live / pending"}</strong></div>
     </div>
     {winner?.claimTxSignature ? <p className="muted"><code>{winner.claimTxSignature.slice(0,12)}…{winner.claimTxSignature.slice(-12)}</code></p> : null}

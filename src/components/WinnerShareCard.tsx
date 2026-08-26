@@ -10,7 +10,7 @@ export default function WinnerShareCard({ slug, prize, finishTime, xUsername, wi
   finishTime: string;
   xUsername?: string;
   winnerWallet: string;
-  gameType?: "maze" | "arena";
+  gameType?: "maze" | "arena" | "race";
 }) {
   const { publicKey } = useWallet();
   const [ready, setReady] = useState(false);
@@ -22,7 +22,7 @@ export default function WinnerShareCard({ slug, prize, finishTime, xUsername, wi
   if (!isWinnerWallet) return null;
 
   const cardUrl = `/api/orbs/${encodeURIComponent(slug)}/winner-card`;
-  const text = gameType === "arena" ? `I won ${xCashtagPrize(prize)} in ORBS ARENA 🪐\n\n#ContestWinner` : `I won ${xCashtagPrize(prize)} in an Orbs MAZE 🪐\n\nVerified finish: ${finishTime}\n\n#ContestWinner`;
+  const text = gameType === "arena" ? `I won ${xCashtagPrize(prize)} in ORBS ARENA 🪐\n\n#ContestWinner` : gameType === "race" ? `I won ${xCashtagPrize(prize)} in ORBS RACE 🪐\n\nThree laps. First across. #ContestWinner` : `I won ${xCashtagPrize(prize)} in an Orbs MAZE 🪐\n\nVerified finish: ${finishTime}\n\n#ContestWinner`;
   const sharePageUrl = `${typeof window === "undefined" ? "" : window.location.origin}/orb/${encodeURIComponent(slug)}/winner`;
 
   const shareX = () => {

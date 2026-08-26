@@ -3,6 +3,7 @@ import { buildGameCommitment, hashCanonicalManifest, sha256Hex } from "@/game/ca
 import { GAME_GENERATOR_VERSION, GAME_PHYSICS_VERSION, RAPIER_VERSION, SUPPORTED_GAME_GENERATOR_VERSIONS } from "@/game/constants";
 import { generateGameManifestFromSecret } from "@/game/maze";
 import { ARENA_GAME_VERSION } from "@/game/arena";
+import { RACE_GAME_VERSION } from "@/game/race";
 import type { DifficultyKey, GameManifest, GameStyle } from "@/game/types";
 import type { WalletSplToken } from "@/lib/walletTokens";
 import { MIN_PRIZE_USD, ORBS_FEE_USD, rawToTokenNumber } from "@/lib/prizeEconomics";
@@ -201,8 +202,8 @@ export async function createTestOrb(input: {
   let slug = randomBytes(6).toString("base64url");
   while (await redisGetJson<OrbRecord>(orbKey(slug))) slug = randomBytes(6).toString("base64url");
   const style = cleanStyle(input.style);
-  const gameType = input.gameType === "arena" ? "arena" : "maze";
-  const generatorVersion = gameType === "arena" ? ARENA_GAME_VERSION : GAME_GENERATOR_VERSION;
+  const gameType: OrbGameType = input.gameType === "arena" ? "arena" : input.gameType === "race" ? "race" : "maze";
+  const generatorVersion = gameType === "arena" ? ARENA_GAME_VERSION : gameType === "race" ? RACE_GAME_VERSION : GAME_GENERATOR_VERSION;
   const settingsHash = await sha256Hex(JSON.stringify({
     gameType,
     hostWallet: input.hostWallet,
@@ -424,6 +425,13 @@ export async function recordHostSharePost(slug: string, hostXId: string, postId:
   if (stored !== "OK") throw new Error("Could not save the host X post");
   await recordHostSharePostAnalytics(slug, postId).catch((error) => console.warn("[orbs:analytics] host post snapshot failed", error));
   return publicRecord(updated);
+}
+
+export async function getRaceSecretSeed(slug: string) {
+  const record = await getOrbRecord(slug);
+  if (!record || orbGameType(record) !== "race" || !hasVerifiedOnChainFunding(record)) return null;
+  if (Date.now() < record.startsAt) return null;
+  return { orb: publicRecord(record), secretSeed: decryptSeed(record.encryptedSecretSeed) };
 }
 
 export async function getPublicOrb(slug: string): Promise<PublicOrbRecord | null> {
