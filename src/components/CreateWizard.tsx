@@ -47,7 +47,7 @@ async function jsonPayload<T>(response: Response): Promise<T> {
   catch { throw new Error(response.ok ? "The server returned an invalid response" : `The server is temporarily unavailable (${response.status})`); }
 }
 
-export default function CreateWizard({ arenaLiveEnabled = false, raceLiveEnabled = false }: { arenaLiveEnabled?: boolean; raceLiveEnabled?: boolean }) {
+export default function CreateWizard({ arenaLiveEnabled = false, raceLiveEnabled = false, raceLiveReason = null }: { arenaLiveEnabled?: boolean; raceLiveEnabled?: boolean; raceLiveReason?: string | null }) {
   const initialLaunch = useMemo(() => localInputParts(new Date(Date.now() + 24 * 60 * 60 * 1000)), []);
   const [gameType, setGameType] = useState<OrbGameType | null>(null);
   const [step, setStep] = useState(0);
@@ -322,7 +322,7 @@ export default function CreateWizard({ arenaLiveEnabled = false, raceLiveEnabled
           <span className="create-game-badge">ARENA</span><strong>Fight the field.</strong><small>{arenaLiveEnabled ? "Enter together. Use movement, terrain and powers to win." : "Production plumbing is ready; authoritative realtime play is being connected before prize-bearing creation unlocks."}</small>
         </button>
         <button type="button" className="create-game-option race" onClick={() => raceLiveEnabled && setGameType("race")} disabled={!raceLiveEnabled}>
-          <span className="create-game-badge">RACE</span><strong>Beat the field.</strong><small>{raceLiveEnabled ? "Three live laps on a sealed procedural Prismway. Earlier registration starts farther forward." : "Authoritative Race service must be healthy before prize-bearing RACE creation unlocks."}</small>
+          <span className="create-game-badge">RACE</span><strong>Beat the field.</strong><small>{raceLiveEnabled ? "Three live laps on a sealed procedural Prismway. Earlier registration starts farther forward." : (raceLiveReason || "Authoritative Race service must be healthy before prize-bearing RACE creation unlocks.")}</small>
         </button>
       </div>
     </section>
