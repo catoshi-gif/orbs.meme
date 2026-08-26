@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Orbs — Where communities play for their tokens",
     short_name: "Orbs",
-    description: "MAZE and ARENA. Where online communities play for their tokens.",
+    description: "MAZE, ARENA and RACE. Where online communities play for their tokens.",
     start_url: "/",
     scope: "/",
     display: "standalone",

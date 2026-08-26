@@ -9,7 +9,7 @@ export default async function LeaderboardPage() {
   return <div className="page"><div className="container leaderboard-page">
     <span className="eyebrow">All-time winners</span>
     <h1 className="page-title">Winners leave receipts.</h1>
-    <p className="page-intro">Top X accounts by verified MAZE and ARENA wins. Wallet addresses stay out of the public leaderboard.</p>
+    <p className="page-intro">Top X accounts by verified MAZE, ARENA and RACE wins. Wallet addresses stay out of the public leaderboard.</p>
     {leaders.length ? <div className="leaderboard-card">
       <div className="leaderboard-head"><span>Rank</span><span>Player</span><span>Wins</span></div>
       {leaders.map((leader) => <a className="leaderboard-row" href={`https://x.com/${encodeURIComponent(leader.xUsername)}`} target="_blank" rel="noreferrer" key={leader.xUserId}>

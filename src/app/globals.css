@@ -545,9 +545,10 @@ html:not(.dark) .real-orb-hero>.waiting-orb-showcase{
 /* Dedicated, zero-backend how-to-play practice pages. */
 .how-play-page{max-width:1080px}
 .how-play-back{display:inline-flex;margin-bottom:22px;color:var(--muted);font-size:12px;font-weight:800}
-.how-game-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.how-game-links{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .how-game-link{display:grid;align-content:start;gap:18px;min-height:250px;padding:26px;border:1px solid var(--border);border-radius:24px;background:radial-gradient(circle at 20% 0,rgba(91,92,246,.16),transparent 44%),var(--surface);color:var(--text);text-decoration:none;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
 .how-game-link.arena{background:radial-gradient(circle at 80% 0,rgba(32,227,210,.14),transparent 44%),var(--surface)}
+.how-game-link.race{background:radial-gradient(circle at 50% 0,rgba(255,95,210,.15),transparent 46%),radial-gradient(circle at 100% 70%,rgba(32,227,210,.10),transparent 42%),var(--surface)}
 .how-game-link:hover{transform:translateY(-3px);border-color:rgba(117,235,228,.38);box-shadow:0 18px 46px rgba(0,0,0,.16)}
 .how-game-link .game-type-chip{margin:0;width:max-content}
 .how-game-link h3{margin:0 0 8px;font-size:28px}.how-game-link p{margin:0;color:var(--muted);line-height:1.65}.how-game-link>strong{margin-top:auto;color:#7cf5e8;font-size:12px;letter-spacing:.05em}

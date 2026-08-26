@@ -512,7 +512,7 @@ export async function listDiscoverableOrbs(limit = 9): Promise<PublicOrbRecord[]
   if (staleIndexMembers.length) {
     await redisCommand<number>(["ZREM", publicOrbsKey, ...staleIndexMembers]);
   }
-  // MAZE and ARENA share one chronological discovery feed: earliest launch first, furthest-out launch last.
+  // MAZE, ARENA and RACE share one chronological discovery feed: earliest launch first, furthest-out launch last.
   return records.sort((a, b) => a.startsAt - b.startsAt).slice(0, max);
 }
 

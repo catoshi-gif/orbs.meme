@@ -11,7 +11,7 @@ const site = canonicalPublicSiteUrl();
 export const metadata: Metadata = {
   metadataBase: new URL(site),
   title: { default: "Orbs — Where communities play for their tokens", template: "%s · Orbs" },
-  description: "MAZE and ARENA. Host a game, put up a token prize, or join a live Orb and play for it.",
+  description: "MAZE, ARENA and RACE. Host a game, put up a token prize, or join a live Orb and play for it.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: "/favicon.png",
@@ -24,14 +24,14 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Orbs — Where communities play for their tokens",
-    description: "Where online communities play for their tokens. Join a MAZE or ARENA, or drop an Orb for your own community.",
+    description: "Where online communities play for their tokens. Join a MAZE, ARENA or RACE, or drop an Orb for your own community.",
     siteName: "Orbs",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "Orbs — Where communities play for their tokens",
-    description: "MAZE and ARENA. Host a game, put up a token prize, or join a live Orb and play for it.",
+    description: "MAZE, ARENA and RACE. Host a game, put up a token prize, or join a live Orb and play for it.",
   },
 };
 
