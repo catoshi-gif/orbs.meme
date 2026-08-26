@@ -186,10 +186,12 @@ export class RaceAudioEngine {
   }
 
   landing(intensity = 0.6) {
-    // Same low glass-marble tap character as Maze's GameAudioEngine.thump(),
-    // gain-matched into RACE's Arena-style SFX bus/compressor.
+    // Maze wall-thump tonal signature, reused for RACE road contact:
+    // same sine wave, 112–138 Hz starting pitch, 62 Hz fall and 90 ms envelope.
+    // The gain is compensated for RACE's louder Arena-style SFX chain so it
+    // remains clearly tactile underneath the background music.
     const amount = Math.max(0, Math.min(1, intensity));
-    this.duckMusic(0.94, 0.018, 0.065);
+    this.duckMusic(0.88, 0.026, 0.085);
     const ctx = this.ensure();
     if (!ctx || !this.sfxBus) return;
 
@@ -200,7 +202,7 @@ export class RaceAudioEngine {
     osc.frequency.setValueAtTime(112 + amount * 26, now);
     osc.frequency.exponentialRampToValueAtTime(62, now + 0.075);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.012 + amount * 0.013, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.018 + amount * 0.019, now + 0.006);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
     osc.connect(gain);
     gain.connect(this.sfxBus);

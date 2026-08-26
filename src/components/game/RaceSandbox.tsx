@@ -194,7 +194,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
       startRef.current=()=>{if(phaseRef.current!=="ready")return;void audio.start();setRacePhase("countdown");let n=3;setCountdown(n);const id=window.setInterval(()=>{n-=1;if(n>0){setCountdown(n);return}window.clearInterval(id);setCountdown(0);setEventText("GO!");setRacePhase("playing");matchStart=performance.now();live=true;for(const o of racers){const rp=manifest.points[o.pointIndex]!,v=new THREE.Vector3(rp.tangentX,0,rp.tangentZ).normalize().multiplyScalar(o.isHuman?0:config.baseSpeed*.72);o.body.setLinvel({x:v.x,y:0,z:v.z},true)}},760)};
 
       const beginRescue=(o:Racer,now:number)=>{if(o.recovering||o.finishedAt||now<o.rescueGraceUntil)return;o.recovering=true;o.rescueStartedAt=now;o.rescueUntil=now+RACE_RESCUE_MS;const p=o.body.translation();o.rescueFrom.set(p.x,p.y,p.z);o.rescuePointIndex=safeRaceRecoveryPoint(manifest.points,o.pointIndex,manifest.plungeLaunchIndex);o.body.setEnabled(false);if(o.isHuman){audio.rescue();setEventText("NIMBUS RESCUE · SAFE ROAD IN 3")}};
-      const finishRescue=(o:Racer)=>{const rp=manifest.points[o.rescuePointIndex]!,safe=pointPosition(THREE,rp,0,1.18);o.body.setTranslation({x:safe.x,y:safe.y,z:safe.z},false);o.body.setRotation({x:0,y:0,z:0,w:1},false);o.visualPos.copy(safe);o.visualQuat.identity();o.mesh.position.copy(safe);o.body.setEnabled(true);o.body.setLinvel({x:o.isHuman?0:rp.tangentX*config.baseSpeed*.65,y:0,z:o.isHuman?0:rp.tangentZ*config.baseSpeed*.65},true);o.pointIndex=rp.index;o.previousPointIndex=rp.index;o.plungeAirUntil=0;o.plungeLaunchLockUntil=0;if(o.isHuman){humanFacing.set(rp.tangentX,0,rp.tangentZ).normalize();humanWasGrounded=true;humanAirborneSince=0;lastHumanLandingAt=performance.now()}o.rescueGraceUntil=performance.now()+1450;o.recovering=false;o.cloud.visible=false;if(o.isHuman)setEventText("BACK ON TRACK · GO!")};
+      const finishRescue=(o:Racer)=>{const rp=manifest.points[o.rescuePointIndex]!,safe=pointPosition(THREE,rp,0,1.18);o.body.setTranslation({x:safe.x,y:safe.y,z:safe.z},false);o.body.setRotation({x:0,y:0,z:0,w:1},false);o.visualPos.copy(safe);o.visualQuat.identity();o.mesh.position.copy(safe);o.body.setEnabled(true);o.body.setLinvel({x:o.isHuman?0:rp.tangentX*config.baseSpeed*.65,y:0,z:o.isHuman?0:rp.tangentZ*config.baseSpeed*.65},true);o.pointIndex=rp.index;o.previousPointIndex=rp.index;o.plungeAirUntil=0;o.plungeLaunchLockUntil=0;if(o.isHuman){humanFacing.set(rp.tangentX,0,rp.tangentZ).normalize();humanWasGrounded=true;humanAirborneSince=0;lastHumanLandingAt=performance.now()}o.rescueGraceUntil=performance.now()+1450;if(o.isHuman){humanWasGrounded=true;humanAirborneSince=0;lastSurfaceTapAt=performance.now()}o.recovering=false;o.cloud.visible=false;if(o.isHuman)setEventText("BACK ON TRACK · GO!")};
 
       const updateItems=(o:Racer,now:number)=>{if(o.recovering||o.finishedAt)return;if(circularPointDistance(o.pointIndex,manifest.plungeLaunchIndex,manifest.points.length)<=3&&(o.pickupReady.get(`plunge-launch-${o.lap}`)||0)<=now){o.pickupReady.set(`plunge-launch-${o.lap}`,now+120000);const rp=manifest.points[manifest.plungeLaunchIndex]!,touchdownIndex=(manifest.plungeLandIndex+14)%manifest.points.length,touchdown=manifest.points[touchdownIndex]!,bodyPos=o.body.translation(),dx=touchdown.x-bodyPos.x,dz=touchdown.z-bodyPos.z,horizontal=Math.hypot(dx,dz),flightSeconds=clamp(3.75+horizontal/170,3.75,4.55),dy=(touchdown.y+1.15)-bodyPos.y,launchY=(dy+4.905*flightSeconds*flightSeconds)/flightSeconds,incomingY=Math.max(0,o.body.linvel().y),heroY=Math.max(launchY*1.08,launchY+incomingY*.82),horizontalSpeed=Math.max(horizontal/flightSeconds*1.08,15.5),hm=Math.max(1e-6,horizontal);o.body.setLinvel({x:dx/hm*horizontalSpeed,y:heroY,z:dz/hm*horizontalSpeed},true);o.plungeLaunchLockUntil=now+900;o.plungeAirUntil=now+(flightSeconds+1.15)*1000;o.boostUntil=Math.max(o.boostUntil,now+2100);if(o.isHuman){audio.boost();setEventText("ORBITAL PLUNGE · BIG AIR")}}
 
@@ -264,7 +264,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
 
       const resize=()=>{const r=mount.getBoundingClientRect();renderer.setSize(Math.max(1,r.width),Math.max(1,r.height),false);camera.aspect=r.width/Math.max(1,r.height);camera.updateProjectionMatrix()};const ro=new ResizeObserver(resize);ro.observe(mount);resize();renderer.compile(scene,camera);renderer.render(scene,camera);
       const camPos=new THREE.Vector3(),camLook=new THREE.Vector3(),forward=new THREE.Vector3(),rightV=new THREE.Vector3(),desired=new THREE.Vector3(),smoothForward=spawnT.clone(),humanFacing=spawnT.clone(),targetLook=new THREE.Vector3(),cameraMatrix=new THREE.Matrix4(),cameraTargetQuat=new THREE.Quaternion();
-      let humanWasGrounded=true,humanAirborneSince=0,lastHumanLandingAt=0,perfFrames=0,perfWindowStart=performance.now();
+      let humanWasGrounded=true,humanAirborneSince=0,lastSurfaceTapAt=0,perfFrames=0,perfWindowStart=performance.now();
       const render=(ms:number)=>{if(cancelled)return;frame=requestAnimationFrame(render);const dt=Math.min(.05,(ms-prev)/1000);prev=ms;(trackMat.uniforms.uTime.value as number)=ms;ring.rotation.y+=dt*.018;perfFrames+=1;if(ms-perfWindowStart>2200){const fps=perfFrames*1000/Math.max(1,ms-perfWindowStart),next=fps<50?Math.max(.82,renderDpr-.12):fps>58?Math.min(maxDpr,renderDpr+.05):renderDpr;if(Math.abs(next-renderDpr)>.02){renderDpr=next;renderer.setPixelRatio(renderDpr);resize()}perfFrames=0;perfWindowStart=ms;}for(const visual of pickupVisuals.values()){const g=visual.group;if(ms<visual.hiddenUntil){g.visible=false;continue}if(!g.visible){g.visible=true;g.scale.setScalar(.08)}const respawnScale=1-Math.exp(-dt*12);g.scale.lerp(new THREE.Vector3(1,1,1),respawnScale);g.rotation.z+=dt*.78;(g.children[1] as import("three").Mesh).rotation.y+=dt*2.8;(g.children[2] as import("three").Mesh).rotation.z-=dt*1.7;g.position.y+=Math.sin(ms*.0022+visual.phase)*.0009}for(const b of boostMeshes)b.material instanceof THREE.MeshBasicMaterial&&(b.material.opacity=.62+Math.sin(ms*.006+b.position.x)*.18);
         if(live){const now=performance.now(),elapsedNow=(now-matchStart)/1000;acc+=dt;while(acc>=PHYSICS.fixedStep){simTime+=PHYSICS.fixedStep;for(const o of racers){if(o.finishedAt)continue;if(o.recovering){if(now>=o.rescueUntil)finishRescue(o);continue}const p=o.body.translation(),nearest=nearestRacePoint(manifest.points,p.x,p.y,p.z,o.pointIndex),rp=nearest.point;o.previousPointIndex=o.pointIndex;o.pointIndex=rp.index;if(o.pointIndex>manifest.points.length*.24)o.lapArmed=true;if(o.lapArmed&&isForwardLapWrap(o.previousPointIndex,o.pointIndex,manifest.points.length)){o.lap+=1;o.lapArmed=false;if(o.isHuman){audio.lap();setLap(Math.min(config.laps,o.lap+1));setEventText(o.lap>=config.laps-1?"FINAL LAP":"LAP COMPLETE")};if(o.lap>=config.laps){o.finishedAt=now;o.body.setLinvel({x:0,y:o.body.linvel().y,z:0},true);if(!resolved){resolved=true;setWinner(o.username);if(o.isHuman){setRacePhase("won");audio.victory()}else setEventText(`${o.username} WINS · FINISH YOUR RACE`)}else if(o.isHuman){setRacePhase("finished")}continue}}
           const trackDistance=Math.sqrt(nearest.distanceSq),fallThreshold=rp.y-8.5;if(now>=o.rescueGraceUntil&&now>=o.plungeAirUntil&&(p.y<fallThreshold||trackDistance>rp.width*2.25)){beginRescue(o,now);continue}
@@ -279,13 +279,6 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
             }else if(!humanWasGrounded){
               const airtime=Math.max(0,now-humanAirborneSince);
               humanWasGrounded=true;
-
-              // Ignore tiny contact chatter, but make every real landing feel tactile.
-              if(airtime>=105&&now-lastHumanLandingAt>120){
-                lastHumanLandingAt=now;
-                const impact=Math.max(0,Math.min(1,(Math.abs(v.y)-.6)/7.5));
-                audio.landing(.28+impact*.72);
-              }
 
               // After meaningful air, align the *actual physics trajectory* to the local
               // forward race tangent. This is not a camera trick: it fixes planar velocity,
@@ -400,7 +393,39 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
               }
               o.body.setLinvel({x:nx,y:v.y,z:nz},true);
             }
-          }}world.step();updateProjectiles(now,PHYSICS.fixedStep);acc-=PHYSICS.fixedStep}updateDraft(now);if(ms-lastUi>90){lastUi=ms;const v=human.body.linvel();setElapsed(elapsedNow);setSpeed(Math.hypot(v.x,v.z));const currentPlace=rankOf(human);setPlace(currentPlace);if(currentPlace<lastHumanPlace&&lastHumanPlace-currentPlace<=3&&elapsedNow>3){audio.overtake();setEventText(`OVERTAKE · P${currentPlace}`)}lastHumanPlace=currentPlace;setItem(human.item);if(human.recovering)setRescueLeft(Math.max(0,(human.rescueUntil-now)/1000));else setRescueLeft(0);audio.setSpeed(Math.hypot(v.x,v.z))}}
+          }}
+          const humanPreStepV=human.recovering?null:human.body.linvel();
+          world.step();
+
+          // Tactile road-contact detector. The old implementation required >105ms of
+          // continuous "airborne" state, which misses the tiny high-speed skips that are
+          // visually obvious on the procedural road. Like Maze's wall thump, compare
+          // velocity immediately across the physics step and listen for an impact impulse.
+          if(humanPreStepV&&!human.recovering&&now>=human.rescueGraceUntil){
+            const postV=human.body.linvel();
+            const hp=human.body.translation();
+            const contact=nearestRacePoint(manifest.points,hp.x,hp.y,hp.z,human.pointIndex);
+            const cp=contact.point;
+            const verticalToRoad=Math.abs(hp.y-cp.y);
+            const downwardBefore=Math.max(0,-humanPreStepV.y);
+            const verticalImpulse=postV.y-humanPreStepV.y;
+            const roadContact=!cp.gap&&verticalToRoad<1.72;
+
+            // Detect both proper landings and little pavement skips. A short debounce
+            // prevents sustained rolling/contact solver jitter from becoming a buzz.
+            if(
+              roadContact&&
+              downwardBefore>.18&&
+              verticalImpulse>.32&&
+              now-lastSurfaceTapAt>92
+            ){
+              lastSurfaceTapAt=now;
+              const impact=clamp((downwardBefore*.72+verticalImpulse*.55-.18)/4.2,0,1);
+              audio.landing(.22+impact*.78);
+            }
+          }
+
+          updateProjectiles(now,PHYSICS.fixedStep);acc-=PHYSICS.fixedStep}updateDraft(now);if(ms-lastUi>90){lastUi=ms;const v=human.body.linvel();setElapsed(elapsedNow);setSpeed(Math.hypot(v.x,v.z));const currentPlace=rankOf(human);setPlace(currentPlace);if(currentPlace<lastHumanPlace&&lastHumanPlace-currentPlace<=3&&elapsedNow>3){audio.overtake();setEventText(`OVERTAKE · P${currentPlace}`)}lastHumanPlace=currentPlace;setItem(human.item);if(human.recovering)setRescueLeft(Math.max(0,(human.rescueUntil-now)/1000));else setRescueLeft(0);audio.setSpeed(Math.hypot(v.x,v.z))}}
         for(const o of racers){const mat=o.mesh.material as import("three").ShaderMaterial;mat.uniforms.uTime.value=ms;if(o.recovering){const t=clamp((ms-o.rescueStartedAt)/RACE_RESCUE_MS,0,1),rp=manifest.points[o.rescuePointIndex]!,end=pointPosition(THREE,rp,0,1.25),arc=Math.sin(t*Math.PI)*5.2;o.mesh.position.lerpVectors(o.rescueFrom,end,t);o.mesh.position.y+=arc;o.label.position.set(o.mesh.position.x,o.mesh.position.y-.22,o.mesh.position.z);o.cloud.visible=true;o.cloud.position.copy(o.mesh.position);o.cloud.position.y-=.68;o.cloud.rotation.y+=dt*1.2;continue}o.cloud.visible=false;
           const p=o.body.translation(),q=o.body.rotation(),v=o.body.linvel(),sp=Math.hypot(v.x,v.z);
           const posTarget=new THREE.Vector3(p.x,p.y,p.z),quatTarget=new THREE.Quaternion(q.x,q.y,q.z,q.w);
