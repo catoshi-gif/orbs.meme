@@ -63,7 +63,7 @@ export default function AdminIntegrityPanel(){
 
   return <section className="admin-integrity">
     <div className="admin-sandbox-heading">
-      <div><span className="eyebrow">Fair-play integrity</span><h2>Bot telemetry · shadow mode</h2><p>Authoritative Arena movement is scored for repetitive input cycles, repeating paths, machine-like action cadence, pickup camping, shared IP fingerprints, and X follower count. Scores never auto-ban or auto-eject; enforcement is manual from this panel.</p></div>
+      <div><span className="eyebrow">Fair-play integrity</span><h2>Bot telemetry · shadow mode</h2><p>Authoritative Arena and Race movement is scored for repetitive input cycles, repeating paths, machine-like action cadence, pickup camping, shared IP fingerprints, and X follower count. Scores never auto-ban or auto-eject; enforcement is manual from this panel.</p></div>
       <button className="btn-secondary" onClick={()=>void load()} disabled={loading}>{loading?"Loading…":"Refresh telemetry"}</button>
     </div>
     {message?<div className="admin-integrity-message">{message}</div>:null}
@@ -74,13 +74,13 @@ export default function AdminIntegrityPanel(){
         <td><a href={`https://x.com/${encodeURIComponent(row.username)}`} target="_blank" rel="noreferrer">@{row.username}</a><small>{short(row.wallet)}</small><small>X ID {short(row.xUserId)}</small></td>
         <td><strong>{row.followersCount===null?"—":row.followersCount.toLocaleString()}</strong>{row.followersCount===0?<small className="integrity-warning">zero followers</small>:null}</td>
         <td>{row.signals.length?row.signals.slice(0,4).map(signal=><small key={signal}>{signal}</small>):<small>no strong signals</small>}</td>
-        <td><small>input loop {pct(row.movementPatternScore)}</small><small>path loop {pct(row.positionLoopScore)}</small><small>action cadence {pct(row.actionRegularityScore)}</small><small>health zone {pct(row.recoveryZoneShare)} · pickups {row.recoveryPickups}</small></td>
-        <td><code>{row.ipHash||"—"}</code><small>{row.sameIpPeers?`${row.sameIpPeers+1} entrants share fingerprint`:"unique in this Arena"}</small></td>
-        <td><a href={`/orb/${encodeURIComponent(row.slug)}`}>{row.slug}</a><small>{row.phase} · {row.alive?`${row.health} HP`:`eliminated`}</small><small>{new Date(row.sampledAt).toLocaleTimeString()}</small></td>
+        <td><small>input loop {pct(row.movementPatternScore)}</small><small>path loop {pct(row.positionLoopScore)}</small><small>action cadence {pct(row.actionRegularityScore)}</small><small>{row.game==="race"?`road edge ${pct(row.recoveryZoneShare)} · rescues ${row.recoveryPickups}`:`health zone ${pct(row.recoveryZoneShare)} · pickups ${row.recoveryPickups}`}</small></td>
+        <td><code>{row.ipHash||"—"}</code><small>{row.sameIpPeers?`${row.sameIpPeers+1} entrants share fingerprint`:row.game==="race"?"unique in this Race":"unique in this Arena"}</small></td>
+        <td><a href={`/orb/${encodeURIComponent(row.slug)}`}>{row.slug}</a><small>{row.game==="race"?`RACE · ${row.phase}`:`ARENA · ${row.phase} · ${row.alive?`${row.health} HP`:`eliminated`}`}</small><small>{new Date(row.sampledAt).toLocaleTimeString()}</small></td>
         <td>{banned?<span className="integrity-banned">BLOCKED</span>:<button className="mini-action integrity-ban" onClick={()=>void banPlayer(row)} disabled={busy===row.wallet}>{busy===row.wallet?"Blocking…":"Ban X + wallet"}</button>}</td>
-      </tr>}) : <tr><td colSpan={8}><small>{loading?"Loading Arena telemetry…":"No Arena integrity telemetry has been reported yet."}</small></td></tr>}
+      </tr>}) : <tr><td colSpan={8}><small>{loading?"Loading game telemetry…":"No game integrity telemetry has been reported yet."}</small></td></tr>}
     </tbody></table></div>
-    <div className="card admin-x-note"><strong>Active competition restrictions</strong><p>Restrictions are enforced before both ARENA and MAZE competitive sessions are issued. X user ID and wallet are stored together so changing an X username does not bypass the block. IP fingerprints are evidence only and never automatically ban everyone on the same connection.</p>
+    <div className="card admin-x-note"><strong>Active competition restrictions</strong><p>Restrictions are enforced before MAZE, ARENA, and RACE competitive sessions are issued, and live Arena/Race authorities receive manual ban controls. X user ID and wallet are stored together so changing an X username does not bypass the block. IP fingerprints are evidence only and never automatically ban everyone on the same connection.</p>
       {bans.length?<div className="admin-integrity-bans">{bans.map(ban=><div className="admin-integrity-ban-row" key={ban.id}><span>{ban.username?`@${ban.username}`:"X account"}</span><code>{short(ban.wallet)}</code><small>{new Date(ban.createdAt).toLocaleString()}</small><button className="mini-action" onClick={()=>void unban(ban)} disabled={busy===ban.id}>{busy===ban.id?"Removing…":"Unban"}</button></div>)}</div>:<p>No active restrictions.</p>}
     </div>
   </section>

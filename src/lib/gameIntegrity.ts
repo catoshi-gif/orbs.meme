@@ -29,6 +29,7 @@ export type CompetitionRestriction = {
 
 export type ArenaIntegrityTelemetry = {
   schemaVersion: 1;
+  game?: "arena" | "race";
   version: string;
   matchId: string;
   orbId: string;

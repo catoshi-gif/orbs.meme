@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getAdminSession } from "@/lib/adminAuth";
 import { sendArenaIntegrityControl } from "@/lib/arenaRuntime";
+import { sendRaceIntegrityControl } from "@/lib/raceRuntime";
 import {
   banCompetitionIdentity,
   listArenaIntegrityTelemetry,
@@ -57,8 +58,8 @@ export async function POST(request: Request) {
         reason: typeof body.reason === "string" ? body.reason : null,
         createdBy: admin.wallet,
       });
-      const control = await sendArenaIntegrityControl({action:"ban",wallet:record.wallet,xUserId:record.xUserId});
-      return NextResponse.json({ok:true,record,kicked:control.kicked,runtimeReached:control.ok});
+      const [arenaControl,raceControl]=await Promise.all([sendArenaIntegrityControl({action:"ban",wallet:record.wallet,xUserId:record.xUserId}),sendRaceIntegrityControl({action:"ban",wallet:record.wallet,xUserId:record.xUserId})]);
+      return NextResponse.json({ok:true,record,kicked:arenaControl.kicked+raceControl.kicked,runtimeReached:arenaControl.ok||raceControl.ok});
     } catch (error) {
       return NextResponse.json({ok:false,error:error instanceof Error?error.message:"Could not restrict player"},{status:503});
     }
@@ -68,8 +69,8 @@ export async function POST(request: Request) {
   if (!record?.id) return NextResponse.json({ok:false,error:"Restriction record required"},{status:400});
   try {
     await unbanCompetitionIdentity(record);
-    const control = await sendArenaIntegrityControl({action:"unban",wallet:record.wallet,xUserId:record.xUserId});
-    return NextResponse.json({ok:true,runtimeReached:control.ok});
+    const [arenaControl,raceControl]=await Promise.all([sendArenaIntegrityControl({action:"unban",wallet:record.wallet,xUserId:record.xUserId}),sendRaceIntegrityControl({action:"unban",wallet:record.wallet,xUserId:record.xUserId})]);
+    return NextResponse.json({ok:true,runtimeReached:arenaControl.ok||raceControl.ok});
   } catch (error) {
     return NextResponse.json({ok:false,error:error instanceof Error?error.message:"Could not remove restriction"},{status:503});
   }
