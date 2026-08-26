@@ -8,7 +8,7 @@ export default function RaceHowToPlay() {
     <Link className="how-play-back" href="/how-it-works">← How Orbs works</Link>
     <span className="eyebrow">RACE · HOW TO PLAY</span>
     <h1 className="page-title">Hold the line. Use the air. <span className="gradient-text">Finish first.</span></h1>
-    <p className="page-intro">Practice the same local RACE handling here before a live Orb. Prize-bearing races use an authoritative Railway simulation, a sealed procedural course, and an automatically synchronized start.</p>
+    <p className="page-intro">Learn the RACE controls here with a lightweight browser-only trainer. Prize-bearing races use the full authoritative Railway simulation, sealed procedural course, and automatically synchronized multiplayer start.</p>
 
     <RacePractice />
 
