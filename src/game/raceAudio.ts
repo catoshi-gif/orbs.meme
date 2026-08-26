@@ -185,6 +185,33 @@ export class RaceAudioEngine {
     this.sfxTone(620, 0.065, 0.024, "sine", 0.045, 780);
   }
 
+  landing(intensity = 0.6) {
+    // Same low glass-marble tap character as Maze's GameAudioEngine.thump(),
+    // gain-matched into RACE's Arena-style SFX bus/compressor.
+    const amount = Math.max(0, Math.min(1, intensity));
+    this.duckMusic(0.94, 0.018, 0.065);
+    const ctx = this.ensure();
+    if (!ctx || !this.sfxBus) return;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(112 + amount * 26, now);
+    osc.frequency.exponentialRampToValueAtTime(62, now + 0.075);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.012 + amount * 0.013, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + 0.1);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+  }
+
   boost() {
     this.duckMusic(0.78, 0.065, 0.14);
     this.sfxTone(220, 0.14, 0.09, "sawtooth", 0, 760);

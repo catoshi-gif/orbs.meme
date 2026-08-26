@@ -194,7 +194,7 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
       startRef.current=()=>{if(phaseRef.current!=="ready")return;void audio.start();setRacePhase("countdown");let n=3;setCountdown(n);const id=window.setInterval(()=>{n-=1;if(n>0){setCountdown(n);return}window.clearInterval(id);setCountdown(0);setEventText("GO!");setRacePhase("playing");matchStart=performance.now();live=true;for(const o of racers){const rp=manifest.points[o.pointIndex]!,v=new THREE.Vector3(rp.tangentX,0,rp.tangentZ).normalize().multiplyScalar(o.isHuman?0:config.baseSpeed*.72);o.body.setLinvel({x:v.x,y:0,z:v.z},true)}},760)};
 
       const beginRescue=(o:Racer,now:number)=>{if(o.recovering||o.finishedAt||now<o.rescueGraceUntil)return;o.recovering=true;o.rescueStartedAt=now;o.rescueUntil=now+RACE_RESCUE_MS;const p=o.body.translation();o.rescueFrom.set(p.x,p.y,p.z);o.rescuePointIndex=safeRaceRecoveryPoint(manifest.points,o.pointIndex,manifest.plungeLaunchIndex);o.body.setEnabled(false);if(o.isHuman){audio.rescue();setEventText("NIMBUS RESCUE · SAFE ROAD IN 3")}};
-      const finishRescue=(o:Racer)=>{const rp=manifest.points[o.rescuePointIndex]!,safe=pointPosition(THREE,rp,0,1.18);o.body.setTranslation({x:safe.x,y:safe.y,z:safe.z},false);o.body.setRotation({x:0,y:0,z:0,w:1},false);o.visualPos.copy(safe);o.visualQuat.identity();o.mesh.position.copy(safe);o.body.setEnabled(true);o.body.setLinvel({x:o.isHuman?0:rp.tangentX*config.baseSpeed*.65,y:0,z:o.isHuman?0:rp.tangentZ*config.baseSpeed*.65},true);o.pointIndex=rp.index;o.previousPointIndex=rp.index;o.plungeAirUntil=0;o.plungeLaunchLockUntil=0;if(o.isHuman)humanFacing.set(rp.tangentX,0,rp.tangentZ).normalize();o.rescueGraceUntil=performance.now()+1450;o.recovering=false;o.cloud.visible=false;if(o.isHuman)setEventText("BACK ON TRACK · GO!")};
+      const finishRescue=(o:Racer)=>{const rp=manifest.points[o.rescuePointIndex]!,safe=pointPosition(THREE,rp,0,1.18);o.body.setTranslation({x:safe.x,y:safe.y,z:safe.z},false);o.body.setRotation({x:0,y:0,z:0,w:1},false);o.visualPos.copy(safe);o.visualQuat.identity();o.mesh.position.copy(safe);o.body.setEnabled(true);o.body.setLinvel({x:o.isHuman?0:rp.tangentX*config.baseSpeed*.65,y:0,z:o.isHuman?0:rp.tangentZ*config.baseSpeed*.65},true);o.pointIndex=rp.index;o.previousPointIndex=rp.index;o.plungeAirUntil=0;o.plungeLaunchLockUntil=0;if(o.isHuman){humanFacing.set(rp.tangentX,0,rp.tangentZ).normalize();humanWasGrounded=true;humanAirborneSince=0;lastHumanLandingAt=performance.now()}o.rescueGraceUntil=performance.now()+1450;o.recovering=false;o.cloud.visible=false;if(o.isHuman)setEventText("BACK ON TRACK · GO!")};
 
       const updateItems=(o:Racer,now:number)=>{if(o.recovering||o.finishedAt)return;if(circularPointDistance(o.pointIndex,manifest.plungeLaunchIndex,manifest.points.length)<=3&&(o.pickupReady.get(`plunge-launch-${o.lap}`)||0)<=now){o.pickupReady.set(`plunge-launch-${o.lap}`,now+120000);const rp=manifest.points[manifest.plungeLaunchIndex]!,touchdownIndex=(manifest.plungeLandIndex+14)%manifest.points.length,touchdown=manifest.points[touchdownIndex]!,bodyPos=o.body.translation(),dx=touchdown.x-bodyPos.x,dz=touchdown.z-bodyPos.z,horizontal=Math.hypot(dx,dz),flightSeconds=clamp(3.75+horizontal/170,3.75,4.55),dy=(touchdown.y+1.15)-bodyPos.y,launchY=(dy+4.905*flightSeconds*flightSeconds)/flightSeconds,incomingY=Math.max(0,o.body.linvel().y),heroY=Math.max(launchY*1.08,launchY+incomingY*.82),horizontalSpeed=Math.max(horizontal/flightSeconds*1.08,15.5),hm=Math.max(1e-6,horizontal);o.body.setLinvel({x:dx/hm*horizontalSpeed,y:heroY,z:dz/hm*horizontalSpeed},true);o.plungeLaunchLockUntil=now+900;o.plungeAirUntil=now+(flightSeconds+1.15)*1000;o.boostUntil=Math.max(o.boostUntil,now+2100);if(o.isHuman){audio.boost();setEventText("ORBITAL PLUNGE · BIG AIR")}}
 
@@ -263,13 +263,56 @@ export default function RaceSandbox({playerCount,style,seed,generation}:Props){
       const updateDraft=(now:number)=>{let active=false;const hp=human.body.translation(),hprog=raceProgress(human.pointIndex,human.lap,manifest.points.length);for(const o of racers){if(o===human||o.finishedAt||o.recovering)continue;const d=raceProgress(o.pointIndex,o.lap,manifest.points.length)-hprog;if(d<=0||d>6)continue;const p=o.body.translation();if(Math.hypot(p.x-hp.x,p.z-hp.z)<7.8){active=true;human.boostUntil=Math.max(human.boostUntil,now+260);break}}setWake(active)};
 
       const resize=()=>{const r=mount.getBoundingClientRect();renderer.setSize(Math.max(1,r.width),Math.max(1,r.height),false);camera.aspect=r.width/Math.max(1,r.height);camera.updateProjectionMatrix()};const ro=new ResizeObserver(resize);ro.observe(mount);resize();renderer.compile(scene,camera);renderer.render(scene,camera);
-      const camPos=new THREE.Vector3(),camLook=new THREE.Vector3(),forward=new THREE.Vector3(),rightV=new THREE.Vector3(),desired=new THREE.Vector3(),smoothForward=spawnT.clone(),humanFacing=spawnT.clone(),targetLook=new THREE.Vector3(),cameraMatrix=new THREE.Matrix4(),cameraTargetQuat=new THREE.Quaternion();let perfFrames=0,perfWindowStart=performance.now();
+      const camPos=new THREE.Vector3(),camLook=new THREE.Vector3(),forward=new THREE.Vector3(),rightV=new THREE.Vector3(),desired=new THREE.Vector3(),smoothForward=spawnT.clone(),humanFacing=spawnT.clone(),targetLook=new THREE.Vector3(),cameraMatrix=new THREE.Matrix4(),cameraTargetQuat=new THREE.Quaternion();
+      let humanWasGrounded=true,humanAirborneSince=0,lastHumanLandingAt=0,perfFrames=0,perfWindowStart=performance.now();
       const render=(ms:number)=>{if(cancelled)return;frame=requestAnimationFrame(render);const dt=Math.min(.05,(ms-prev)/1000);prev=ms;(trackMat.uniforms.uTime.value as number)=ms;ring.rotation.y+=dt*.018;perfFrames+=1;if(ms-perfWindowStart>2200){const fps=perfFrames*1000/Math.max(1,ms-perfWindowStart),next=fps<50?Math.max(.82,renderDpr-.12):fps>58?Math.min(maxDpr,renderDpr+.05):renderDpr;if(Math.abs(next-renderDpr)>.02){renderDpr=next;renderer.setPixelRatio(renderDpr);resize()}perfFrames=0;perfWindowStart=ms;}for(const visual of pickupVisuals.values()){const g=visual.group;if(ms<visual.hiddenUntil){g.visible=false;continue}if(!g.visible){g.visible=true;g.scale.setScalar(.08)}const respawnScale=1-Math.exp(-dt*12);g.scale.lerp(new THREE.Vector3(1,1,1),respawnScale);g.rotation.z+=dt*.78;(g.children[1] as import("three").Mesh).rotation.y+=dt*2.8;(g.children[2] as import("three").Mesh).rotation.z-=dt*1.7;g.position.y+=Math.sin(ms*.0022+visual.phase)*.0009}for(const b of boostMeshes)b.material instanceof THREE.MeshBasicMaterial&&(b.material.opacity=.62+Math.sin(ms*.006+b.position.x)*.18);
         if(live){const now=performance.now(),elapsedNow=(now-matchStart)/1000;acc+=dt;while(acc>=PHYSICS.fixedStep){simTime+=PHYSICS.fixedStep;for(const o of racers){if(o.finishedAt)continue;if(o.recovering){if(now>=o.rescueUntil)finishRescue(o);continue}const p=o.body.translation(),nearest=nearestRacePoint(manifest.points,p.x,p.y,p.z,o.pointIndex),rp=nearest.point;o.previousPointIndex=o.pointIndex;o.pointIndex=rp.index;if(o.pointIndex>manifest.points.length*.24)o.lapArmed=true;if(o.lapArmed&&isForwardLapWrap(o.previousPointIndex,o.pointIndex,manifest.points.length)){o.lap+=1;o.lapArmed=false;if(o.isHuman){audio.lap();setLap(Math.min(config.laps,o.lap+1));setEventText(o.lap>=config.laps-1?"FINAL LAP":"LAP COMPLETE")};if(o.lap>=config.laps){o.finishedAt=now;o.body.setLinvel({x:0,y:o.body.linvel().y,z:0},true);if(!resolved){resolved=true;setWinner(o.username);if(o.isHuman){setRacePhase("won");audio.victory()}else setEventText(`${o.username} WINS · FINISH YOUR RACE`)}else if(o.isHuman){setRacePhase("finished")}continue}}
           const trackDistance=Math.sqrt(nearest.distanceSq),fallThreshold=rp.y-8.5;if(now>=o.rescueGraceUntil&&now>=o.plungeAirUntil&&(p.y<fallThreshold||trackDistance>rp.width*2.25)){beginRescue(o,now);continue}
           updateItems(o,now);
           const k=controlsRef.current,rawHumanSteer=coarse?k.touchX:(k.left?-1:0)+(k.right?1:0),steer=o.isHuman?rawHumanSteer:botSteer(o,now);
           const v=o.body.linvel(),air=!grounded(o),slow=now<o.slowedUntil?.72:1,boost=now<o.boostUntil,throttle=o.isHuman?(k.up?1:0):1,brake=o.isHuman&&k.down;
+
+          if(o.isHuman){
+            if(air){
+              if(humanWasGrounded)humanAirborneSince=now;
+              humanWasGrounded=false;
+            }else if(!humanWasGrounded){
+              const airtime=Math.max(0,now-humanAirborneSince);
+              humanWasGrounded=true;
+
+              // Ignore tiny contact chatter, but make every real landing feel tactile.
+              if(airtime>=105&&now-lastHumanLandingAt>120){
+                lastHumanLandingAt=now;
+                const impact=Math.max(0,Math.min(1,(Math.abs(v.y)-.6)/7.5));
+                audio.landing(.28+impact*.72);
+              }
+
+              // After meaningful air, align the *actual physics trajectory* to the local
+              // forward race tangent. This is not a camera trick: it fixes planar velocity,
+              // rolling angular velocity, driver heading and therefore the camera together.
+              if(airtime>=360){
+                const tangent=new THREE.Vector3(rp.tangentX,0,rp.tangentZ).normalize();
+                const planarSpeed=Math.hypot(v.x,v.z);
+                if(planarSpeed>.35){
+                  const current=new THREE.Vector3(v.x/planarSpeed,0,v.z/planarSpeed);
+                  const bigAir=airtime>=850;
+                  const align=bigAir?.90:.46;
+                  current.lerp(tangent,align).normalize();
+                  const correctedX=current.x*planarSpeed,correctedZ=current.z*planarSpeed;
+                  o.body.setLinvel({x:correctedX,y:v.y,z:correctedZ},true);
+
+                  // Keep the sphere's physical roll consistent with the corrected travel
+                  // direction so it does not visually keep spinning along the old flight path.
+                  const rollRadius=Math.max(.1,PHYSICS.ballRadius);
+                  o.body.setAngvel({x:correctedZ/rollRadius,y:0,z:-correctedX/rollRadius},true);
+
+                  humanFacing.lerp(tangent,bigAir?.94:.58).normalize();
+                  smoothForward.lerp(humanFacing,bigAir?.82:.38).normalize();
+                }
+              }
+            }
+          }
+
           let targetSpeed=throttle?(boost?config.boostSpeed:config.baseSpeed):0;
           if(throttle)targetSpeed+=Math.max(0,-rp.tangentY)*13;
           if(brake)targetSpeed*=.22;
