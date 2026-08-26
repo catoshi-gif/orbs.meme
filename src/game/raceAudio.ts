@@ -191,7 +191,7 @@ export class RaceAudioEngine {
     // The gain is compensated for RACE's louder Arena-style SFX chain so it
     // remains clearly tactile underneath the background music.
     const amount = Math.max(0, Math.min(1, intensity));
-    this.duckMusic(0.88, 0.026, 0.085);
+    this.duckMusic(0.80, 0.032, 0.10);
     const ctx = this.ensure();
     if (!ctx || !this.sfxBus) return;
 
@@ -202,7 +202,7 @@ export class RaceAudioEngine {
     osc.frequency.setValueAtTime(112 + amount * 26, now);
     osc.frequency.exponentialRampToValueAtTime(62, now + 0.075);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.018 + amount * 0.019, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.027 + amount * 0.028, now + 0.006);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
     osc.connect(gain);
     gain.connect(this.sfxBus);
