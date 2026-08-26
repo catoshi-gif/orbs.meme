@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 type Telemetry = {
+  game?:"arena"|"race";
   matchId:string;orbId:string;slug:string;sampledAt:number;phase:string;playerId:string;wallet:string;xUserId:string;username:string;
   followersCount:number|null;ipHash:string|null;sameIpPeers:number;alive:boolean;health:number;score:number;level:"normal"|"watch"|"high";signals:string[];
   movementPatternScore:number;positionLoopScore:number;actionRegularityScore:number;recoveryZoneShare:number;recoveryPickups:number;blockedPickupAttempts:number;actions:number;inputSamples:number;positionSamples:number;
