@@ -1,6 +1,8 @@
 {
   "name": "orbs-meme",
-  "version": "0.2.0",
+  "version": "1.0.0",
+  "description": "Open-source Solana community competition platform with deterministic and server-authoritative multiplayer games.",
+  "license": "MIT",
   "private": true,
   "engines": {
     "node": "22.x"
