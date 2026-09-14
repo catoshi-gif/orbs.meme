@@ -1,21 +1,18 @@
-# Build status
+# Source snapshot validation status
 
-## Validation performed in this handoff
+This file records validation of the **open-source repository snapshot**, not the operational health of any live deployment. Production health, configuration and legal readiness must be checked independently.
 
-- All repository `.ts` / `.tsx` files passed a TypeScript parser/transpile syntax scan.
-- The procedural generator modules compile standalone with TypeScript 5.8.3.
-- Determinism smoke test passed: identical slug + difficulty + style produce byte-equivalent generated manifests.
-- 1,000-seed sweeps per difficulty completed with no gate/bumper module shortfalls and no checkpoint/module overlaps.
-- Current observed path ranges across the sweep:
-  - Quick: 52-68 path cells (mean 58.2)
-  - Classic: 106-117 path cells (mean 112.0)
-  - Brutal: 171-184 path cells (mean 177.9)
+## Repository-level review performed for public release
 
-## Not run in this environment
+- reviewed source tree for committed `.env` files, private-key material, obvious API tokens/passwords and personal filesystem paths; none were intentionally included in this snapshot
+- removed the historical hard-coded test/operator wallet exemption; creation-policy exemptions now come only from `ADMIN_WALLET` / `ORBS_ADMIN_WALLETS`
+- added `.gitignore`, `.env.example`, MIT `LICENSE`, `SECURITY.md` and `CONTRIBUTING.md`
+- refreshed the root README and current architecture documentation to describe MAZE, ARENA, RACE, Anchor custody, qualification and settlement boundaries
+- marked early V0.2/V0.4 engineering notes as historical rather than current product status
 
-The execution environment cannot reach the npm registry reliably, so a complete dependency install / `next build` could not be run here.
+## Required verification before publishing/deploying
 
-After replacing the repo, run or let Vercel run:
+Run from the repository root with dependencies available:
 
 ```bash
 npm install
@@ -23,4 +20,19 @@ npm run typecheck
 npm run build
 ```
 
-If Vercel surfaces a compile or bundling issue, preserve the complete build output. The new game code is isolated primarily under `src/game`, `src/components/game`, and `/orb/[slug]/play`, so fixes can remain surgical.
+For the Anchor program, use the project's security/preflight scripts in an environment with Rust, Cargo, Solana and Anchor installed:
+
+```bash
+npm run anchor:security
+npm run anchor:preflight
+```
+
+For `arena-server/` and `race-server/`, install each service's dependencies and perform its documented health/version preflight before enabling prize-bearing creation.
+
+## Git-history warning
+
+A source ZIP cannot prove that an older commit in the original Git repository never contained a secret. Before changing an existing private GitHub repository to public, scan the **full Git history** with a credential scanner such as Gitleaks or TruffleHog. If preservation of private history is unnecessary, publishing this sanitized snapshot as a fresh public history is the lowest-risk option.
+
+## What this status does not certify
+
+This document is not a security audit, legal opinion, smart-contract audit, bug bounty report or guarantee that a production deployment is correctly configured. It records repository hygiene and the validation commands expected before release.

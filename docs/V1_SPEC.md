@@ -1,15 +1,15 @@
-# Orbs.meme V1 Website + Protocol Technical Specification
+# Orbs.meme V1 — current product + protocol specification
 
 **Tagline:** Grow your community. Share the love. Join the movement.
 
-**V1 definition:** A host creates a timed 3D marble challenge, funds a prize using a standard SPL token, and shares a unique Orb URL. Players qualify by connecting X, completing the host-follow step, connecting a Solana wallet, passing anti-automation checks, and publishing one original entry post containing the Orb link. At launch, everyone races through the same committed game. The first server-validated finish wins the escrowed prize.
+**V1 definition:** A host creates a timed MAZE, ARENA, or RACE competition, funds a Solana-token prize, and shares a unique Orb URL. Players qualify by connecting X, completing the host-follow step, connecting a Solana wallet, passing human/abuse checks, and publishing one original entry post containing the Orb link. Game rules are committed/version-pinned before play; winner selection is independently verified or server-authoritative, and the escrowed prize settles through the Anchor program.
 
-**V1 token policy:** Standard SPL Token Program only. Token-2022 is out of scope.
+**V1 token policy:** Custody uses the classic SPL Token Program. Standard SPL prizes are supported; native SOL is presented as SOL and wrapped into WSOL for the classic-SPL custody path. Token-2022 is out of scope and rejected.
 
 ## Product principles
 - Consumer game first; crypto mechanics second.
 - Free to play; host funds the prize.
-- Skill determines the winner; no random selection.
+- Gameplay determines the winner; no random prize selection.
 - Prize is fully funded before launch and cannot be casually withdrawn by the host.
 - On-chain program owns custody/settlement; game server owns authoritative gameplay.
 - X identity can be verified with OAuth. If Orbs does not pay for X relationship lookups, the Follow Host step must be described as completed/attested, not as a verified follow.
@@ -41,7 +41,7 @@ Mobile header: logo, theme toggle, wallet control, compact menu. The live game h
 
 ## Home
 Hero copy: **Put up a reward. Drop an Orb. Grow your community.**
-Subhead: Create a live marble challenge for your followers. Fund the prize with a Solana token. First valid finish wins.
+Subhead: Create a live skill game for your followers. Fund the prize with a Solana token. The verified game winner takes the prize.
 CTAs: **Create an Orb** / **Find a live Orb**.
 Trust line: Free to play · Skill decides · Prize escrowed before launch.
 
@@ -50,7 +50,7 @@ Discovery tabs: Live, Starting Soon, Trending, Big Orbs. Cards show host, token 
 ## Create wizard
 1. Identity: connect X + wallet.
 2. Prize: SOL/standard SPL picker, total creator commitment, USD quote, included same-token $1.15 protocol fee, derived winner prize, balance check.
-3. Game: Quick ~5m / Classic ~10m / Brutal ~15m, marble color, board color.
+3. Game: choose MAZE, ARENA, or RACE. MAZE also selects Quick / Classic / Brutal difficulty; each mode exposes its relevant visual configuration.
 4. Launch: date/time/timezone and share-card preview.
 5. Review + Fund: creator reviews one total wallet debit; the $1.15 fee is carved out and the remainder funds the winner prize; wallet transaction creates/funds Orb.
 6. Share: unique URL, copy, X intent, deterministic Open Graph card.
@@ -69,19 +69,23 @@ Qualification:
 4. Pass Turnstile + abuse-risk policy; validate challenge server-side.
 5. Add an original line, publish the Orb link through an explicit X Web Intent, then verify the connected account's recent posts through the official X API. Store the verified post ID once per entrant/Orb. Do not auto-publish or encourage duplicate/near-duplicate contest posts.
 
-At T-10 seconds enter full-screen launch state. At T0 reveal the maze seed and enter the game.
+Near launch, enter the full-screen game state. MAZE reveals its canonical seed/manifest at T0. ARENA/RACE issue authenticated realtime admission only through their configured authoritative services.
 
-## Live game
-Desktop: WASD/arrow direct steering. Mobile: always-on onscreen joystick steering. There is no alternate mobile movement mode.
+## Live games
 
-Use a regional persistent WebSocket service with fixed-timestep authoritative physics. Browser predicts/renders; server receives ordered normalized steering inputs and determines checkpoints/finish. Client never declares the winner.
+### MAZE
+Desktop uses WASD/arrow direct steering and mobile uses the onscreen joystick. The browser records a bounded deterministic input/recovery replay; the server independently reconstructs the pinned Rapier simulation and only an accepted replay can acquire the winner lock.
 
-The challenge should use physics obstacles and timed/moving elements so it is not a trivial static-maze graph-solving problem.
+### ARENA
+A separate long-running WebSocket authority owns fixed-timestep Rapier physics, health, pickups, powers, projectiles, eliminations and the final surviving winner. The browser submits normalized input/action messages and renders server snapshots.
+
+### RACE
+A separate WebSocket authority owns the sealed procedural Prismway, authoritative racer motion, recovery, items, lap progression, finish ordering and winner. The current race is three laps.
+
+Realtime authorities are result-attestation services only: they do not receive treasury, relayer, Turnkey or vault credentials.
 
 ## Fairness commitment
-`commitment = SHA256(maze_seed || orb_id || rules_version || salt)`
-
-Publish/store before launch. Reveal `maze_seed` and `salt` at T0. The hash proves the maze was committed before play; authoritative simulation proves who won.
+MAZE uses a SHA-256 game commitment derived from the sealed seed/Orb/rules inputs and stores it before launch; the canonical seed/manifest is unavailable to players before T0. ARENA and RACE likewise pin the funded Orb to a specific authoritative game version/configuration so paid rules cannot be silently changed after funding.
 
 ## Results
 Hero: **ORB CLEARED**. Show winner identity, wallet, token prize, verified finish time, payout transaction, commitment verification, qualified-player count. CTAs: **Share your win**, **Create an Orb**, **Run it again**.
@@ -90,7 +94,7 @@ Hero: **ORB CLEARED**. Show winner identity, wallet, token prize, verified finis
 Hosted, Upcoming, Winnings, Completed. Show status, prize, launch, players, result, payout signature. V1 analytics: views, qualification funnel, follow-button clicks, qualified players, repeat-host, create-after-play. Do not claim actual new-follower counts unless relationship data is verified.
 
 ## Solana program
-Standard SPL Token Program only. Reject Token-2022.
+Classic SPL Token Program custody only. Standard SPL prizes are supported; native SOL uses the WSOL mint for custody and can be unwrapped after claim. Reject Token-2022.
 
 Core accounts: ProtocolConfig PDA, isolated Orb PDA, and the Orb PDA's canonical classic-SPL prize ATA.
 
@@ -103,22 +107,19 @@ USD minimums, the same-token Orbs fee, quote freshness, one-active-Orb policy, X
 ## Backend boundaries
 - Web app: responsive UI, SEO/OG, wallet/X flows, create/lobby/dashboard/results.
 - API: sessions, qualification, price quotes, tx orchestration, analytics/admin.
-- Game service: WebSockets, synchronized launch, authoritative physics/winner.
-- Database: relational durable state.
-- Cache/realtime: presence, counts, locks, rate limits.
+- Game services: separate ARENA and RACE WebSocket authorities with synchronized launch and authoritative physics/winner selection; MAZE uses deterministic server replay verification.
+- Durable application state: Upstash/Vercel-KV-compatible REST storage for Orb records, qualification proofs, winner locks, analytics, presence/chat metadata and rate limits.
+- Realtime simulation state: held in the dedicated ARENA/RACE authority process; not written to Redis at 60 Hz.
 - Object/CDN: assets where needed. Orb share cards are deterministic responses generated once from the immutable Orb record and cached at the CDN; do not store a separate image record per share.
 - RPC: Solana interaction.
 - Price adapter: provider-agnostic USD quote layer.
 
-## Core data entities
-`users`, `wallets`, `x_accounts`, `orbs`, `orb_entrants`, `game_sessions`, `game_results`, `payout_attempts`, `price_quotes`, `events`.
+## Current durable records
+The implementation stores versioned Orb records plus separate qualification, presence/chat, entrant-profile, winner/result, analytics, claim/refund and abuse-control records. Public Orb records intentionally omit the encrypted game seed. Legacy records without `gameType` are interpreted as MAZE for backward compatibility.
 
-## Orb state machine
-`DRAFT -> AWAITING_FUNDING -> SCHEDULED -> QUALIFYING -> LIVE -> VALIDATING -> WINNER_PENDING -> SETTLED`
+## Orb lifecycle
+Creation starts as `funding-pending`. Only an Orb whose funding transaction has been verified against the deployed Anchor program is promoted to public `scheduled` status and discovery. Launch/live/result presentation is derived from the immutable schedule, verified winner/result records and on-chain settlement state rather than trusting a browser-selected status. Expired funded Orbs follow the fixed on-chain refund path. Historical `*-test` statuses remain readable for legacy development records but are not admitted to current public funded discovery.
 
-No-winner path: `LIVE -> EXPIRED -> REFUND_PENDING -> REFUNDED`.
-
-Use `ERROR_LOCKED` for explicit operator recovery without silently changing custody/winner.
 
 ## V1 launch bar
 - Complete light/dark mode across every route/state.
@@ -127,8 +128,8 @@ Use `ERROR_LOCKED` for explicit operator recovery without silently changing cust
 - Token-2022 rejected pre-funding.
 - Displayed total commitment equals the intended wallet debit; the disclosed fee is included in that total; displayed winner prize equals the settleable vault prize.
 - Host cannot withdraw a public funded prize.
-- Maze seed unavailable before T0.
-- Server, not browser, determines finish.
+- MAZE seed unavailable before T0; funded game rules/version are pinned before play.
+- Browser alone cannot determine a prize winner: MAZE is server-replayed; ARENA/RACE are server-authoritative.
 - Duplicate X/wallet entrants rejected.
 - Turnstile validated server-side.
 - Settlement idempotent.

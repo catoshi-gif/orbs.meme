@@ -1,5 +1,8 @@
 # Orbs Glass Roller V0.4 — deterministic competition core
 
+> **Historical engineering milestone.** This document describes an earlier implementation stage and is retained to show project evolution. It is **not** the current production boundary. See [`../README.md`](../README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), and [`V1_SPEC.md`](V1_SPEC.md) for the current repository state.
+
+
 This pass freezes the validated V1 control contract and adds the first server-authoritative competition boundary without changing the feel of the game.
 
 ## Frozen gameplay contract
@@ -57,4 +60,4 @@ The next persistence/funding pass should create the secret before funding, store
 
 ## Important boundary
 
-V0.4 does **not** yet authorize token claims. The current winner record contains replay proof only. Wallet identity, X qualification, Turnkey claim signing and Anchor settlement remain separate later layers.
+At the V0.4 milestone, token claims were **not yet authorized**. The winner record at that stage contained replay proof only; wallet identity, X qualification, Turnkey claim signing and Anchor settlement were added in later development.

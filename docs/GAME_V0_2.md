@@ -1,5 +1,8 @@
 # Orbs Glass Roller V0.2
 
+> **Historical engineering milestone.** This document describes an earlier implementation stage and is retained to show project evolution. It is **not** the current production boundary. See [`../README.md`](../README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), and [`V1_SPEC.md`](V1_SPEC.md) for the current repository state.
+
+
 This repository now contains the first real deterministic Glass Roller vertical slice described by the V1 game build plan.
 
 ## Implemented now
@@ -35,7 +38,7 @@ The 5 / 10 / 15 minute values are calibration targets, not mathematical guarante
 
 ## Important production boundary
 
-The current V0.2 demo intentionally derives its local deterministic seed from the URL slug. This makes development/test runs reproducible but is **not** the funded-Orb reveal mechanism.
+At the V0.2 milestone, the demo intentionally derived its local deterministic seed from the URL slug. This makes development/test runs reproducible but is **not** the funded-Orb reveal mechanism.
 
 Before real prizes are wired in:
 

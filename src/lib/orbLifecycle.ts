@@ -4,8 +4,6 @@ export const ORB_COMPETITION_WINDOW_MS = 6 * 60 * 60 * 1000;
 export const ORB_CREATION_MIN_LEAD_MS = 60 * 1000;
 export const ORB_HISTORY_TTL_SECONDS = 90 * 24 * 60 * 60;
 
-const TEST_ADMIN_WALLET = "EDxq8pn8assS3Zoco5UBm3suPNu6oum3fzEwCsZixWC4";
-
 function configuredAdminWallets() {
   return [process.env.ADMIN_WALLET || "", ...(process.env.ORBS_ADMIN_WALLETS || "").split(",")]
     .map((value) => value.trim())
@@ -13,7 +11,7 @@ function configuredAdminWallets() {
 }
 
 export function isAdminWallet(wallet: string) {
-  return wallet === TEST_ADMIN_WALLET || configuredAdminWallets().includes(wallet);
+  return configuredAdminWallets().includes(wallet);
 }
 
 export function orbEndsAt(orb: { startsAt: number; endsAt?: number }) {
