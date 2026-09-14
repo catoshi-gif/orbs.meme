@@ -12,7 +12,7 @@
 - Gameplay determines the winner; no random prize selection.
 - Prize is fully funded before launch and cannot be casually withdrawn by the host.
 - On-chain program owns custody/settlement; game server owns authoritative gameplay.
-- X identity can be verified with OAuth. If Orbs does not pay for X relationship lookups, the Follow Host step must be described as completed/attested, not as a verified follow.
+- X identity is verified with OAuth. The current Follow Host step uses the connected account's `follows.write` permission to ask X directly to follow the host and stores proof only when X confirms the follow (non-pending).
 
 ## Global website shell
 Desktop header: Orbs logo + wordmark, Live Orbs, How it works, Create, light/dark theme button, Connect Wallet. Connected wallet becomes an identity chip with My Orbs / Disconnect. X connection is contextual to create/qualification, not global navigation.
@@ -64,7 +64,7 @@ Show host, prize, USD estimate, game format, countdown, funded badge, registrati
 
 Qualification:
 1. Connect X via OAuth.
-2. Follow host on X and return to press **I followed**. If no paid X relationship API is used, record click + attestation; do not call it verified.
+2. Press **Follow on X**. Orbs uses the connected account's X OAuth `follows.write` permission to submit the follow directly and stores the qualification proof only when X confirms the relationship (non-pending).
 3. Connect wallet + sign ownership nonce; unique wallet per Orb entrant.
 4. Pass Turnstile + abuse-risk policy; validate challenge server-side.
 5. Add an original line, publish the Orb link through an explicit X Web Intent, then verify the connected account's recent posts through the official X API. Store the verified post ID once per entrant/Orb. Do not auto-publish or encourage duplicate/near-duplicate contest posts.
