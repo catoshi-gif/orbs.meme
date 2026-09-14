@@ -649,3 +649,17 @@ html:not(.dark) .real-orb-hero>.waiting-orb-showcase{
 .race-lite-note{position:absolute;z-index:9;left:50%;bottom:12px;transform:translateX(-50%);font-size:7px;font-weight:900;letter-spacing:.09em;color:rgba(203,216,242,.58);white-space:nowrap}.race-lite-reset{z-index:14}
 @media(max-width:760px){.race-practice-lite{height:500px;min-height:470px;border-radius:22px}.race-lite-status{top:12px;max-width:calc(100% - 154px);padding:8px 10px}.race-lite-status span{font-size:6.5px}.race-lite-status strong{font-size:8px;white-space:normal}.race-lite-speed{left:10px;top:12px;padding:7px 8px}.race-lite-speed strong{font-size:13px}.race-lite-track{left:5%;right:5%;top:17%}.race-lite-orb{width:48px;height:48px;margin:-24px 0 0 -24px}.race-lite-note{font-size:5.8px;bottom:10px;max-width:82%;white-space:normal;text-align:center}.race-lite-reset{top:12px;right:10px;font-size:7px;padding:7px}.race-lite-key-hint{display:none}}
 @media(max-width:480px){.race-practice-lite{height:470px;min-height:450px}.race-lite-steer{width:132px;height:70px;left:12px}.race-lite-gas{right:12px;width:78px;height:78px}.race-lite-jump{right:96px;width:62px;height:62px}}
+
+/* Public-source trust signal: intentionally placed after community links so the
+   primary homepage conversion remains Find/Create while builders can inspect the stack. */
+.open-source-section{padding-top:10px;padding-bottom:18px}
+.open-source-card{position:relative;display:flex;align-items:center;justify-content:space-between;gap:30px;overflow:hidden;padding:30px;border:1px solid color-mix(in srgb,var(--border) 72%,#20e3d2 28%);border-radius:24px;background:linear-gradient(120deg,color-mix(in srgb,var(--surface) 94%,#20e3d2 6%),color-mix(in srgb,var(--surface) 95%,#5b5cf6 5%));box-shadow:var(--shadow)}
+.open-source-card:before{content:"";position:absolute;width:280px;height:280px;left:-145px;bottom:-190px;border-radius:50%;background:rgba(32,227,210,.10);pointer-events:none}
+.open-source-copy{position:relative;z-index:1;max-width:700px}
+.open-source-card h2{margin:5px 0 6px;font:800 30px Lato}
+.open-source-card p{margin:0;color:var(--muted);line-height:1.6}
+.open-source-link{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;gap:9px;min-width:max-content;white-space:nowrap}
+.open-source-link svg{width:21px;height:21px;flex:0 0 auto}
+.open-source-link strong{font-size:15px}
+@media(max-width:900px){.open-source-card{align-items:flex-start;flex-direction:column}.open-source-link{width:auto}}
+@media(max-width:640px){.open-source-card{padding:23px 20px}.open-source-card h2{font-size:27px}.open-source-link{width:100%}}
